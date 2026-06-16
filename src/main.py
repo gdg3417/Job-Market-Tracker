@@ -5,7 +5,7 @@ import json
 from datetime import datetime
 from typing import Any
 
-from src.dedupe import upsert_jobs
+from src.job_upsert import upsert_jobs
 from src.models import today_iso, utc_now_iso
 from src.normalize import normalize_raw_job
 from src.scoring import load_scoring_rules, score_job
