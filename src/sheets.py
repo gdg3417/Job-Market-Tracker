@@ -31,8 +31,9 @@ def build_sprint2_run_record(
     error_message: str = "",
 ) -> dict[str, Any]:
     now = utc_now_iso()
+    run_timestamp = now.replace(":", "").replace("+0000", "Z").replace("+00:00", "Z")
     return {
-        "run_id": f"sprint2_sheets_smoke_{now}",
+        "run_id": f"sprint2_sheets_smoke_{run_timestamp}",
         "run_type": "sprint_2_sheets_smoke_test",
         "source_type": "google_sheets",
         "source_name": "Job Market Tracker",
