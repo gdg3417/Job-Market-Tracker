@@ -21,6 +21,7 @@ from src.sources.gmail_alerts import (
 )
 from src.sources.greenhouse import greenhouse_company_rows, run_greenhouse_companies
 from src.sources.lever import lever_company_rows, run_lever_companies
+from src.sources.static_pages import run_static_page_companies, static_page_company_rows
 
 
 SAMPLE_JOB = {
@@ -225,6 +226,55 @@ def build_sprint8_run_record(
     }
 
 
+def build_sprint10_run_record(
+    *,
+    jobs_found: int,
+    source_count: int,
+    source_failures: int,
+    search_count: int,
+    low_confidence_count: int,
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    now = utc_now_iso()
+    run_timestamp = now.replace(":", "").replace("-", "").replace("+0000", "Z").replace("+00:00", "Z")
+    if source_count == 0:
+        status = "no_static_page_sources"
+    elif source_failures:
+        status = "partial_failure"
+    elif jobs_found == 0:
+        status = "no_jobs_found"
+    else:
+        status = "success"
+
+    notes = {
+        "upsert_summary": summary,
+        "low_confidence_count": low_confidence_count,
+    }
+    return {
+        "run_id": f"sprint10_static_pages_{run_timestamp}",
+        "run_type": "sprint_10_static_page_smoke_test",
+        "source_type": "static_page",
+        "source_name": "Static company career pages",
+        "status": status,
+        "started_at": now,
+        "finished_at": now,
+        "duration_seconds": 0,
+        "records_found": jobs_found,
+        "records_inserted": summary.get("jobs_created", 0),
+        "records_updated": summary.get("jobs_updated", 0),
+        "records_failed": source_failures,
+        "rows_read": source_count + search_count,
+        "config_companies_rows": source_count,
+        "config_searches_rows": search_count,
+        "companies_read": source_count,
+        "searches_read": search_count,
+        "error_message": "",
+        "notes": json.dumps(notes, sort_keys=True),
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
 def run_job_upsert_smoke_test() -> dict[str, object]:
     settings = load_settings()
     sheet_client = SheetClient.from_settings(settings)
@@ -377,6 +427,75 @@ def run_gmail_alerts_smoke_test() -> dict[str, object]:
     }
 
 
+def run_static_pages_smoke_test() -> dict[str, object]:
+    settings = load_settings()
+    sheet_client = SheetClient.from_settings(settings)
+    company_rows = sheet_client.read_records("Config_Companies")
+    search_rows = sheet_client.read_records("Config_Searches")
+    static_rows = static_page_company_rows(company_rows)
+    rules = load_scoring_rules(settings.scoring_rules_path)
+    seen_date = today_iso()
+
+    jobs, results = run_static_page_companies(
+        static_rows,
+        scoring_rules=rules,
+        search_rows=search_rows,
+        sheet_client=None,
+        seen_date=seen_date,
+    )
+    source_failures = [result for result in results if result.status == "failed"]
+    low_confidence_count = sum(result.low_confidence_count for result in results)
+    upsert_summary = upsert_jobs(sheet_client, jobs, seen_date=seen_date)
+
+    for result in results:
+        sheet_client.append_run(result.to_run_record())
+    sheet_client.append_run(
+        build_sprint10_run_record(
+            jobs_found=len(jobs),
+            source_count=len(results),
+            source_failures=len(source_failures),
+            search_count=len(search_rows),
+            low_confidence_count=low_confidence_count,
+            summary=upsert_summary.to_dict(),
+        )
+    )
+
+    if not results:
+        status = "no_static_page_sources"
+    elif source_failures:
+        status = "partial_failure"
+    elif not jobs:
+        status = "no_jobs_found"
+    else:
+        status = "success"
+
+    return {
+        "run_mode": "sprint_10_static_page_support",
+        "status": status,
+        "config_companies_rows": len(company_rows),
+        "config_searches_rows": len(search_rows),
+        "static_page_sources": len(results),
+        "static_page_failures": len(source_failures),
+        "jobs_found": len(jobs),
+        "low_confidence_jobs": low_confidence_count,
+        "upsert_summary": upsert_summary.to_dict(),
+        "runs_rows_appended": len(results) + 1,
+        "source_results": [result.to_summary() for result in results],
+        "top_jobs": [
+            {
+                "company": job.company,
+                "title": job.title,
+                "location": job.location,
+                "total_score": job.total_score,
+                "alert_tier": job.alert_tier,
+                "canonical_url": job.canonical_url,
+                "manual_review": "manual_review=true" in job.score_explanation,
+            }
+            for job in sorted(jobs, key=lambda item: item.total_score, reverse=True)[:10]
+        ],
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Job Market Tracker")
     parser.add_argument("--dry-run", action="store_true", help="Run a local smoke test without external services")
@@ -405,12 +524,21 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Read labeled Gmail job alert emails, extract jobs, upsert Jobs and Job_Sources, then append a Sprint 9 run row",
     )
+    parser.add_argument(
+        "--static-pages-smoke-test",
+        action="store_true",
+        help="Fetch configured static career pages, extract likely job links, upsert Jobs and Job_Sources, then append Sprint 10 run rows",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     settings = load_settings()
+
+    if args.static_pages_smoke_test:
+        print(json.dumps(run_static_pages_smoke_test(), indent=2))
+        return
 
     if args.gmail_alerts_smoke_test:
         print(json.dumps(run_gmail_alerts_smoke_test(), indent=2))
