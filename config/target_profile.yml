@@ -32,6 +32,29 @@ compensation:
   strong_total_comp_low: 200000
   strong_total_comp_high: 240000
   stretch_total_comp: 250000
+role_families:
+  primary:
+    - Commercial Strategy
+    - Revenue Strategy
+    - Business Operations
+    - Strategy Operations
+    - Business Insights
+    - Corporate Strategy
+    - Product Line Management
+    - Segment Management
+    - Category Management
+    - Commercial Operations
+    - Sales Operations
+    - Chief of Staff
+    - Finance Transformation
+  lower_priority:
+    - FP&A
+    - Budgeting
+    - Forecasting
+    - Working capital
+    - Treasury analytics
+    - AR strategy
+    - Collections strategy
 locations:
   preferred:
     - Richardson, TX
@@ -42,6 +65,11 @@ locations:
     - McKinney, TX
     - Carrollton, TX
     - Remote
+commute_scoring:
+  under_15_minutes: strong_positive
+  15_to_30_minutes: positive
+  30_to_45_minutes: neutral_or_mild_penalty
+  over_45_minutes: exclude_unless_director_remote_heavy_or_major_compensation_upside
 work_model_preferences:
   remote: strong_positive
   hybrid_2_to_3_days: strong_positive
