@@ -6,7 +6,7 @@ The tracker is intentionally not a generic finance job scraper. It is designed t
 
 ## Current status
 
-Sprints 1 through 7 are implemented in code. Sprint 7 adds deduplication and upsert logic so Greenhouse and Lever jobs can flow into `Jobs` and `Job_Sources` without creating repeat job rows.
+Sprints 1 through 9 are implemented in code. Sprint 9 adds Gmail alert ingestion so labeled job alert emails can flow into `Jobs` and `Job_Sources` without scraping LinkedIn, Indeed, Google Jobs, or other job boards directly.
 
 The repo currently contains:
 
@@ -21,6 +21,7 @@ job-market-tracker/
     target_profile.yml
   docs/
     sprint_2_google_sheets_setup.md
+    sprint_9_gmail_alert_setup.md
   src/
     __init__.py
     main.py
@@ -28,6 +29,7 @@ job-market-tracker/
     models.py
     normalize.py
     dedupe.py
+    lifecycle.py
     job_upsert.py
     scoring.py
     sheets.py
@@ -46,6 +48,7 @@ job-market-tracker/
     test_job_upsert.py
     test_scoring.py
     test_sheets.py
+    test_gmail_alerts.py
   .github/
     workflows/
       daily-run.yml
@@ -145,9 +148,9 @@ python -m src.main --lever-smoke-test
 
 Expected behavior: the script prints source results and the top scored Lever jobs. This command does not upsert jobs into `Jobs`.
 
-## Sprint 7 job upsert smoke test
+## Sprint 7 job upsert and Sprint 8 lifecycle smoke test
 
-Sprint 7 fetches Greenhouse and Lever jobs, dedupes them against existing `Jobs` and `Job_Sources` rows, then inserts or updates records.
+This command fetches Greenhouse and Lever jobs, dedupes them against existing `Jobs` and `Job_Sources` rows, inserts or updates records, and then updates lifecycle status for jobs not seen in the run.
 
 ```powershell
 python -m src.main --job-upsert-smoke-test
@@ -161,7 +164,42 @@ Expected behavior:
 4. Existing jobs update `last_seen_date`, scoring fields, and current job details.
 5. Same-source repeats update the existing `Job_Sources` row.
 6. Same job from a second source creates a second `Job_Sources` row without creating a second `Jobs` row.
-7. A Sprint 7 summary row is appended to `Runs`.
+7. Missing jobs move through `not_seen_once`, `likely_closed`, and `confirmed_closed` when closure evidence exists.
+8. Sprint 7 and Sprint 8 summary rows are appended to `Runs`.
+
+## Sprint 9 Gmail alert ingestion
+
+Sprint 9 reads emails labeled `Job Tracker`, extracts job title, company, location, URL, source job ID, and received date, then upserts the extracted jobs into `Jobs` and `Job_Sources`.
+
+Before running it, complete the setup guide:
+
+```text
+docs/sprint_9_gmail_alert_setup.md
+```
+
+Optional local environment variables:
+
+```text
+GMAIL_CLIENT_CONFIG=credentials/gmail-client-config.json
+GMAIL_TOKEN_JSON=credentials/gmail-token.json
+GMAIL_LABEL_NAME=Job Tracker
+GMAIL_MAX_RESULTS=50
+```
+
+Run the Gmail ingestion smoke test from the repo root:
+
+```powershell
+python -m src.main --gmail-alerts-smoke-test
+```
+
+Expected behavior:
+
+1. Gmail messages with the configured label are read.
+2. Alert emails are parsed into candidate jobs.
+3. Extracted jobs are normalized and scored.
+4. Jobs are upserted into `Jobs` and `Job_Sources` with `source_primary` set to `gmail_alert`.
+5. Low-confidence extractions are flagged with `manual_review_required` in `description_text`.
+6. A Sprint 9 summary row is appended to `Runs`.
 
 ## Credential handling
 
@@ -180,7 +218,9 @@ token.json
 .gmail_token.json
 ```
 
-The service account JSON should stay local under `credentials/` and should never be pushed to GitHub. The service account should be shared only on the Job Market Tracker Sheet.
+The Google Sheets service account JSON should stay local under `credentials/` and should never be pushed to GitHub. The service account should be shared only on the Job Market Tracker Sheet.
+
+The Gmail OAuth client JSON and Gmail token JSON should also stay local under `credentials/`. Do not reuse the Sheets service account for Gmail inbox access.
 
 ## Acceptance criteria status
 
@@ -203,7 +243,15 @@ The service account JSON should stay local under `credentials/` and should never
 | Sprint 7 | Existing open jobs update `last_seen_date` | Implemented and unit tested |
 | Sprint 7 | New jobs get `first_seen_date` | Implemented |
 | Sprint 7 | Dedupe logic is unit tested | Implemented |
+| Sprint 8 | Missing jobs are not immediately marked closed | Implemented |
+| Sprint 8 | Jobs missing twice become `likely_closed` | Implemented |
+| Sprint 8 | URL closure checks are guarded from run-breaking errors | Implemented |
+| Sprint 9 | Gmail job alert emails can flow into the tracker | Implemented |
+| Sprint 9 | Duplicate alert emails do not duplicate jobs | Uses existing Sprint 7 upsert logic |
+| Sprint 9 | Extracted URLs are captured | Implemented |
+| Sprint 9 | Received date becomes `first_seen_date` for new jobs | Implemented |
+| Sprint 9 | Bad extractions are flagged for review | Implemented with low confidence and `manual_review_required` |
 
 ## Next sprint
 
-Sprint 8 adds lifecycle tracking and closure detection. It should increment `missed_count`, mark jobs as `not_seen_once` or `likely_closed`, calculate `days_open`, and handle reopened postings.
+Sprint 10 adds static company career page support for target companies where Greenhouse, Lever, and Gmail alerts do not provide enough coverage.
