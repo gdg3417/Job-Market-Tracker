@@ -1,0 +1,154 @@
+score_scale: 100
+category_weights:
+  p_and_l_path_score: 20
+  growth_ownership_score: 20
+  role_level_score: 15
+  executive_exposure_score: 15
+  operating_cadence_score: 10
+  comp_score: 10
+  location_score: 5
+  industry_match_score: 5
+alert_thresholds:
+  immediate_review: 85
+  strong_fit: 75
+  track_only: 65
+positive_keywords:
+  p_and_l_path:
+    - P&L
+    - profit and loss
+    - general manager
+    - business unit
+    - segment strategy
+    - product line
+    - category management
+    - category strategy
+    - GM track
+  growth_ownership:
+    - revenue strategy
+    - revenue growth
+    - margin expansion
+    - pricing strategy
+    - sales strategy
+    - go-to-market
+    - GTM
+    - growth strategy
+    - commercial strategy
+    - value creation
+  executive_exposure:
+    - executive leadership
+    - CEO
+    - CFO
+    - COO
+    - CCO
+    - President
+    - board
+    - leadership team
+    - senior leadership
+  operating_cadence:
+    - business operations
+    - operating cadence
+    - cross-functional
+    - sales operations
+    - commercial operations
+    - business performance
+    - operating reviews
+    - performance management
+role_family_keywords:
+  Commercial Strategy:
+    - commercial strategy
+    - revenue strategy
+    - go-to-market
+    - GTM
+    - pricing strategy
+  Business Operations:
+    - business operations
+    - strategy operations
+    - bizops
+    - operating cadence
+  Business Insights:
+    - business insights
+    - performance management
+    - business performance
+    - commercial analytics
+  Corporate Strategy:
+    - corporate strategy
+    - value creation
+    - strategic planning
+  Product Line Management:
+    - product line
+    - segment management
+    - category management
+    - product strategy
+  Chief of Staff:
+    - chief of staff
+    - office of the CEO
+    - office of the president
+  Finance Transformation:
+    - finance transformation
+    - operating model
+    - business model improvement
+role_level_keywords:
+  Director: 15
+  Senior Manager: 12
+  Manager: 9
+  Lead: 7
+  Principal: 7
+  Senior: 5
+negative_keywords:
+  hard_exclude:
+    - staff accountant
+    - senior accountant
+    - cost accountant
+    - payroll
+    - tax
+    - audit-only
+    - SEC reporting-only
+    - SOX-only
+    - scrum master
+    - analyst I
+    - associate financial analyst
+    - commission-only
+    - financial advisor
+    - insurance sales
+  penalties:
+    controller: 25
+    audit: 20
+    SEC reporting: 20
+    SOX: 20
+    data engineer: 20
+    BI developer: 20
+    dashboard maintenance: 15
+    monthly close: 15
+    journal entries: 25
+    variance commentary: 10
+    budget consolidation: 10
+    headcount tracking: 10
+    pure reporting: 20
+    accounting operations: 20
+compensation:
+  base_floor: 140000
+  serious_total_comp: 180000
+  strong_total_comp: 200000
+  stretch_total_comp: 250000
+location_scoring:
+  remote: 5
+  hybrid: 5
+  Richardson: 5
+  Plano: 4
+  Dallas: 3
+  Addison: 3
+  Garland: 3
+  McKinney: 2
+  Carrollton: 2
+  default: 1
+industry_fit:
+  watch: 5
+  timepiece: 5
+  consumer products: 4
+  manufacturing: 5
+  industrial products: 5
+  PE-backed: 5
+  private company: 4
+  public company: 4
+  distribution: 4
+  durable goods: 4
