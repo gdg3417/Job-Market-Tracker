@@ -1,0 +1,65 @@
+profile_name: commercial_leadership_p_and_l_pathway
+current_role:
+  title: Business Insights Strategy Manager
+  base_salary: 140000
+  bonus_target_percent: 15
+  work_model: in_office_5_days
+  commute_one_way_miles: 30
+  commute_daily_time_minutes: 120
+  benefits_quality: weak
+  retirement_match: "2 percent match when contributing 8 percent"
+primary_positioning: Commercial strategy, business operations, and business insights leader building toward P&L ownership, VP-level operating leadership, or business unit leadership.
+search_intent: passive_monitoring_with_alerts_for_unusually_strong_roles
+minimum_move_logic:
+  high_interest_requires_improvement_count: 2
+  improvement_dimensions:
+    - compensation
+    - benefits
+    - commute
+    - remote_or_hybrid_flexibility
+    - title_trajectory
+    - executive_exposure
+    - business_impact_scope
+    - team_leadership
+    - long_term_upward_mobility
+    - p_and_l_pathway
+compensation:
+  absolute_base_floor: 140000
+  manager_floor: 140000
+  senior_manager_floor: 150000
+  director_preferred_floor: 170000
+  minimum_serious_move_total_comp: 180000
+  strong_total_comp_low: 200000
+  strong_total_comp_high: 240000
+  stretch_total_comp: 250000
+locations:
+  preferred:
+    - Richardson, TX
+    - Dallas, TX
+    - Plano, TX
+    - Addison, TX
+    - Garland, TX
+    - McKinney, TX
+    - Carrollton, TX
+    - Remote
+work_model_preferences:
+  remote: strong_positive
+  hybrid_2_to_3_days: strong_positive
+  hybrid_4_days: neutral
+  in_office_5_days: penalty_unless_short_commute_or_exceptional_role
+industry_priorities:
+  - Watch industry and adjacent consumer products
+  - Manufacturing
+  - Industrial products
+  - PE-backed portfolio companies
+  - Large private companies
+  - Public companies with strong upward mobility
+  - Businesses over $1B revenue
+  - Select businesses from $600M to $999M revenue when scope, title, or growth path is strong
+industry_exclusions:
+  - Crypto
+  - Ad tech
+  - Healthcare provider operations
+  - Early-stage startups
+  - Pure accounting cleanup roles
+  - Pure systems implementation roles with no operating ownership
