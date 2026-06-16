@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from src.job_upsert import upsert_jobs
+from src.lifecycle import check_job_url_closed, update_lifecycle_for_missing_jobs
 from src.models import today_iso, utc_now_iso
 from src.normalize import normalize_raw_job
 from src.scoring import load_scoring_rules, score_job
@@ -175,6 +176,48 @@ def build_sprint7_run_record(
     }
 
 
+def build_sprint8_run_record(
+    *,
+    jobs_found: int,
+    source_count: int,
+    source_failures: int,
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    now = utc_now_iso()
+    run_timestamp = now.replace(":", "").replace("-", "").replace("+0000", "Z").replace("+00:00", "Z")
+    url_check_failures = int(summary.get("url_checks_failed", 0) or 0)
+    if source_count == 0:
+        status = "no_sources"
+    elif source_failures or url_check_failures:
+        status = "partial_failure"
+    else:
+        status = "success"
+
+    return {
+        "run_id": f"sprint8_lifecycle_{run_timestamp}",
+        "run_type": "sprint_8_lifecycle_tracking",
+        "source_type": "combined_sources",
+        "source_name": "Greenhouse and Lever lifecycle pass",
+        "status": status,
+        "started_at": now,
+        "finished_at": now,
+        "duration_seconds": 0,
+        "records_found": jobs_found,
+        "records_inserted": 0,
+        "records_updated": summary.get("rows_updated", 0),
+        "records_failed": source_failures + url_check_failures,
+        "rows_read": summary.get("records_checked", 0),
+        "config_companies_rows": source_count,
+        "config_searches_rows": 0,
+        "companies_read": source_count,
+        "searches_read": 0,
+        "error_message": "",
+        "notes": json.dumps(summary, sort_keys=True),
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
 def run_job_upsert_smoke_test() -> dict[str, object]:
     settings = load_settings()
     sheet_client = SheetClient.from_settings(settings)
@@ -200,6 +243,11 @@ def run_job_upsert_smoke_test() -> dict[str, object]:
 
     all_jobs = greenhouse_jobs + lever_jobs
     upsert_summary = upsert_jobs(sheet_client, all_jobs, seen_date=seen_date)
+    lifecycle_summary = update_lifecycle_for_missing_jobs(
+        sheet_client,
+        run_date=seen_date,
+        url_checker=check_job_url_closed,
+    )
     source_results = greenhouse_results + lever_results
     source_failures = [result for result in source_results if result.status == "failed"]
 
@@ -213,6 +261,14 @@ def run_job_upsert_smoke_test() -> dict[str, object]:
             summary=upsert_summary.to_dict(),
         )
     )
+    sheet_client.append_run(
+        build_sprint8_run_record(
+            jobs_found=len(all_jobs),
+            source_count=len(source_results),
+            source_failures=len(source_failures),
+            summary=lifecycle_summary.to_dict(),
+        )
+    )
 
     if not source_results:
         status = "no_sources"
@@ -222,7 +278,7 @@ def run_job_upsert_smoke_test() -> dict[str, object]:
         status = "success"
 
     return {
-        "run_mode": "sprint_7_job_upsert_smoke_test",
+        "run_mode": "sprint_7_job_upsert_and_sprint_8_lifecycle_smoke_test",
         "status": status,
         "config_companies_rows": len(company_rows),
         "greenhouse_sources": len(greenhouse_results),
@@ -230,7 +286,8 @@ def run_job_upsert_smoke_test() -> dict[str, object]:
         "source_failures": len(source_failures),
         "jobs_found": len(all_jobs),
         "upsert_summary": upsert_summary.to_dict(),
-        "runs_rows_appended": len(source_results) + 1,
+        "lifecycle_summary": lifecycle_summary.to_dict(),
+        "runs_rows_appended": len(source_results) + 2,
         "top_jobs": [
             {
                 "company": job.company,
@@ -266,7 +323,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--job-upsert-smoke-test",
         action="store_true",
-        help="Fetch Greenhouse and Lever jobs, upsert Jobs, upsert Job_Sources, then append Sprint 7 run rows",
+        help="Fetch Greenhouse and Lever jobs, upsert Jobs, upsert Job_Sources, update lifecycle statuses, then append run rows",
     )
     return parser.parse_args()
 
