@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from src.job_upsert import upsert_jobs
-from src.lifecycle import check_job_url_closed, update_lifecycle_for_missing_jobs
+from src.lifecycle import LifecycleSummary, check_job_url_closed, update_lifecycle_for_missing_jobs
 from src.models import today_iso, utc_now_iso
 from src.normalize import normalize_raw_job
 from src.scoring import load_scoring_rules, score_job
@@ -242,14 +242,17 @@ def run_job_upsert_smoke_test() -> dict[str, object]:
     )
 
     all_jobs = greenhouse_jobs + lever_jobs
-    upsert_summary = upsert_jobs(sheet_client, all_jobs, seen_date=seen_date)
-    lifecycle_summary = update_lifecycle_for_missing_jobs(
-        sheet_client,
-        run_date=seen_date,
-        url_checker=check_job_url_closed,
-    )
     source_results = greenhouse_results + lever_results
     source_failures = [result for result in source_results if result.status == "failed"]
+    upsert_summary = upsert_jobs(sheet_client, all_jobs, seen_date=seen_date)
+    if source_results and not source_failures:
+        lifecycle_summary = update_lifecycle_for_missing_jobs(
+            sheet_client,
+            run_date=seen_date,
+            url_checker=check_job_url_closed,
+        )
+    else:
+        lifecycle_summary = LifecycleSummary()
 
     for result in source_results:
         sheet_client.append_run(result.to_run_record())
