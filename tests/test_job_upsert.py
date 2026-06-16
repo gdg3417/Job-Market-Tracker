@@ -139,3 +139,22 @@ def test_upsert_existing_source_updates_last_seen_instead_of_appending():
     assert len(client.sources) == 1
     assert client.sources[0]["first_seen_date"] == "2026-06-01"
     assert client.sources[0]["last_seen_date"] == "2026-06-16"
+
+
+def test_upsert_confirmed_closed_job_seen_again_becomes_reopened():
+    existing = make_job()
+    existing.first_seen_date = "2026-06-01"
+    existing.last_seen_date = "2026-06-10"
+    existing.missed_count = 2
+    existing.status = "confirmed_closed"
+    existing.closed_date = "2026-06-12"
+    client = FakeSheetClient(jobs=[existing.to_dict()])
+
+    summary = upsert_jobs(client, [make_job()], seen_date="2026-06-16")
+
+    assert summary.jobs_updated == 1
+    assert client.jobs[0]["status"] == "reopened"
+    assert client.jobs[0]["missed_count"] == 0
+    assert client.jobs[0]["closed_date"] == ""
+    assert client.jobs[0]["first_seen_date"] == "2026-06-01"
+    assert client.jobs[0]["last_seen_date"] == "2026-06-16"
