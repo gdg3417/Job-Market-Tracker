@@ -3,6 +3,8 @@ beautifulsoup4==4.12.3
 pandas==2.2.3
 gspread==6.1.4
 google-auth==2.35.0
+google-api-python-client==2.156.0
+google-auth-oauthlib==1.2.1
 python-dotenv==1.0.1
 PyYAML==6.0.2
 rapidfuzz==3.10.1
