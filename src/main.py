@@ -3,7 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 from datetime import datetime
+from typing import Any
 
+from src.dedupe import upsert_jobs
+from src.models import today_iso, utc_now_iso
 from src.normalize import normalize_raw_job
 from src.scoring import load_scoring_rules, score_job
 from src.settings import load_settings
@@ -82,7 +85,7 @@ def run_greenhouse_smoke_test() -> dict[str, object]:
             }
             for job in sorted(jobs, key=lambda item: item.total_score, reverse=True)[:10]
         ],
-        "note": "Sprint 5 fetches and scores Greenhouse jobs. Job upsert to the Jobs tab is intentionally left for Sprint 7.",
+        "note": "Sprint 5 fetches and scores Greenhouse jobs. Job upsert to the Jobs tab is handled by Sprint 7.",
     }
 
 
@@ -127,7 +130,118 @@ def run_lever_smoke_test() -> dict[str, object]:
             }
             for job in sorted(jobs, key=lambda item: item.total_score, reverse=True)[:10]
         ],
-        "note": "Sprint 6 fetches and scores Lever jobs. Job upsert to the Jobs tab is intentionally left for Sprint 7.",
+        "note": "Sprint 6 fetches and scores Lever jobs. Job upsert to the Jobs tab is handled by Sprint 7.",
+    }
+
+
+def build_sprint7_run_record(
+    *,
+    jobs_found: int,
+    source_count: int,
+    source_failures: int,
+    summary: dict[str, Any],
+) -> dict[str, Any]:
+    now = utc_now_iso()
+    run_timestamp = now.replace(":", "").replace("-", "").replace("+0000", "Z").replace("+00:00", "Z")
+    if source_count == 0:
+        status = "no_sources"
+    elif source_failures:
+        status = "partial_failure"
+    else:
+        status = "success"
+
+    return {
+        "run_id": f"sprint7_job_upsert_{run_timestamp}",
+        "run_type": "sprint_7_job_upsert_smoke_test",
+        "source_type": "combined_sources",
+        "source_name": "Greenhouse and Lever",
+        "status": status,
+        "started_at": now,
+        "finished_at": now,
+        "duration_seconds": 0,
+        "records_found": jobs_found,
+        "records_inserted": summary.get("jobs_created", 0),
+        "records_updated": summary.get("jobs_updated", 0),
+        "records_failed": source_failures,
+        "rows_read": source_count,
+        "config_companies_rows": source_count,
+        "config_searches_rows": 0,
+        "companies_read": source_count,
+        "searches_read": 0,
+        "error_message": "",
+        "notes": json.dumps(summary, sort_keys=True),
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def run_job_upsert_smoke_test() -> dict[str, object]:
+    settings = load_settings()
+    sheet_client = SheetClient.from_settings(settings)
+    company_rows = sheet_client.read_records("Config_Companies")
+    rules = load_scoring_rules(settings.scoring_rules_path)
+    seen_date = today_iso()
+
+    greenhouse_rows = greenhouse_company_rows(company_rows)
+    greenhouse_jobs, greenhouse_results = run_greenhouse_companies(
+        greenhouse_rows,
+        scoring_rules=rules,
+        sheet_client=None,
+        seen_date=seen_date,
+    )
+
+    lever_rows = lever_company_rows(company_rows)
+    lever_jobs, lever_results = run_lever_companies(
+        lever_rows,
+        scoring_rules=rules,
+        sheet_client=None,
+        seen_date=seen_date,
+    )
+
+    all_jobs = greenhouse_jobs + lever_jobs
+    upsert_summary = upsert_jobs(sheet_client, all_jobs, seen_date=seen_date)
+    source_results = greenhouse_results + lever_results
+    source_failures = [result for result in source_results if result.status == "failed"]
+
+    for result in source_results:
+        sheet_client.append_run(result.to_run_record())
+    sheet_client.append_run(
+        build_sprint7_run_record(
+            jobs_found=len(all_jobs),
+            source_count=len(source_results),
+            source_failures=len(source_failures),
+            summary=upsert_summary.to_dict(),
+        )
+    )
+
+    if not source_results:
+        status = "no_sources"
+    elif source_failures:
+        status = "partial_failure"
+    else:
+        status = "success"
+
+    return {
+        "run_mode": "sprint_7_job_upsert_smoke_test",
+        "status": status,
+        "config_companies_rows": len(company_rows),
+        "greenhouse_sources": len(greenhouse_results),
+        "lever_sources": len(lever_results),
+        "source_failures": len(source_failures),
+        "jobs_found": len(all_jobs),
+        "upsert_summary": upsert_summary.to_dict(),
+        "runs_rows_appended": len(source_results) + 1,
+        "top_jobs": [
+            {
+                "company": job.company,
+                "title": job.title,
+                "location": job.location,
+                "total_score": job.total_score,
+                "alert_tier": job.alert_tier,
+                "canonical_url": job.canonical_url,
+            }
+            for job in sorted(all_jobs, key=lambda item: item.total_score, reverse=True)[:10]
+        ],
     }
 
 
@@ -149,12 +263,21 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Read active Lever rows, fetch and score jobs, then append Sprint 6 source run rows to Runs",
     )
+    parser.add_argument(
+        "--job-upsert-smoke-test",
+        action="store_true",
+        help="Fetch Greenhouse and Lever jobs, upsert Jobs, upsert Job_Sources, then append Sprint 7 run rows",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     settings = load_settings()
+
+    if args.job_upsert_smoke_test:
+        print(json.dumps(run_job_upsert_smoke_test(), indent=2))
+        return
 
     if args.lever_smoke_test:
         print(json.dumps(run_lever_smoke_test(), indent=2))
