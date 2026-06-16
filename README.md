@@ -6,7 +6,7 @@ The tracker is intentionally not a generic finance job scraper. It is designed t
 
 ## Current status
 
-Sprint 1 scaffold is complete. Sprint 2 Google Sheets connectivity has been added as a smoke test.
+Sprints 1 through 7 are implemented in code. Sprint 7 adds deduplication and upsert logic so Greenhouse and Lever jobs can flow into `Jobs` and `Job_Sources` without creating repeat job rows.
 
 The repo currently contains:
 
@@ -28,6 +28,7 @@ job-market-tracker/
     models.py
     normalize.py
     dedupe.py
+    job_upsert.py
     scoring.py
     sheets.py
     digest.py
@@ -42,6 +43,7 @@ job-market-tracker/
     __init__.py
     test_normalize.py
     test_dedupe.py
+    test_job_upsert.py
     test_scoring.py
     test_sheets.py
   .github/
@@ -123,6 +125,44 @@ python -m src.main --sheets-smoke-test
 
 Expected behavior: the script reads `Config_Companies`, reads `Config_Searches`, appends one row to `Runs`, and prints a JSON result with row counts.
 
+## Sprint 5 Greenhouse smoke test
+
+Sprint 5 reads active Greenhouse company rows, fetches public Greenhouse jobs, normalizes and scores them, and appends source-level run records to `Runs`.
+
+```powershell
+python -m src.main --greenhouse-smoke-test
+```
+
+Expected behavior: the script prints source results and the top scored Greenhouse jobs. This command does not upsert jobs into `Jobs`.
+
+## Sprint 6 Lever smoke test
+
+Sprint 6 reads active Lever company rows, fetches public Lever jobs, normalizes and scores them, and appends source-level run records to `Runs`.
+
+```powershell
+python -m src.main --lever-smoke-test
+```
+
+Expected behavior: the script prints source results and the top scored Lever jobs. This command does not upsert jobs into `Jobs`.
+
+## Sprint 7 job upsert smoke test
+
+Sprint 7 fetches Greenhouse and Lever jobs, dedupes them against existing `Jobs` and `Job_Sources` rows, then inserts or updates records.
+
+```powershell
+python -m src.main --job-upsert-smoke-test
+```
+
+Expected behavior:
+
+1. Existing jobs are loaded from `Jobs`.
+2. Existing source links are loaded from `Job_Sources`.
+3. New jobs are appended to `Jobs`.
+4. Existing jobs update `last_seen_date`, scoring fields, and current job details.
+5. Same-source repeats update the existing `Job_Sources` row.
+6. Same job from a second source creates a second `Job_Sources` row without creating a second `Jobs` row.
+7. A Sprint 7 summary row is appended to `Runs`.
+
 ## Credential handling
 
 Do not commit any credentials.
@@ -156,7 +196,14 @@ The service account JSON should stay local under `credentials/` and should never
 | Sprint 2 | Python can append a row to `Runs` | Implemented, pending local Google credential setup |
 | Sprint 2 | Credentials are not committed | Complete |
 | Sprint 2 | Service account has access only to the tracker Sheet | Manual setup step |
+| Sprint 5 | Greenhouse jobs can be fetched, normalized, scored, and logged | Implemented |
+| Sprint 6 | Lever jobs can be fetched, normalized, scored, and logged | Implemented |
+| Sprint 7 | Same job found twice does not create duplicate `Jobs` rows | Implemented and unit tested |
+| Sprint 7 | Same job from two sources creates one `Jobs` row and two `Job_Sources` rows | Implemented and unit tested |
+| Sprint 7 | Existing open jobs update `last_seen_date` | Implemented and unit tested |
+| Sprint 7 | New jobs get `first_seen_date` | Implemented |
+| Sprint 7 | Dedupe logic is unit tested | Implemented |
 
 ## Next sprint
 
-Sprint 3 defines the normalized job model and target profile format. Some model scaffolding already exists, but Sprint 3 should tighten the standard job fields, target profile config, normalization behavior, and unit tests.
+Sprint 8 adds lifecycle tracking and closure detection. It should increment `missed_count`, mark jobs as `not_seen_once` or `likely_closed`, calculate `days_open`, and handle reopened postings.
