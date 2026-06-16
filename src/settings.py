@@ -19,6 +19,10 @@ class Settings:
     target_profile_path: Path = CONFIG_DIR / "target_profile.yml"
     google_sheet_id: str = ""
     google_application_credentials: str = ""
+    gmail_client_config: str = ""
+    gmail_token_json: str = ""
+    gmail_label_name: str = "Job Tracker"
+    gmail_max_results: int = 50
     dry_run: bool = True
 
 
@@ -26,6 +30,15 @@ def _as_bool(value: str | None, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _as_int(value: str | None, default: int) -> int:
+    if value is None or str(value).strip() == "":
+        return default
+    try:
+        return int(str(value).strip())
+    except ValueError:
+        return default
 
 
 def _resolve_project_path(path_value: str) -> str:
@@ -40,8 +53,14 @@ def _resolve_project_path(path_value: str) -> str:
 def load_settings() -> Settings:
     load_dotenv(PROJECT_ROOT / ".env")
     credentials_path = _resolve_project_path(os.getenv("GOOGLE_APPLICATION_CREDENTIALS", ""))
+    gmail_client_config = _resolve_project_path(os.getenv("GMAIL_CLIENT_CONFIG", ""))
+    gmail_token_json = _resolve_project_path(os.getenv("GMAIL_TOKEN_JSON", ""))
     return Settings(
         google_sheet_id=os.getenv("GOOGLE_SHEET_ID", ""),
         google_application_credentials=credentials_path,
+        gmail_client_config=gmail_client_config,
+        gmail_token_json=gmail_token_json,
+        gmail_label_name=os.getenv("GMAIL_LABEL_NAME", "Job Tracker"),
+        gmail_max_results=_as_int(os.getenv("GMAIL_MAX_RESULTS"), 50),
         dry_run=_as_bool(os.getenv("JOB_TRACKER_DRY_RUN"), default=True),
     )
