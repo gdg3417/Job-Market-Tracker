@@ -8,6 +8,7 @@ from typing import Any
 import gspread
 from google.oauth2.service_account import Credentials
 
+from src.models import JobPosting
 from src.settings import Settings
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -88,9 +89,12 @@ class SheetClient:
         worksheet = self.get_worksheet(worksheet_name)
         return worksheet.get_all_records(numericise_ignore=["all"])
 
-    def append_record(self, worksheet_name: str, record: dict[str, Any]) -> None:
-        worksheet = self.get_worksheet(worksheet_name)
-        headers = [header.strip() for header in worksheet.row_values(1)]
+    def read_records_with_row_numbers(self, worksheet_name: str) -> list[tuple[int, dict[str, Any]]]:
+        records = self.read_records(worksheet_name)
+        return [(index + 2, record) for index, record in enumerate(records)]
+
+    def _record_to_row(self, worksheet_name: str, record: dict[str, Any]) -> list[Any]:
+        headers = self.worksheet_headers(worksheet_name)
         if not headers:
             raise ValueError(f"Worksheet {worksheet_name} has no header row")
 
@@ -99,11 +103,49 @@ class SheetClient:
         if not matched_headers:
             raise ValueError(f"No headers in worksheet {worksheet_name} matched the record keys")
 
-        row = [normalized_record.get(normalize_header_name(header), "") for header in headers]
+        return [normalized_record.get(normalize_header_name(header), "") for header in headers]
+
+    def append_record(self, worksheet_name: str, record: dict[str, Any]) -> None:
+        worksheet = self.get_worksheet(worksheet_name)
+        row = self._record_to_row(worksheet_name, record)
         worksheet.append_row(row, value_input_option="USER_ENTERED")
+
+    def update_record(self, worksheet_name: str, row_number: int, record: dict[str, Any]) -> None:
+        if row_number < 2:
+            raise ValueError("Data row updates must target row 2 or later")
+
+        worksheet = self.get_worksheet(worksheet_name)
+        headers = self.worksheet_headers(worksheet_name)
+        row = self._record_to_row(worksheet_name, record)
+        end_cell = gspread.utils.rowcol_to_a1(row_number, len(headers))
+        range_name = f"A{row_number}:{end_cell}"
+        worksheet.update(range_name=range_name, values=[row], value_input_option="USER_ENTERED")
 
     def append_run(self, record: dict[str, Any]) -> None:
         self.append_record("Runs", record)
+
+    def read_jobs_with_row_numbers(self) -> list[tuple[int, JobPosting]]:
+        rows = self.read_records_with_row_numbers("Jobs")
+        jobs: list[tuple[int, JobPosting]] = []
+        for row_number, record in rows:
+            if any(str(record.get(key, "")).strip() for key in ["job_key", "company", "title", "canonical_url"]):
+                jobs.append((row_number, JobPosting.from_dict(record)))
+        return jobs
+
+    def append_job(self, job: JobPosting) -> None:
+        self.append_record("Jobs", job.to_dict())
+
+    def update_job(self, row_number: int, job: JobPosting) -> None:
+        self.update_record("Jobs", row_number, job.to_dict())
+
+    def read_job_sources_with_row_numbers(self) -> list[tuple[int, dict[str, Any]]]:
+        return self.read_records_with_row_numbers("Job_Sources")
+
+    def append_job_source(self, record: dict[str, Any]) -> None:
+        self.append_record("Job_Sources", record)
+
+    def update_job_source(self, row_number: int, record: dict[str, Any]) -> None:
+        self.update_record("Job_Sources", row_number, record)
 
 
 def run_sprint2_smoke_test(settings: Settings) -> dict[str, Any]:
