@@ -7,6 +7,7 @@ from datetime import datetime
 from src.normalize import normalize_raw_job
 from src.scoring import load_scoring_rules, score_job
 from src.settings import load_settings
+from src.sheets import run_sprint2_smoke_test
 
 
 SAMPLE_JOB = {
@@ -41,16 +42,27 @@ def run_dry_smoke_test() -> dict[str, object]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Job Market Tracker")
     parser.add_argument("--dry-run", action="store_true", help="Run a local smoke test without external services")
+    parser.add_argument(
+        "--sheets-smoke-test",
+        action="store_true",
+        help="Read Config_Companies and Config_Searches, then append a Sprint 2 test row to Runs",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     settings = load_settings()
+
+    if args.sheets_smoke_test:
+        print(json.dumps(run_sprint2_smoke_test(settings), indent=2))
+        return
+
     if args.dry_run or settings.dry_run:
         print(json.dumps(run_dry_smoke_test(), indent=2))
         return
-    raise NotImplementedError("Sprint 2 will add Google Sheets execution. Run with --dry-run for Sprint 1.")
+
+    print(json.dumps(run_sprint2_smoke_test(settings), indent=2))
 
 
 if __name__ == "__main__":
