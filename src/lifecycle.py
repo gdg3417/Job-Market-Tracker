@@ -156,7 +156,15 @@ def update_lifecycle_for_missing_jobs(
 
         if job.status == "likely_closed" and url_checker is not None:
             summary.url_checks_attempted += 1
-            result = _coerce_closure_check_result(url_checker(job))
+            try:
+                result = _coerce_closure_check_result(url_checker(job))
+            except Exception as exc:  # pragma: no cover - defensive guard for network/session edge cases
+                result = ClosureCheckResult(
+                    checked=False,
+                    is_closed=False,
+                    reason="checker_failed",
+                    error_message=str(exc),
+                )
             if not result.checked and result.error_message:
                 summary.url_checks_failed += 1
             if result.checked and result.is_closed:
