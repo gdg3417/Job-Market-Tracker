@@ -1,8 +1,8 @@
 score_scale: 100
 category_weights:
+  fit_score: 15
   p_and_l_path_score: 20
   growth_ownership_score: 20
-  role_level_score: 15
   executive_exposure_score: 15
   operating_cadence_score: 10
   comp_score: 10
@@ -12,17 +12,104 @@ alert_thresholds:
   immediate_review: 85
   strong_fit: 75
   track_only: 65
+alert_tiers:
+  hard_exclude: exclude
+  below_track: ignore
+category_match_targets:
+  p_and_l_path_score: 3
+  growth_ownership_score: 3
+  executive_exposure_score: 2
+  operating_cadence_score: 2
+role_family_keywords:
+  Commercial Strategy:
+    - commercial strategy
+    - revenue strategy
+    - go-to-market
+    - GTM
+    - pricing strategy
+    - sales strategy
+  Revenue Strategy:
+    - revenue strategy
+    - revenue growth
+    - monetization strategy
+    - commercial growth
+  Business Operations:
+    - business operations
+    - strategy operations
+    - bizops
+    - operating cadence
+    - operating reviews
+  Business Insights:
+    - business insights
+    - performance management
+    - business performance
+    - commercial analytics
+    - insights strategy
+  Corporate Strategy:
+    - corporate strategy
+    - value creation
+    - strategic planning
+    - enterprise strategy
+  Product Line Management:
+    - product line
+    - segment management
+    - category management
+    - category strategy
+    - product strategy
+    - portfolio management
+  Chief of Staff:
+    - chief of staff
+    - office of the CEO
+    - office of the president
+    - office of the GM
+  Finance Transformation:
+    - finance transformation
+    - operating model
+    - business model improvement
+role_family_fit:
+  Commercial Strategy: 6
+  Revenue Strategy: 6
+  Business Operations: 6
+  Strategy and Operations: 6
+  Business Insights: 5
+  Corporate Strategy: 5
+  Product Line Management: 6
+  Chief of Staff: 6
+  Finance Transformation: 4
+  FP&A: 1
+role_level_keywords:
+  SVP: 15
+  VP: 15
+  Vice President: 15
+  Head of: 15
+  Director: 15
+  Senior Manager: 12
+  Sr Manager: 12
+  Manager: 9
+  Principal: 7
+  Lead: 7
+  Senior: 5
+team_leadership_keywords:
+  - direct reports
+  - people manager
+  - manage a team
+  - lead a team
+  - team leadership
+  - build a team
 positive_keywords:
   p_and_l_path:
     - P&L
     - profit and loss
     - general manager
+    - GM track
     - business unit
+    - business unit leader
+    - product line ownership
     - segment strategy
-    - product line
+    - segment ownership
     - category management
     - category strategy
-    - GM track
+    - portfolio ownership
   growth_ownership:
     - revenue strategy
     - revenue growth
@@ -34,6 +121,9 @@ positive_keywords:
     - growth strategy
     - commercial strategy
     - value creation
+    - market expansion
+    - profitable growth
+    - operating income
   executive_exposure:
     - executive leadership
     - CEO
@@ -41,9 +131,12 @@ positive_keywords:
     - COO
     - CCO
     - President
+    - General Manager
     - board
     - leadership team
     - senior leadership
+    - executive team
+    - ELT
   operating_cadence:
     - business operations
     - operating cadence
@@ -53,47 +146,8 @@ positive_keywords:
     - business performance
     - operating reviews
     - performance management
-role_family_keywords:
-  Commercial Strategy:
-    - commercial strategy
-    - revenue strategy
-    - go-to-market
-    - GTM
-    - pricing strategy
-  Business Operations:
-    - business operations
-    - strategy operations
-    - bizops
-    - operating cadence
-  Business Insights:
-    - business insights
-    - performance management
-    - business performance
-    - commercial analytics
-  Corporate Strategy:
-    - corporate strategy
-    - value creation
-    - strategic planning
-  Product Line Management:
-    - product line
-    - segment management
-    - category management
-    - product strategy
-  Chief of Staff:
-    - chief of staff
-    - office of the CEO
-    - office of the president
-  Finance Transformation:
-    - finance transformation
-    - operating model
-    - business model improvement
-role_level_keywords:
-  Director: 15
-  Senior Manager: 12
-  Manager: 9
-  Lead: 7
-  Principal: 7
-  Senior: 5
+    - KPI reviews
+    - weekly business review
 negative_keywords:
   hard_exclude:
     - staff accountant
@@ -111,12 +165,13 @@ negative_keywords:
     - financial advisor
     - insurance sales
   penalties:
+    controller-only: 35
     controller: 25
     audit: 20
     SEC reporting: 20
     SOX: 20
-    data engineer: 20
-    BI developer: 20
+    data engineer: 25
+    BI developer: 25
     dashboard maintenance: 15
     monthly close: 15
     journal entries: 25
@@ -124,15 +179,33 @@ negative_keywords:
     budget consolidation: 10
     headcount tracking: 10
     pure reporting: 20
+    reporting factory: 20
     accounting operations: 20
+    budgeting: 8
+    forecasting: 8
+    working capital: 6
+    treasury: 12
+    AR strategy: 8
+    collections strategy: 8
+    75% travel: 25
+    travel 75%: 25
+    5 days in office: 5
 compensation:
   base_floor: 140000
+  manager_floor: 140000
+  senior_manager_floor: 150000
+  director_preferred_floor: 170000
   serious_total_comp: 180000
   strong_total_comp: 200000
   stretch_total_comp: 250000
 location_scoring:
   remote: 5
-  hybrid: 5
+  hybrid_2_to_3_days: 5
+  hybrid_4_days: 3
+  onsite_under_15_minutes: 5
+  onsite_15_to_30_minutes: 4
+  onsite_30_to_45_minutes: 2
+  onsite_over_45_minutes: 0
   Richardson: 5
   Plano: 4
   Dallas: 3
@@ -144,11 +217,22 @@ location_scoring:
 industry_fit:
   watch: 5
   timepiece: 5
-  consumer products: 4
   manufacturing: 5
   industrial products: 5
   PE-backed: 5
+  private equity: 5
+  portfolio company: 5
+  consumer products: 4
   private company: 4
   public company: 4
   distribution: 4
   durable goods: 4
+  field services: 4
+  B2B services: 3
+industry_exclusions:
+  - crypto
+  - ad tech
+  - healthcare provider operations
+  - early-stage startup
+  - pure accounting cleanup
+  - pure systems implementation
