@@ -1,32 +1,156 @@
-name: Job Tracker Smoke Test
+name: Job Tracker Daily Run
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
+  schedule:
+    - cron: "30 11 * * *"
+    - cron: "30 12 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: job-tracker-daily-run
+  cancel-in-progress: false
 
 jobs:
-  smoke-test:
+  daily-run:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
-      JOB_TRACKER_DRY_RUN: "true"
+      GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+      GMAIL_CLIENT_CONFIG_SECRET: ${{ secrets.GMAIL_CLIENT_CONFIG }}
+      GMAIL_TOKEN_JSON_SECRET: ${{ secrets.GMAIL_TOKEN_JSON }}
+      GMAIL_LABEL_NAME: Job Tracker
+      GMAIL_MAX_RESULTS: "50"
+      JOB_TRACKER_DRY_RUN: "false"
     steps:
+      - name: Check Central schedule window
+        id: schedule_gate
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          central_hour="$(TZ=America/Chicago date +'%H')"
+          central_minute="$(TZ=America/Chicago date +'%M')"
+          if [ "$central_hour" = "06" ] && [ "$central_minute" -ge 30 ] && [ "$central_minute" -le 45 ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping scheduled invocation because Central local time is not within the 06:30 AM to 06:45 AM run window."
+          fi
+
       - name: Checkout repo
+        if: steps.schedule_gate.outputs.should_run == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python
+        if: steps.schedule_gate.outputs.should_run == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
 
       - name: Install dependencies
+        if: steps.schedule_gate.outputs.should_run == 'true'
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Run tests
+        if: steps.schedule_gate.outputs.should_run == 'true'
         run: pytest
 
-      - name: Run Sprint 1 smoke test
-        run: python -m src.main --dry-run
+      - name: Validate required secrets
+        if: steps.schedule_gate.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          if [ -z "${GOOGLE_SHEET_ID}" ]; then
+            echo "::error::Missing required GitHub Secret: GOOGLE_SHEET_ID"
+            exit 1
+          fi
+          if [ -z "${GOOGLE_SERVICE_ACCOUNT_JSON}" ]; then
+            echo "::error::Missing required GitHub Secret: GOOGLE_SERVICE_ACCOUNT_JSON"
+            exit 1
+          fi
+
+      - name: Write temporary credential files
+        if: steps.schedule_gate.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          runner_temp = Path(os.environ["RUNNER_TEMP"])
+          github_env = Path(os.environ["GITHUB_ENV"])
+
+          def write_json_secret(secret_env_name: str, output_env_name: str, filename: str, required: bool = False) -> bool:
+              raw_value = os.environ.get(secret_env_name, "")
+              if not raw_value.strip():
+                  if required:
+                      raise ValueError(f"Missing required secret {secret_env_name}")
+                  return False
+              json.loads(raw_value)
+              path = runner_temp / filename
+              path.write_text(raw_value, encoding="utf-8")
+              path.chmod(0o600)
+              with github_env.open("a", encoding="utf-8") as handle:
+                  handle.write(f"{output_env_name}={path}\n")
+              return True
+
+          write_json_secret(
+              "GOOGLE_SERVICE_ACCOUNT_JSON",
+              "GOOGLE_APPLICATION_CREDENTIALS",
+              "google-service-account.json",
+              required=True,
+          )
+          write_json_secret("GMAIL_CLIENT_CONFIG_SECRET", "GMAIL_CLIENT_CONFIG", "gmail-client-config.json")
+          write_json_secret("GMAIL_TOKEN_JSON_SECRET", "GMAIL_TOKEN_JSON", "gmail-token.json")
+          PY
+
+      - name: Run job tracker
+        if: steps.schedule_gate.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          set +e
+          exit_code=0
+
+          run_tracker_step() {
+            local step_name="$1"
+            shift
+            echo "Running ${step_name}"
+            "$@"
+            local command_status=$?
+            if [ "$command_status" -ne 0 ]; then
+              echo "::error::${step_name} failed with exit code ${command_status}"
+              exit_code=1
+            fi
+          }
+
+          run_tracker_step "Static career pages" python -m src.main --static-pages-smoke-test
+
+          if [ -n "${GMAIL_CLIENT_CONFIG:-}" ] && [ -n "${GMAIL_TOKEN_JSON:-}" ]; then
+            run_tracker_step "Gmail alert ingestion" python -m src.main --gmail-alerts-smoke-test
+          else
+            echo "Skipping optional Gmail alert ingestion because Gmail secrets are not configured."
+          fi
+
+          run_tracker_step "Greenhouse, Lever, and lifecycle" python -m src.main --job-upsert-smoke-test
+
+          {
+            echo "### Job Tracker Daily Run"
+            echo ""
+            echo "Completed available tracker steps. Source-level failures are logged by the Python runner where possible."
+            echo ""
+            echo "Required secrets checked: GOOGLE_SHEET_ID and GOOGLE_SERVICE_ACCOUNT_JSON."
+            echo ""
+            echo "Optional Gmail ingestion runs only when GMAIL_CLIENT_CONFIG and GMAIL_TOKEN_JSON are configured."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          exit "$exit_code"
