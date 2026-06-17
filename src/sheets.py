@@ -12,6 +12,7 @@ from google.oauth2.service_account import Credentials
 from gspread.exceptions import APIError
 
 from src.models import JobPosting
+from src.schema import validate_record_headers_for_write
 from src.settings import Settings
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -154,6 +155,8 @@ class SheetClient:
         headers = self.worksheet_headers(worksheet_name)
         if not headers:
             raise ValueError(f"Worksheet {worksheet_name} has no header row")
+
+        validate_record_headers_for_write(worksheet_name, headers, record)
 
         normalized_record = {normalize_header_name(key): value for key, value in record.items()}
         matched_headers = [header for header in headers if normalize_header_name(header) in normalized_record]
