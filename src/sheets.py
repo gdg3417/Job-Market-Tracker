@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import re
+import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import gspread
 from google.oauth2.service_account import Credentials
+from gspread.exceptions import APIError
 
 from src.models import JobPosting
 from src.settings import Settings
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+T = TypeVar("T")
 
 
 def utc_now_iso() -> str:
@@ -22,6 +26,32 @@ def normalize_header_name(value: str) -> str:
     value = value.strip().lower()
     value = re.sub(r"[^a-z0-9]+", "_", value)
     return value.strip("_")
+
+
+def is_quota_error(error: APIError) -> bool:
+    response = getattr(error, "response", None)
+    status_code = getattr(response, "status_code", None)
+    if status_code == 429:
+        return True
+    message = str(error).lower()
+    return "quota exceeded" in message or "[429]" in message
+
+
+def with_quota_backoff(operation: Callable[[], T], *, operation_name: str) -> T:
+    delays = [65, 90, 120]
+    for attempt, delay_seconds in enumerate([0, *delays], start=1):
+        if delay_seconds:
+            print(
+                f"Sheets API quota hit during {operation_name}; waiting {delay_seconds} seconds before retry {attempt}.",
+                flush=True,
+            )
+            time.sleep(delay_seconds)
+        try:
+            return operation()
+        except APIError as exc:
+            if not is_quota_error(exc) or attempt > len(delays):
+                raise
+    raise RuntimeError(f"Sheets API operation failed after quota backoff: {operation_name}")
 
 
 def build_sprint2_run_record(
@@ -71,7 +101,7 @@ class SheetClient:
 
         credentials = Credentials.from_service_account_file(str(credentials_file), scopes=SCOPES)
         self.client = gspread.authorize(credentials)
-        self.workbook = self.client.open_by_key(sheet_id)
+        self.workbook = with_quota_backoff(lambda: self.client.open_by_key(sheet_id), operation_name="open workbook")
         self._worksheet_cache: dict[str, gspread.Worksheet] = {}
         self._header_cache: dict[str, list[str]] = {}
 
@@ -81,21 +111,39 @@ class SheetClient:
 
     def get_worksheet(self, worksheet_name: str) -> gspread.Worksheet:
         if worksheet_name not in self._worksheet_cache:
-            self._worksheet_cache[worksheet_name] = self.workbook.worksheet(worksheet_name)
+            self._worksheet_cache[worksheet_name] = with_quota_backoff(
+                lambda: self.workbook.worksheet(worksheet_name),
+                operation_name=f"load worksheet {worksheet_name}",
+            )
         return self._worksheet_cache[worksheet_name]
 
     def worksheet_headers(self, worksheet_name: str) -> list[str]:
         if worksheet_name not in self._header_cache:
             worksheet = self.get_worksheet(worksheet_name)
-            headers = worksheet.row_values(1)
+            headers = with_quota_backoff(
+                lambda: worksheet.row_values(1),
+                operation_name=f"read headers {worksheet_name}",
+            )
             self._header_cache[worksheet_name] = [header.strip() for header in headers]
         return self._header_cache[worksheet_name]
 
     def read_records(self, worksheet_name: str) -> list[dict[str, Any]]:
         worksheet = self.get_worksheet(worksheet_name)
-        records = worksheet.get_all_records(numericise_ignore=["all"])
+        records = with_quota_backoff(
+            lambda: worksheet.get_all_records(numericise_ignore=["all"]),
+            operation_name=f"read records {worksheet_name}",
+        )
         if worksheet_name not in self._header_cache:
-            self._header_cache[worksheet_name] = [header.strip() for header in worksheet.row_values(1)]
+            if records:
+                self._header_cache[worksheet_name] = [str(header).strip() for header in records[0].keys()]
+            else:
+                self._header_cache[worksheet_name] = [
+                    header.strip()
+                    for header in with_quota_backoff(
+                        lambda: worksheet.row_values(1),
+                        operation_name=f"read headers {worksheet_name}",
+                    )
+                ]
         return records
 
     def read_records_with_row_numbers(self, worksheet_name: str) -> list[tuple[int, dict[str, Any]]]:
@@ -117,7 +165,10 @@ class SheetClient:
     def append_record(self, worksheet_name: str, record: dict[str, Any]) -> None:
         worksheet = self.get_worksheet(worksheet_name)
         row = self._record_to_row(worksheet_name, record)
-        worksheet.append_row(row, value_input_option="USER_ENTERED")
+        with_quota_backoff(
+            lambda: worksheet.append_row(row, value_input_option="USER_ENTERED"),
+            operation_name=f"append row {worksheet_name}",
+        )
 
     def update_record(self, worksheet_name: str, row_number: int, record: dict[str, Any]) -> None:
         if row_number < 2:
@@ -128,7 +179,10 @@ class SheetClient:
         row = self._record_to_row(worksheet_name, record)
         end_cell = gspread.utils.rowcol_to_a1(row_number, len(headers))
         range_name = f"A{row_number}:{end_cell}"
-        worksheet.update(range_name=range_name, values=[row], value_input_option="USER_ENTERED")
+        with_quota_backoff(
+            lambda: worksheet.update(range_name=range_name, values=[row], value_input_option="USER_ENTERED"),
+            operation_name=f"update row {worksheet_name}!{row_number}",
+        )
 
     def append_run(self, record: dict[str, Any]) -> None:
         self.append_record("Runs", record)
