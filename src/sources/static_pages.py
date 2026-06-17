@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -204,8 +205,15 @@ def _source_matches_static_page(company_row: dict[str, Any]) -> bool:
         "custom_ats",
         "career site",
         "careers site",
+        "workday",
+        "icims",
+        "oracle",
+        "jobvite",
+        "smartrecruiters",
+        "ashby",
+        "bamboohr",
     ]
-    return any(term in text for term in explicit_static_terms) or any(term in source_url.lower() for term in ["career", "job"])
+    return any(term in text for term in explicit_static_terms) or any(term in source_url.lower() for term in ["career", "job", "recruit"])
 
 
 def static_page_company_rows(company_rows: list[dict[str, Any]], active_only: bool = True) -> list[dict[str, Any]]:
@@ -332,12 +340,22 @@ def _best_title_from_anchor(anchor: Any, url: str) -> str:
     return url_title or anchor_text
 
 
-def _link_job_score(title: str, url: str, include_matches: list[str]) -> tuple[int, list[str]]:
+def _anchor_context_text(anchor: Any) -> str:
+    parent = anchor.find_parent(["li", "tr", "article", "section", "div"])
+    if parent is None:
+        return ""
+    return clean_text(parent.get_text(" ", strip=True))[:1000]
+
+
+def _link_job_score(title: str, url: str, include_matches: list[str], source_kind: str = "link") -> tuple[int, list[str]]:
     evidence: list[str] = []
     score = 0
     text = f"{title} {url}".lower()
     path_parts = [part for part in urlsplit(url).path.lower().split("/") if part]
 
+    if source_kind == "json_ld":
+        score += 5
+        evidence.append("json_ld_jobposting")
     if any(part in JOB_PATH_TERMS for part in path_parts):
         score += 2
         evidence.append("job_path")
@@ -372,6 +390,53 @@ def _candidate_source_id(url: str) -> str:
     return normalized or url
 
 
+def _json_ld_type_matches(value: Any, expected_type: str) -> bool:
+    if isinstance(value, str):
+        return value.lower() == expected_type.lower()
+    if isinstance(value, list):
+        return any(_json_ld_type_matches(item, expected_type) for item in value)
+    return False
+
+
+def _iter_json_ld_objects(value: Any):
+    if isinstance(value, dict):
+        if "@graph" in value:
+            yield from _iter_json_ld_objects(value.get("@graph"))
+        yield value
+        for child_value in value.values():
+            if isinstance(child_value, (dict, list)):
+                yield from _iter_json_ld_objects(child_value)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _iter_json_ld_objects(item)
+
+
+def _json_ld_location(value: Any, fallback: str = "") -> str:
+    if isinstance(value, list):
+        locations = [_json_ld_location(item, fallback="") for item in value]
+        return "; ".join(location for location in locations if location) or fallback
+    if not isinstance(value, dict):
+        return clean_text(value) or fallback
+
+    address = value.get("address")
+    if isinstance(address, dict):
+        parts = [
+            address.get("addressLocality"),
+            address.get("addressRegion"),
+            address.get("addressCountry"),
+        ]
+        location = ", ".join(clean_text(part) for part in parts if clean_text(part))
+        return location or fallback
+    return clean_text(address) or clean_text(value.get("name")) or fallback
+
+
+def _json_ld_url(value: dict[str, Any], source_url: str) -> str:
+    raw_url = value.get("url") or value.get("sameAs") or value.get("identifier") or source_url
+    if isinstance(raw_url, dict):
+        raw_url = raw_url.get("value") or raw_url.get("url") or source_url
+    return normalize_url(urljoin(source_url, clean_text(raw_url)))
+
+
 @dataclass(slots=True)
 class StaticPageCandidate:
     title: str
@@ -380,10 +445,67 @@ class StaticPageCandidate:
     confidence: str
     score: int
     evidence: list[str] = field(default_factory=list)
+    description: str = ""
+    source_kind: str = "link"
 
     @property
     def requires_manual_review(self) -> bool:
         return self.confidence == "low"
+
+
+def _extract_json_ld_candidates(
+    soup: BeautifulSoup,
+    source_url: str,
+    *,
+    company_row: dict[str, Any],
+    include_terms: list[str],
+    exclude_terms: list[str],
+    seen_urls: set[str],
+) -> list[StaticPageCandidate]:
+    candidates: list[StaticPageCandidate] = []
+    fallback_location = clean_text(company_row.get("location_focus"))
+
+    for script in soup.find_all("script", attrs={"type": re.compile("ld\\+json", re.IGNORECASE)}):
+        try:
+            payload = json.loads(script.string or script.get_text(" ", strip=True) or "")
+        except json.JSONDecodeError:
+            continue
+
+        for item in _iter_json_ld_objects(payload):
+            if not isinstance(item, dict) or not _json_ld_type_matches(item.get("@type"), "JobPosting"):
+                continue
+
+            title = clean_text(item.get("title") or item.get("name"))
+            url = _json_ld_url(item, source_url)
+            description = clean_text(item.get("description") or item.get("responsibilities") or item.get("qualifications"))
+            location = _json_ld_location(item.get("jobLocation"), fallback=fallback_location)
+            if not title or not url or url in seen_urls or _ignored_url(url):
+                continue
+
+            combined = f"{title} {url} {description} {location}".lower()
+            if _matching_terms(combined, exclude_terms):
+                continue
+            include_matches = _matching_terms(combined, include_terms)
+            score, evidence = _link_job_score(title, url, include_matches, source_kind="json_ld")
+            if score < 4 and not include_matches:
+                continue
+
+            seen_urls.add(url)
+            confidence = _confidence_from_score(score, title, include_matches)
+            candidates.append(
+                StaticPageCandidate(
+                    title=title,
+                    url=url,
+                    location=location,
+                    confidence=confidence,
+                    score=score,
+                    evidence=evidence,
+                    description=description,
+                    source_kind="json_ld",
+                )
+            )
+
+    return candidates
 
 
 def extract_static_page_candidates(
@@ -399,6 +521,17 @@ def extract_static_page_candidates(
     seen_urls: set[str] = set()
     location = clean_text(company_row.get("location_focus"))
 
+    candidates.extend(
+        _extract_json_ld_candidates(
+            soup,
+            source_url,
+            company_row=company_row,
+            include_terms=include_terms,
+            exclude_terms=exclude_terms,
+            seen_urls=seen_urls,
+        )
+    )
+
     for anchor in soup.find_all("a", href=True):
         raw_href = clean_text(anchor.get("href"))
         if not raw_href or raw_href.startswith("#"):
@@ -411,7 +544,8 @@ def extract_static_page_candidates(
         if not title:
             continue
 
-        combined = f"{title} {url}".lower()
+        context_text = _anchor_context_text(anchor)
+        combined = f"{title} {url} {context_text}".lower()
         if _matching_terms(combined, exclude_terms):
             continue
         include_matches = _matching_terms(combined, include_terms)
@@ -429,6 +563,8 @@ def extract_static_page_candidates(
                 confidence=confidence,
                 score=score,
                 evidence=evidence,
+                description=context_text,
+                source_kind="link",
             )
         )
 
@@ -441,7 +577,9 @@ def candidate_to_job(candidate: StaticPageCandidate, company_row: dict[str, Any]
     description = clean_text(
         " ".join(
             [
+                candidate.description,
                 f"Static extraction confidence: {candidate.confidence}.",
+                f"Static source kind: {candidate.source_kind}.",
                 review_flag,
                 f"Static link score: {candidate.score}.",
                 f"Evidence: {evidence}." if evidence else "",
@@ -467,6 +605,7 @@ def mark_static_confidence(job: JobPosting, candidate: StaticPageCandidate) -> J
     evidence = ", ".join(candidate.evidence[:6])
     suffix_parts = [
         f"static_confidence={candidate.confidence}",
+        f"static_source_kind={candidate.source_kind}",
         f"static_link_score={candidate.score}",
         "manual_review=true" if candidate.requires_manual_review else "manual_review=false",
     ]
@@ -605,7 +744,7 @@ def fetch_static_page_board(
             started_at=started_at,
             finished_at=finished_at,
         )
-    except (requests.RequestException, ValueError) as exc:
+    except (requests.RequestException, ValueError, TypeError, AttributeError) as exc:
         finished_at = utc_now_iso()
         return StaticPageSourceResult(
             company_name=company_name,
