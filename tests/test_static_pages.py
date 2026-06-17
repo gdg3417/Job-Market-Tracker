@@ -76,6 +76,34 @@ def html_payload():
     """
 
 
+def json_ld_html_payload():
+    return """
+    <html>
+      <head>
+        <script type="application/ld+json">
+          {
+            "@context": "https://schema.org",
+            "@type": "JobPosting",
+            "title": "Director, Commercial Strategy",
+            "description": "Own commercial strategy, revenue growth, product line performance, executive leadership updates, and operating cadence.",
+            "url": "https://www.acme.example/jobs/director-commercial-strategy-12345",
+            "jobLocation": {
+              "@type": "Place",
+              "address": {
+                "@type": "PostalAddress",
+                "addressLocality": "Plano",
+                "addressRegion": "TX",
+                "addressCountry": "US"
+              }
+            }
+          }
+        </script>
+      </head>
+      <body></body>
+    </html>
+    """
+
+
 def scoring_rules():
     return {
         "score_scale": 100,
@@ -136,6 +164,22 @@ def test_static_page_company_rows_filters_active_static_sources():
     assert filtered[0]["company_name"] == "Acme Industrial"
 
 
+def test_static_page_company_rows_accepts_common_non_greenhouse_ats_sources():
+    rows = [
+        company_row(
+            company_name="Workday Co",
+            source_type="workday",
+            ats_platform="workday",
+            source_url="https://acme.wd1.myworkdayjobs.com/en-US/acme",
+        )
+    ]
+
+    filtered = static_page_company_rows(rows)
+
+    assert len(filtered) == 1
+    assert filtered[0]["company_name"] == "Workday Co"
+
+
 def test_search_filter_terms_uses_config_searches_when_present():
     include_terms, exclude_terms = search_filter_terms(search_rows())
 
@@ -161,6 +205,22 @@ def test_extract_static_page_candidates_filters_unrelated_and_excluded_links():
     assert all("linkedin" not in url for url in urls)
 
 
+def test_extract_static_page_candidates_reads_json_ld_job_postings():
+    candidates = extract_static_page_candidates(
+        json_ld_html_payload(),
+        "https://www.acme.example/careers",
+        company_row=company_row(),
+        search_rows=search_rows(),
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].title == "Director, Commercial Strategy"
+    assert candidates[0].source_kind == "json_ld"
+    assert candidates[0].confidence == "high"
+    assert candidates[0].location == "Plano, TX, US"
+    assert "operating cadence" in candidates[0].description
+
+
 def test_fetch_static_page_jobs_scores_and_marks_confidence():
     session = FakeSession(FakeResponse(html_payload()))
 
@@ -178,6 +238,24 @@ def test_fetch_static_page_jobs_scores_and_marks_confidence():
     assert jobs[0].total_score > 0
     assert "static_confidence=" in jobs[0].score_explanation
     assert session.requested_urls[0][0] == "https://www.acme.example/careers"
+
+
+def test_fetch_static_page_jobs_scores_json_ld_description():
+    session = FakeSession(FakeResponse(json_ld_html_payload()))
+
+    jobs = fetch_static_page_jobs(
+        company_row(),
+        scoring_rules=scoring_rules(),
+        search_rows=search_rows(),
+        session=session,
+        seen_date="2026-06-16",
+    )
+
+    assert len(jobs) == 1
+    assert jobs[0].title == "Director, Commercial Strategy"
+    assert jobs[0].location == "Plano, TX, US"
+    assert "operating cadence" in jobs[0].description_text
+    assert "static_source_kind=json_ld" in jobs[0].score_explanation
 
 
 def test_fetch_static_page_board_handles_fetch_error_without_crashing():
