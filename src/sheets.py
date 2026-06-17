@@ -72,22 +72,31 @@ class SheetClient:
         credentials = Credentials.from_service_account_file(str(credentials_file), scopes=SCOPES)
         self.client = gspread.authorize(credentials)
         self.workbook = self.client.open_by_key(sheet_id)
+        self._worksheet_cache: dict[str, gspread.Worksheet] = {}
+        self._header_cache: dict[str, list[str]] = {}
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "SheetClient":
         return cls(settings.google_sheet_id, settings.google_application_credentials)
 
     def get_worksheet(self, worksheet_name: str) -> gspread.Worksheet:
-        return self.workbook.worksheet(worksheet_name)
+        if worksheet_name not in self._worksheet_cache:
+            self._worksheet_cache[worksheet_name] = self.workbook.worksheet(worksheet_name)
+        return self._worksheet_cache[worksheet_name]
 
     def worksheet_headers(self, worksheet_name: str) -> list[str]:
-        worksheet = self.get_worksheet(worksheet_name)
-        headers = worksheet.row_values(1)
-        return [header.strip() for header in headers]
+        if worksheet_name not in self._header_cache:
+            worksheet = self.get_worksheet(worksheet_name)
+            headers = worksheet.row_values(1)
+            self._header_cache[worksheet_name] = [header.strip() for header in headers]
+        return self._header_cache[worksheet_name]
 
     def read_records(self, worksheet_name: str) -> list[dict[str, Any]]:
         worksheet = self.get_worksheet(worksheet_name)
-        return worksheet.get_all_records(numericise_ignore=["all"])
+        records = worksheet.get_all_records(numericise_ignore=["all"])
+        if worksheet_name not in self._header_cache:
+            self._header_cache[worksheet_name] = [header.strip() for header in worksheet.row_values(1)]
+        return records
 
     def read_records_with_row_numbers(self, worksheet_name: str) -> list[tuple[int, dict[str, Any]]]:
         records = self.read_records(worksheet_name)
