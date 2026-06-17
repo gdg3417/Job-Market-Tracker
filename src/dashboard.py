@@ -150,31 +150,11 @@ def _sort_jobs(jobs: list[JobPosting]) -> list[JobPosting]:
 def build_digest_rows(jobs: list[JobPosting], *, as_of: str | None = None) -> list[list[Any]]:
     as_of_date = as_of or today_iso()
     sections: list[tuple[str, list[JobPosting], int]] = [
-        (
-            "Immediate review",
-            [job for job in jobs if _is_open(job) and (job.alert_tier == "immediate_review" or job.total_score >= 85)],
-            25,
-        ),
-        (
-            "Strong fit",
-            [job for job in jobs if _is_open(job) and 75 <= job.total_score < 85],
-            25,
-        ),
-        (
-            "P&L pathway",
-            [job for job in jobs if _is_pnl_pathway_job(job)],
-            25,
-        ),
-        (
-            "Remote, hybrid, or short commute",
-            [job for job in jobs if _is_remote_or_short_commute(job) and job.total_score >= 65],
-            25,
-        ),
-        (
-            "New this week",
-            [job for job in jobs if _is_open(job) and _is_recent(job.first_seen_date, as_of=as_of_date)],
-            50,
-        ),
+        ("Immediate review", [job for job in jobs if _is_open(job) and (job.alert_tier == "immediate_review" or job.total_score >= 85)], 25),
+        ("Strong fit", [job for job in jobs if _is_open(job) and 75 <= job.total_score < 85], 25),
+        ("P&L pathway", [job for job in jobs if _is_pnl_pathway_job(job)], 25),
+        ("Remote, hybrid, or short commute", [job for job in jobs if _is_remote_or_short_commute(job) and job.total_score >= 65], 25),
+        ("New this week", [job for job in jobs if _is_open(job) and _is_recent(job.first_seen_date, as_of=as_of_date)], 50),
         (
             "Closed or likely closed this week",
             [
@@ -189,11 +169,7 @@ def build_digest_rows(jobs: list[JobPosting], *, as_of: str | None = None) -> li
             ],
             25,
         ),
-        (
-            "Missing salary review",
-            [job for job in jobs if _is_open(job) and job.total_score >= 65 and not _has_salary(job)],
-            25,
-        ),
+        ("Missing salary review", [job for job in jobs if _is_open(job) and job.total_score >= 65 and not _has_salary(job)], 25),
     ]
 
     rows: list[list[Any]] = []
@@ -208,19 +184,17 @@ def build_dashboard_values() -> list[list[Any]]:
         ["Job Market Tracker Dashboard", "", "", "", "", "", "", "", "", "", "", ""],
         ["Last refreshed", "=NOW()", "", "", "", "", "", "", "", "", "", ""],
         ["", "", "", "", "", "", "", "", "", "", "", ""],
-        ["Weekly review metrics", "Formula", "Value", "", "Immediate review view", "", "", "", "", "", "", ""],
-        ["New jobs this week", "", '=COUNTIFS(Jobs!P2:P,">="&TODAY()-7,Jobs!S2:S,"open")+COUNTIFS(Jobs!P2:P,">="&TODAY()-7,Jobs!S2:S,"reopened")', "", '=SORT(FILTER({Jobs!B2:B,Jobs!C2:C,Jobs!D2:D,Jobs!V2:V,Jobs!AF2:AF,Jobs!AG2:AG,Jobs!N2:N},((Jobs!S2:S="open")+(Jobs!S2:S="reopened"))*(Jobs!AG2:AG="immediate_review")),5,FALSE)', "", "", "", "", "", "", ""],
-        ["Immediate review jobs", "", '=COUNTIFS(Jobs!AG2:AG,"immediate_review",Jobs!S2:S,"open")+COUNTIFS(Jobs!AG2:AG,"immediate_review",Jobs!S2:S,"reopened")', "", "", "", "", "", "", "", "", ""],
-        ["Strong fit open jobs", "", '=COUNTIFS(Jobs!AG2:AG,"strong_fit",Jobs!S2:S,"open")+COUNTIFS(Jobs!AG2:AG,"strong_fit",Jobs!S2:S,"reopened")', "", "", "", "", "", "", "", "", ""],
-        ["Track-only open jobs", "", '=COUNTIFS(Jobs!AG2:AG,"track_only",Jobs!S2:S,"open")+COUNTIFS(Jobs!AG2:AG,"track_only",Jobs!S2:S,"reopened")', "", "", "", "", "", "", "", "", ""],
-        ["P&L pathway jobs", "", '=COUNTIFS(Jobs!Y2:Y,">=14",Jobs!S2:S,"open")+COUNTIFS(Jobs!Y2:Y,">=14",Jobs!S2:S,"reopened")', "", "", "", "", "", "", "", "", ""],
-        ["Remote jobs", "", '=COUNTIFS(Jobs!F2:F,"*remote*",Jobs!S2:S,"open")+COUNTIFS(Jobs!F2:F,"*remote*",Jobs!S2:S,"reopened")+COUNTIFS(Jobs!E2:E,"*remote*",Jobs!S2:S,"open")+COUNTIFS(Jobs!E2:E,"*remote*",Jobs!S2:S,"reopened")', "", "", "", "", "", "", "", "", ""],
-        ["Jobs within 15 minutes", "", '=COUNTIFS(Jobs!G2:G,"<=15",Jobs!S2:S,"open")+COUNTIFS(Jobs!G2:G,"<=15",Jobs!S2:S,"reopened")', "", "", "", "", "", "", "", "", ""],
-        ["Jobs within 30 minutes", "", '=COUNTIFS(Jobs!G2:G,"<=30",Jobs!S2:S,"open")+COUNTIFS(Jobs!G2:G,"<=30",Jobs!S2:S,"reopened")', "", "", "", "", "", "", "", "", ""],
-        ["Closed jobs this week", "", '=COUNTIFS(Jobs!T2:T,">="&TODAY()-7,Jobs!S2:S,"confirmed_closed")+COUNTIFS(Jobs!S2:S,"likely_closed",Jobs!Q2:Q,">="&TODAY()-7)', "", "", "", "", "", "", "", "", ""],
-        ["Jobs with missing salary", "", '=COUNTIFS(Jobs!H2:H,"",Jobs!I2:I,"",Jobs!K2:K,"",Jobs!S2:S,"open")+COUNTIFS(Jobs!H2:H,"",Jobs!I2:I,"",Jobs!K2:K,"",Jobs!S2:S,"reopened")', "", "", "", "", "", "", "", "", ""],
-        ["", "", "", "", "", "", "", "", "", "", "", ""],
-        ["Digest instructions", "Review Digest tab first. Dashboard sections below are formula-driven summary tables.", "", "", "", "", "", "", "", "", "", ""],
+        ["Weekly review metrics", "", "Value", "", "Digest view", "", "", "", "", "", "", ""],
+        ["New jobs this week", "", '=COUNTIFS(Jobs!P2:P,">="&TODAY()-7,Jobs!S2:S,"open")+COUNTIFS(Jobs!P2:P,">="&TODAY()-7,Jobs!S2:S,"reopened")', "", "See Digest tab section: New this week", "", "", "", "", "", "", ""],
+        ["Immediate review jobs", "", '=COUNTIFS(Jobs!AG2:AG,"immediate_review",Jobs!S2:S,"open")+COUNTIFS(Jobs!AG2:AG,"immediate_review",Jobs!S2:S,"reopened")', "", "See Digest tab section: Immediate review", "", "", "", "", "", "", ""],
+        ["Strong fit open jobs", "", '=COUNTIFS(Jobs!AG2:AG,"strong_fit",Jobs!S2:S,"open")+COUNTIFS(Jobs!AG2:AG,"strong_fit",Jobs!S2:S,"reopened")', "", "See Digest tab section: Strong fit", "", "", "", "", "", "", ""],
+        ["Track-only open jobs", "", '=COUNTIFS(Jobs!AG2:AG,"track_only",Jobs!S2:S,"open")+COUNTIFS(Jobs!AG2:AG,"track_only",Jobs!S2:S,"reopened")', "", "Tracked, not included unless also new or missing salary", "", "", "", "", "", "", ""],
+        ["P&L pathway jobs", "", '=COUNTIFS(Jobs!Y2:Y,">=14",Jobs!S2:S,"open")+COUNTIFS(Jobs!Y2:Y,">=14",Jobs!S2:S,"reopened")', "", "See Digest tab section: P&L pathway", "", "", "", "", "", "", ""],
+        ["Remote jobs", "", '=COUNTIFS(Jobs!F2:F,"*remote*",Jobs!S2:S,"open")+COUNTIFS(Jobs!F2:F,"*remote*",Jobs!S2:S,"reopened")+COUNTIFS(Jobs!E2:E,"*remote*",Jobs!S2:S,"open")+COUNTIFS(Jobs!E2:E,"*remote*",Jobs!S2:S,"reopened")', "", "See Digest tab section: Remote, hybrid, or short commute", "", "", "", "", "", "", ""],
+        ["Jobs within 15 minutes", "", '=COUNTIFS(Jobs!G2:G,"<=15",Jobs!S2:S,"open")+COUNTIFS(Jobs!G2:G,"<=15",Jobs!S2:S,"reopened")', "", "Short commute subset", "", "", "", "", "", "", ""],
+        ["Jobs within 30 minutes", "", '=COUNTIFS(Jobs!G2:G,"<=30",Jobs!S2:S,"open")+COUNTIFS(Jobs!G2:G,"<=30",Jobs!S2:S,"reopened")', "", "Short commute subset", "", "", "", "", "", "", ""],
+        ["Closed jobs this week", "", '=COUNTIFS(Jobs!T2:T,">="&TODAY()-7,Jobs!S2:S,"confirmed_closed")+COUNTIFS(Jobs!S2:S,"likely_closed",Jobs!Q2:Q,">="&TODAY()-7)', "", "See Digest tab section: Closed or likely closed this week", "", "", "", "", "", "", ""],
+        ["Jobs with missing salary", "", '=COUNTIFS(Jobs!H2:H,"",Jobs!I2:I,"",Jobs!K2:K,"",Jobs!S2:S,"open")+COUNTIFS(Jobs!H2:H,"",Jobs!I2:I,"",Jobs!K2:K,"",Jobs!S2:S,"reopened")', "", "See Digest tab section: Missing salary review", "", "", "", "", "", "", ""],
         ["", "", "", "", "", "", "", "", "", "", "", ""],
         ["Jobs by role family", "", "", "Jobs by company", "", "", "Jobs by source", "", "", "Jobs by alert tier", "", ""],
         ['=QUERY(Jobs!V2:V,"select V, count(V) where V is not null group by V order by count(V) desc label V \'role_family\', count(V) \'openings\'",0)', "", "", '=QUERY(Jobs!B2:B,"select B, count(B) where B is not null group by B order by count(B) desc label B \'company\', count(B) \'openings\'",0)', "", "", '=QUERY(Jobs!L2:L,"select L, count(L) where L is not null group by L order by count(L) desc label L \'source\', count(L) \'openings\'",0)', "", "", '=QUERY(Jobs!AG2:AG,"select AG, count(AG) where AG is not null group by AG order by count(AG) desc label AG \'alert_tier\', count(AG) \'openings\'",0)', "", ""],
@@ -228,14 +202,12 @@ def build_dashboard_values() -> list[list[Any]]:
         ["", "", "", "", "", "", "", "", "", "", "", ""],
         ["", "", "", "", "", "", "", "", "", "", "", ""],
         ["", "", "", "", "", "", "", "", "", "", "", ""],
-        ["Salary range by role family", "", "", "Average days open by role family", "", "", "Companies with repeat postings", "", "", "", "", ""],
-        ['=QUERY(Jobs!V2:K,"select V, min(H), max(I), avg(K) where V is not null group by V label V \'role_family\', min(H) \'min_salary\', max(I) \'max_salary\', avg(K) \'avg_total_comp\'",0)', "", "", '=QUERY(Jobs!V2:U,"select V, avg(U) where V is not null group by V label V \'role_family\', avg(U) \'avg_days_open\'",0)', "", "", '=QUERY(Jobs!B2:C,"select B, count(C) where B is not null group by B having count(C) > 1 order by count(C) desc label B \'company\', count(C) \'postings\'",0)', "", "", "", "", ""],
+        ["Salary range by role family", "", "", "", "", "Average days open by role family", "", "", "Companies with repeat postings", "", "", ""],
+        ['=QUERY({Jobs!V2:V,Jobs!H2:H,Jobs!I2:I,Jobs!K2:K},"select Col1, min(Col2), max(Col3), avg(Col4) where Col1 is not null group by Col1 label Col1 \'role_family\', min(Col2) \'min_salary\', max(Col3) \'max_salary\', avg(Col4) \'avg_total_comp\'",0)', "", "", "", "", '=QUERY({Jobs!V2:V,Jobs!U2:U},"select Col1, avg(Col2) where Col1 is not null group by Col1 label Col1 \'role_family\', avg(Col2) \'avg_days_open\'",0)', "", "", '=QUERY(Jobs!B2:C,"select B, count(C) where B is not null group by B having count(C) > 1 order by count(C) desc label B \'company\', count(C) \'postings\'",0)', "", "", ""],
         ["", "", "", "", "", "", "", "", "", "", "", ""],
         ["", "", "", "", "", "", "", "", "", "", "", ""],
         ["", "", "", "", "", "", "", "", "", "", "", ""],
-        ["", "", "", "", "", "", "", "", "", "", "", ""],
-        ["Remote and short-commute jobs", "", "", "P&L pathway jobs", "", "", "Missing salary jobs", "", "", "", "", ""],
-        ['=SORT(FILTER({Jobs!B2:B,Jobs!C2:C,Jobs!D2:D,Jobs!F2:F,Jobs!G2:G,Jobs!AF2:AF,Jobs!N2:N},((Jobs!S2:S="open")+(Jobs!S2:S="reopened"))*((REGEXMATCH(LOWER(Jobs!F2:F),"remote|hybrid"))+(Jobs!G2:G<=30))),6,FALSE)', "", "", '=SORT(FILTER({Jobs!B2:B,Jobs!C2:C,Jobs!D2:D,Jobs!Y2:Y,Jobs!AF2:AF,Jobs!N2:N},((Jobs!S2:S="open")+(Jobs!S2:S="reopened"))*(Jobs!Y2:Y>=14)),5,FALSE)', "", "", '=SORT(FILTER({Jobs!B2:B,Jobs!C2:C,Jobs!D2:D,Jobs!AF2:AF,Jobs!N2:N},((Jobs!S2:S="open")+(Jobs!S2:S="reopened"))*(Jobs!H2:H="")*(Jobs!I2:I="")*(Jobs!K2:K="")),4,FALSE)', "", "", "", "", ""],
+        ["Filtered job views", "Digest tab contains generated sections for immediate review, strong fit, P&L pathway, remote or short commute, new this week, recently closed, and missing salary.", "", "", "", "", "", "", "", "", "", ""],
     ]
 
 
@@ -320,11 +292,7 @@ def run_dashboard_digest_refresh() -> dict[str, Any]:
     settings = load_settings()
     sheet_client = SheetClient.from_settings(settings)
     result = apply_dashboard_and_digest(sheet_client)
-    return {
-        "run_mode": "sprint_11_dashboard_digest",
-        "status": "success",
-        **result.to_dict(),
-    }
+    return {"run_mode": "sprint_11_dashboard_digest", "status": "success", **result.to_dict()}
 
 
 def parse_args() -> argparse.Namespace:
