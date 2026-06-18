@@ -138,8 +138,13 @@ def _detected_alert_origin(subject: str, sender: str, url: str) -> str:
 
 
 def _looks_like_location(line: str) -> bool:
-    lower = line.lower()
-    return any(hint in lower for hint in LOCATION_HINTS) or bool(re.search(r"\b[A-Z][a-zA-Z .'-]+,\s*[A-Z]{2}\b", line))
+    normalized = clean_text(line)
+    lower = normalized.lower()
+    if re.search(r"\b[A-Z][a-zA-Z .'-]+,\s*[A-Z]{2}\b", normalized):
+        return True
+    if re.fullmatch(r"(remote|hybrid)", lower):
+        return True
+    return lower in LOCATION_HINTS
 
 
 def _host_matches(host: str, suffix: str) -> bool:
