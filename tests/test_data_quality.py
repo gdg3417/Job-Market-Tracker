@@ -25,11 +25,25 @@ def test_alert_header_titles_are_rejected():
         "Jobs Near Me Jobs in my city",
         "New jobs match your preferences.",
         "Your job alert for project manager in Dallas",
+        "Your job alert has been created: Revenue Strategy in Dallas, Texas, United States.",
     ]
 
     for title in bad_titles:
         reasons = validate_job_quality(make_job(title=title, url="https://www.linkedin.com/jobs/view/4242424242", source="gmail_alert"))
         assert "generic_alert_or_search_title" in reasons or "title_looks_like_alert_metadata" in reasons
+
+
+def test_alert_confirmation_company_text_is_rejected():
+    reasons = validate_job_quality(
+        make_job(
+            title="Revenue Strategy Senior Manager / Director",
+            company="You’ll receive notifications when new jobs are posted that match your search preferences.",
+            url="https://www.linkedin.com/jobs/view/4242424242",
+            source="gmail_alert",
+        )
+    )
+
+    assert "company_looks_like_alert_metadata" in reasons
 
 
 def test_generic_board_and_tracking_urls_are_rejected():
