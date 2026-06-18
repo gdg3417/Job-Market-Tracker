@@ -160,11 +160,19 @@ def build_digest_rows(jobs: list[JobPosting], *, as_of: str | None = None) -> li
             [
                 job
                 for job in jobs
-                if job.status in {"likely_closed", "confirmed_closed"}
-                and (
-                    _is_recent(job.closed_date, as_of=as_of_date)
-                    or _is_recent(job.updated_at, as_of=as_of_date)
-                    or _is_recent(job.last_seen_date, as_of=as_of_date)
+                if (
+                    (
+                        job.status == "confirmed_closed"
+                        and _is_recent(job.closed_date, as_of=as_of_date)
+                    )
+                    or (
+                        job.status == "likely_closed"
+                        and (
+                            _is_recent(job.closed_date, as_of=as_of_date)
+                            or _is_recent(job.updated_at, as_of=as_of_date)
+                            or _is_recent(job.last_seen_date, as_of=as_of_date)
+                        )
+                    )
                 )
             ],
             25,
