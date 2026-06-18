@@ -105,8 +105,6 @@ NAVIGATION_PATH_PARTS = {
     "browse",
     "categories",
     "category",
-    "company",
-    "companies",
     "help",
     "home",
     "job-alert",
@@ -139,6 +137,7 @@ GENERIC_JOB_PATHS = {
     "/positions",
     "/search",
 }
+JOB_PATH_TERMS = {"job", "jobs", "opening", "openings", "position", "positions", "requisition", "careers", "career"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +168,10 @@ def _parts(url: str):
 
 def _path_parts(path: str) -> list[str]:
     return [part for part in re.split(r"[/-]+", path.lower()) if part]
+
+
+def _slash_path_parts(path: str) -> list[str]:
+    return [part for part in path.lower().split("/") if part]
 
 
 def _query_keys(query: str) -> set[str]:
@@ -216,15 +219,25 @@ def _is_builtin_direct_job(path: str) -> bool:
     return bool(re.search(r"/(?:job|jobs)/[^/]+/\d+", normalized) or re.search(r"/(?:job|jobs)/\d+", normalized))
 
 
+def _is_lever_direct_job(host: str, path: str) -> bool:
+    if not _host_matches(host, "jobs.lever.co"):
+        return False
+    slash_parts = _slash_path_parts(path)
+    if len(slash_parts) < 2:
+        return False
+    return not (set(_path_parts(path)) & NAVIGATION_PATH_PARTS)
+
+
 def _has_direct_posting_shape(path: str) -> bool:
     normalized = path.lower().rstrip("/")
-    parts = _path_parts(normalized)
-    if not parts:
+    split_parts = _path_parts(normalized)
+    slash_parts = _slash_path_parts(normalized)
+    if not split_parts:
         return False
     if re.search(r"\d{4,}", normalized):
-        return any(part in {"job", "jobs", "opening", "openings", "position", "positions", "requisition", "careers", "career"} for part in parts)
-    if len(parts) >= 2 and any(part in {"job", "jobs", "opening", "openings", "position", "positions", "careers", "career"} for part in parts):
-        last_part = parts[-1]
+        return any(part in JOB_PATH_TERMS for part in split_parts)
+    if len(slash_parts) >= 2 and any(part in JOB_PATH_TERMS for part in split_parts):
+        last_part = slash_parts[-1]
         return len(last_part) >= 8 and last_part not in NAVIGATION_PATH_PARTS
     return False
 
@@ -246,6 +259,8 @@ def job_url_rejection_reason(url: str, source_primary: str = "") -> str:
         return "tracking_or_static_asset_host"
     if any(path.endswith(extension) for extension in STATIC_ASSET_EXTENSIONS):
         return "static_asset_url"
+    if _is_lever_direct_job(host, path):
+        return ""
     if path in GENERIC_JOB_PATHS:
         return "generic_job_board_or_career_navigation_page"
     if path_segments & NAVIGATION_PATH_PARTS:
