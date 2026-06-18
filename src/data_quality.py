@@ -234,6 +234,8 @@ def _has_direct_posting_shape(path: str) -> bool:
     slash_parts = _slash_path_parts(normalized)
     if not split_parts:
         return False
+    if re.search(r"/(?:job|jobs|opening|openings|position|positions|requisition|careers|career)/\d+\b", normalized):
+        return True
     if re.search(r"\d{4,}", normalized):
         return any(part in JOB_PATH_TERMS for part in split_parts)
     if len(slash_parts) >= 2 and any(part in JOB_PATH_TERMS for part in split_parts):
