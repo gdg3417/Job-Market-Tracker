@@ -57,6 +57,20 @@ role_family_keywords:
     - category strategy
     - product strategy
     - portfolio management
+    - assortment strategy
+    - merchandising strategy
+  Watch and Consumer Products Strategy:
+    - watch industry
+    - timepiece
+    - luxury goods
+    - consumer products strategy
+    - brand strategy
+    - retail strategy
+    - wholesale strategy
+    - assortment strategy
+    - merchandising strategy
+    - demand planning
+    - inventory productivity
   Chief of Staff:
     - chief of staff
     - office of the CEO
@@ -74,6 +88,7 @@ role_family_fit:
   Business Insights: 5
   Corporate Strategy: 5
   Product Line Management: 6
+  Watch and Consumer Products Strategy: 6
   Chief of Staff: 6
   Finance Transformation: 4
   FP&A: 1
@@ -105,11 +120,14 @@ positive_keywords:
     - business unit
     - business unit leader
     - product line ownership
+    - product line profitability
     - segment strategy
     - segment ownership
+    - category ownership
     - category management
     - category strategy
     - portfolio ownership
+    - assortment strategy
   growth_ownership:
     - revenue strategy
     - revenue growth
@@ -124,6 +142,11 @@ positive_keywords:
     - market expansion
     - profitable growth
     - operating income
+    - retail strategy
+    - wholesale strategy
+    - channel strategy
+    - brand growth
+    - inventory productivity
   executive_exposure:
     - executive leadership
     - CEO
@@ -143,6 +166,10 @@ positive_keywords:
     - cross-functional
     - sales operations
     - commercial operations
+    - retail operations
+    - service operations
+    - regional operations
+    - distribution operations
     - business performance
     - operating reviews
     - performance management
@@ -164,6 +191,15 @@ negative_keywords:
     - commission-only
     - financial advisor
     - insurance sales
+    - retail associate
+    - sales associate
+    - boutique associate
+    - client advisor
+    - watchmaker
+    - service technician
+    - repair technician
+    - bench jeweler
+    - brand ambassador
   penalties:
     controller-only: 35
     controller: 25
@@ -187,6 +223,8 @@ negative_keywords:
     treasury: 12
     AR strategy: 8
     collections strategy: 8
+    store manager: 25
+    retail store manager: 35
     75% travel: 25
     travel 75%: 25
     5 days in office: 5
@@ -216,13 +254,20 @@ location_scoring:
   default: 1
 industry_fit:
   watch: 5
+  watches: 5
   timepiece: 5
+  luxury goods: 5
+  luxury watches: 5
   manufacturing: 5
   industrial products: 5
   PE-backed: 5
   private equity: 5
   portfolio company: 5
   consumer products: 4
+  consumer goods: 4
+  retail wholesale: 4
+  luxury retail: 4
+  brand management: 4
   private company: 4
   public company: 4
   distribution: 4
