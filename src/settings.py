@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = PROJECT_ROOT / "config"
+DEFAULT_GMAIL_SMOKE_MAX_RESULTS = 5
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,7 +23,7 @@ class Settings:
     gmail_client_config: str = ""
     gmail_token_json: str = ""
     gmail_label_name: str = "Job Tracker"
-    gmail_max_results: int = 50
+    gmail_max_results: int = DEFAULT_GMAIL_SMOKE_MAX_RESULTS
     dry_run: bool = True
 
 
@@ -41,6 +42,10 @@ def _as_int(value: str | None, default: int) -> int:
         return default
 
 
+def _clamp_int(value: int, *, minimum: int, maximum: int) -> int:
+    return max(minimum, min(value, maximum))
+
+
 def _resolve_project_path(path_value: str) -> str:
     if not path_value:
         return ""
@@ -55,12 +60,17 @@ def load_settings() -> Settings:
     credentials_path = _resolve_project_path(os.getenv("GOOGLE_APPLICATION_CREDENTIALS", ""))
     gmail_client_config = _resolve_project_path(os.getenv("GMAIL_CLIENT_CONFIG", ""))
     gmail_token_json = _resolve_project_path(os.getenv("GMAIL_TOKEN_JSON", ""))
+    gmail_max_results = _clamp_int(
+        _as_int(os.getenv("GMAIL_MAX_RESULTS"), DEFAULT_GMAIL_SMOKE_MAX_RESULTS),
+        minimum=1,
+        maximum=DEFAULT_GMAIL_SMOKE_MAX_RESULTS,
+    )
     return Settings(
         google_sheet_id=os.getenv("GOOGLE_SHEET_ID", ""),
         google_application_credentials=credentials_path,
         gmail_client_config=gmail_client_config,
         gmail_token_json=gmail_token_json,
         gmail_label_name=os.getenv("GMAIL_LABEL_NAME", "Job Tracker"),
-        gmail_max_results=_as_int(os.getenv("GMAIL_MAX_RESULTS"), 50),
+        gmail_max_results=gmail_max_results,
         dry_run=_as_bool(os.getenv("JOB_TRACKER_DRY_RUN"), default=True),
     )
