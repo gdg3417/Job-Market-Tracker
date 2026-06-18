@@ -411,8 +411,13 @@ def append_rejected_alerts(sheet_client: Any, alerts: Iterable[ParsedJobAlert]) 
         return 0
     if hasattr(sheet_client, "ensure_worksheet"):
         sheet_client.ensure_worksheet(REJECTED_JOBS_WORKSHEET, rows=max(1000, len(rejected) + 10), cols=len(REJECTED_JOB_FIELDS))
-    for alert in rejected:
-        sheet_client.append_record(REJECTED_JOBS_WORKSHEET, alert_to_rejected_job_record(alert))
+
+    records = [alert_to_rejected_job_record(alert) for alert in rejected]
+    if hasattr(sheet_client, "append_records"):
+        sheet_client.append_records(REJECTED_JOBS_WORKSHEET, records)
+    else:
+        for record in records:
+            sheet_client.append_record(REJECTED_JOBS_WORKSHEET, record)
     return len(rejected)
 
 
