@@ -18,6 +18,7 @@ DIGEST_HEADERS = "digest_section company title location remote_status work_model
 DASHBOARD_HEADERS = ["Job Market Tracker Dashboard"]
 SCORING_RULES_HEADERS = "rule_id category rule_name max_points positive_signals negative_signals scoring_logic active notes".split()
 TARGET_COMPANIES_HEADERS = "target_company_id company_name parent_company industry_bucket company_size_bucket ownership_type priority_tier location_focus commute_bucket p_and_l_path_rationale role_families_to_watch score_boost_points active notes".split()
+REJECTED_JOBS_HEADERS = "rejected_id source message_id thread_id subject sender received_date title company location url confidence rejection_reason extraction_notes raw_evidence created_at updated_at".split()
 
 
 class SchemaValidationError(ValueError):
@@ -82,6 +83,7 @@ CANONICAL_SCHEMA = {
     "Config_Companies": HeaderSpec("Config_Companies", CONFIG_COMPANIES_HEADERS),
     "Scoring_Rules": HeaderSpec("Scoring_Rules", SCORING_RULES_HEADERS),
     "Target_Companies": HeaderSpec("Target_Companies", TARGET_COMPANIES_HEADERS),
+    "Rejected_Jobs": HeaderSpec("Rejected_Jobs", REJECTED_JOBS_HEADERS),
 }
 
 
@@ -139,12 +141,19 @@ def _metadata(sheet_client: Any) -> dict[str, Any]:
     return with_quota_backoff(lambda: sheet_client.workbook.fetch_sheet_metadata(), operation_name="fetch workbook metadata")
 
 
+def _worksheet_or_empty(sheet_client: Any, spec: HeaderSpec) -> list[str]:
+    try:
+        worksheet = sheet_client.get_worksheet(spec.worksheet_name)
+    except Exception:
+        return []
+    return worksheet.row_values(spec.header_row)
+
+
 def validate_workbook(sheet_client: Any) -> WorkbookValidationResult:
     timezone = str((_metadata(sheet_client).get("properties") or {}).get("timeZone") or "")
     results = []
     for spec in CANONICAL_SCHEMA.values():
-        worksheet = sheet_client.get_worksheet(spec.worksheet_name)
-        results.append(compare_headers(spec, worksheet.row_values(spec.header_row)))
+        results.append(compare_headers(spec, _worksheet_or_empty(sheet_client, spec)))
     return WorkbookValidationResult(timezone, EXPECTED_TIMEZONE, timezone == EXPECTED_TIMEZONE, results)
 
 
@@ -158,11 +167,17 @@ def validate_workbook_or_raise(sheet_client: Any) -> WorkbookValidationResult:
     raise SchemaValidationError(f"Workbook schema validation failed: {', '.join(failed)}")
 
 
+def _ensure_schema_worksheet(sheet_client: Any, worksheet_name: str, rows: int, cols: int) -> Any:
+    if hasattr(sheet_client, "ensure_worksheet"):
+        return sheet_client.ensure_worksheet(worksheet_name, rows=rows, cols=cols)
+    return sheet_client.get_worksheet(worksheet_name)
+
+
 def repair_headers(sheet_client: Any) -> None:
     from src.sheets import with_quota_backoff
 
     for spec in CANONICAL_SCHEMA.values():
-        worksheet = sheet_client.get_worksheet(spec.worksheet_name)
+        worksheet = _ensure_schema_worksheet(sheet_client, spec.worksheet_name, rows=max(1000, spec.header_row + 10), cols=len(spec.headers))
         current = _trim(worksheet.row_values(spec.header_row))
         width = max(len(current), len(spec.headers), 1)
         values = [*spec.headers, *[""] * (width - len(spec.headers))]
