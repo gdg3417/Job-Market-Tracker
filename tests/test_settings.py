@@ -17,6 +17,14 @@ def test_gmail_max_results_is_capped_for_smoke_safety(monkeypatch):
     assert settings.gmail_max_results == DEFAULT_GMAIL_SMOKE_MAX_RESULTS
 
 
+def test_gmail_max_results_can_be_lower_than_smoke_cap(monkeypatch):
+    monkeypatch.setenv("GMAIL_MAX_RESULTS", "2")
+
+    settings = load_settings()
+
+    assert settings.gmail_max_results == 2
+
+
 def test_gmail_max_results_has_minimum_one(monkeypatch):
     monkeypatch.setenv("GMAIL_MAX_RESULTS", "0")
 
