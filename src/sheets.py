@@ -9,7 +9,7 @@ from typing import Any, TypeVar
 
 import gspread
 from google.oauth2.service_account import Credentials
-from gspread.exceptions import APIError
+from gspread.exceptions import APIError, WorksheetNotFound
 
 from src.models import JobPosting
 from src.schema import validate_record_headers_for_write
@@ -117,6 +117,22 @@ class SheetClient:
                 operation_name=f"load worksheet {worksheet_name}",
             )
         return self._worksheet_cache[worksheet_name]
+
+    def ensure_worksheet(self, worksheet_name: str, *, rows: int = 1000, cols: int = 26) -> gspread.Worksheet:
+        if worksheet_name in self._worksheet_cache:
+            return self._worksheet_cache[worksheet_name]
+        try:
+            worksheet = with_quota_backoff(
+                lambda: self.workbook.worksheet(worksheet_name),
+                operation_name=f"load worksheet {worksheet_name}",
+            )
+        except WorksheetNotFound:
+            worksheet = with_quota_backoff(
+                lambda: self.workbook.add_worksheet(title=worksheet_name, rows=rows, cols=cols),
+                operation_name=f"create worksheet {worksheet_name}",
+            )
+        self._worksheet_cache[worksheet_name] = worksheet
+        return worksheet
 
     def worksheet_headers(self, worksheet_name: str) -> list[str]:
         if worksheet_name not in self._header_cache:
