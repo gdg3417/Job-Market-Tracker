@@ -1,11 +1,11 @@
 from src.sources.static_pages import extract_static_page_candidates, static_page_company_rows
 
 
-def row(company_name="Acme", source_url="https://www.acme.example/careers", source_type="static_page"):
+def row(company_name="Acme", source_url="https://www.acme.example/careers", source_type="static_page", source_slug=""):
     return {
         "company_name": company_name,
         "source_type": source_type,
-        "source_slug": company_name,
+        "source_slug": source_slug,
         "source_url": source_url,
         "ats_platform": "custom",
         "location_focus": "Dallas, TX",
@@ -18,7 +18,7 @@ def test_noisy_job_boards_are_not_static_company_sources():
     rows = [
         row(),
         row(company_name="The Ladders", source_url="https://www.theladders.com/jobs/search-jobs?keywords=strategy&location=Dallas"),
-        row(company_name="Google Jobs", source_url="https://www.google.com/search?q=jobs+near+me"),
+        row(company_name="Google Jobs", source_url="https://www.jobs.google.com/search?q=jobs+near+me"),
     ]
 
     filtered = static_page_company_rows(rows)
