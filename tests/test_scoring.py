@@ -78,6 +78,66 @@ def test_reporting_only_bi_developer_is_downweighted():
     assert "penalty=" in scored.score_explanation
 
 
+def test_watch_brand_product_line_role_scores_immediate_review():
+    rules = load_scoring_rules(RULES_PATH)
+    job = normalize_raw_job(
+        {
+            "company": "Fossil Group",
+            "title": "Senior Manager, Category Management and Product Line Strategy",
+            "location": "Richardson, TX Hybrid",
+            "salary": "$190,000 - $220,000",
+            "description": "Own product line profitability, category ownership, assortment strategy, pricing strategy, wholesale strategy, channel strategy, brand growth, inventory productivity, commercial operations, business performance, leadership team updates, and cross-functional operating cadence.",
+        }
+    )
+    scored = score_job(
+        job,
+        rules,
+        company_context={
+            "industry_bucket": "watch, luxury goods, consumer products, retail wholesale",
+            "ownership_type": "public company",
+            "priority_tier": "Tier 1",
+        },
+    )
+    assert scored.alert_tier == "immediate_review"
+    assert scored.total_score >= 85
+    assert scored.industry_match_score == 5
+    assert "luxury goods" in scored.score_explanation or "watch" in scored.score_explanation
+
+
+def test_rolex_client_advisor_role_is_excluded():
+    rules = load_scoring_rules(RULES_PATH)
+    job = normalize_raw_job(
+        {
+            "company": "Rolex USA",
+            "title": "Client Advisor",
+            "location": "Dallas, TX",
+            "salary": "$70,000 - $95,000",
+            "description": "Boutique associate role focused on retail sales, client appointments, and brand ambassador duties.",
+        }
+    )
+    scored = score_job(job, rules, company_context={"industry_bucket": "watch and luxury goods"})
+    assert scored.alert_tier == "exclude"
+    assert scored.total_score == 0
+    assert "hard_exclude=true" in scored.score_explanation
+
+
+def test_rolex_service_operations_role_is_not_blocked_by_watchmaker_exclusions():
+    rules = load_scoring_rules(RULES_PATH)
+    job = normalize_raw_job(
+        {
+            "company": "Rolex USA",
+            "title": "Director, Service Operations and Distribution",
+            "location": "Dallas, TX",
+            "salary": "$180,000 - $220,000",
+            "description": "Lead regional service operations, distribution operations, business performance, executive leadership updates, operating cadence, and cross-functional margin improvement.",
+        }
+    )
+    scored = score_job(job, rules, company_context={"industry_bucket": "watch, luxury goods, distribution"})
+    assert scored.alert_tier in {"track_only", "strong_fit", "immediate_review"}
+    assert scored.total_score > 0
+    assert "hard_exclude=true" not in scored.score_explanation
+
+
 def test_location_scoring_uses_commute_when_available():
     rules = load_scoring_rules(RULES_PATH)
     short_commute_job = normalize_raw_job(
