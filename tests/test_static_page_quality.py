@@ -5,7 +5,7 @@ def row(company_name="Acme", source_url="https://www.acme.example/careers", sour
     return {
         "company_name": company_name,
         "source_type": source_type,
-        "source_slug": "",
+        "source_slug": company_name,
         "source_url": source_url,
         "ats_platform": "custom",
         "location_focus": "Dallas, TX",
