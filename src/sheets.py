@@ -189,6 +189,16 @@ class SheetClient:
             operation_name=f"append row {worksheet_name}",
         )
 
+    def append_records(self, worksheet_name: str, records: list[dict[str, Any]]) -> None:
+        if not records:
+            return
+        worksheet = self.get_worksheet(worksheet_name)
+        rows = [self._record_to_row(worksheet_name, record) for record in records]
+        with_quota_backoff(
+            lambda: worksheet.append_rows(rows, value_input_option="USER_ENTERED"),
+            operation_name=f"append rows {worksheet_name}",
+        )
+
     def update_record(self, worksheet_name: str, row_number: int, record: dict[str, Any]) -> None:
         if row_number < 2:
             raise ValueError("Data row updates must target row 2 or later")
