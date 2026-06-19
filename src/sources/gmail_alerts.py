@@ -310,11 +310,51 @@ def received_date_from_header(value: str) -> str:
         return str(value)[:10] if re.match(r"^\d{4}-\d{2}-\d{2}", str(value)) else today_iso()
 
 
+def _email_level_rejection_reason(email: GmailAlertEmail) -> str:
+    subject = clean_text(email.subject).lower()
+    body = clean_text(email.combined_body).lower()
+    sender = clean_text(email.sender).lower()
+    text = f"{subject} {body} {sender}"
+    is_linkedin = "linkedin" in text or "jobalerts-noreply@linkedin.com" in sender
+    if is_linkedin and (
+        "your job alert" in text
+        and "has been created" in text
+        and "receive notifications when new jobs are posted" in text
+    ):
+        return "linkedin_job_alert_confirmation"
+    return ""
+
+
+def _email_rejection_alert(email: GmailAlertEmail, received_date: str, rejection_reason: str) -> ParsedJobAlert:
+    evidence_lines = _meaningful_lines(email.subject) + _meaningful_lines(email.combined_body)
+    return ParsedJobAlert(
+        title="",
+        company="",
+        location="",
+        url="",
+        source="gmail_alert",
+        source_job_id=_stable_id(email.message_id, rejection_reason, prefix="gmail"),
+        received_date=received_date,
+        confidence="rejected",
+        extraction_notes="origin=linkedin; extraction=email_skipped",
+        is_rejected=True,
+        rejection_reason=rejection_reason,
+        raw_evidence=" | ".join(evidence_lines[:8]),
+        message_id=email.message_id,
+        thread_id=email.thread_id,
+        subject=email.subject,
+        sender=email.sender,
+    )
+
+
 def parse_job_alert_email(email: GmailAlertEmail) -> list[ParsedJobAlert]:
     body = email.combined_body
     if not (email.subject or body):
         return []
     received_date = received_date_from_header(email.received_at)
+    email_rejection_reason = _email_level_rejection_reason(email)
+    if email_rejection_reason:
+        return [_email_rejection_alert(email, received_date, email_rejection_reason)]
     lines = _meaningful_lines(body) or _meaningful_lines(email.subject)
     urls = extract_urls(body, email.subject) or [""]
     alerts: list[ParsedJobAlert] = []
@@ -476,7 +516,7 @@ def build_gmail_service(client_config_path: str | Path, token_path: str | Path):
 
 def find_gmail_label_id(service: Any, label_name: str = DEFAULT_GMAIL_LABEL_NAME) -> str:
     response = service.users().labels().list(userId="me").execute()
-    for label in response.get("labels", []):
+    for label in response.get("labels", []) or []:
         if label.get("name") == label_name:
             return str(label.get("id"))
     raise ValueError(f"Gmail label not found: {label_name}")
