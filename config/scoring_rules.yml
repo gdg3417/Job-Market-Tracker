@@ -39,6 +39,9 @@ role_family_keywords:
     - bizops
     - operating cadence
     - operating reviews
+    - service operations
+    - regional operations
+    - distribution operations
   Business Insights:
     - business insights
     - performance management
@@ -128,10 +131,13 @@ positive_keywords:
     - category strategy
     - portfolio ownership
     - assortment strategy
+    - service operations
+    - distribution operations
   growth_ownership:
     - revenue strategy
     - revenue growth
     - margin expansion
+    - margin improvement
     - pricing strategy
     - sales strategy
     - go-to-market
