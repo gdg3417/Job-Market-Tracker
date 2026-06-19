@@ -5,6 +5,7 @@ import json
 from datetime import datetime
 from typing import Any
 
+from src.data_quality import filter_jobs_for_upsert
 from src.job_upsert import upsert_jobs
 from src.lifecycle import LifecycleSummary, check_job_url_closed, update_lifecycle_for_missing_jobs
 from src.models import today_iso, utc_now_iso
@@ -385,12 +386,13 @@ def run_gmail_alerts_smoke_test() -> dict[str, object]:
         alerts.extend(parse_job_alert_email(email))
     quarantined_count = append_rejected_alerts(sheet_client, alerts)
     rejected_count = quarantined_count
-    jobs = parsed_alerts_to_jobs(alerts, scoring_rules=rules, seen_date=seen_date)
-    upsert_summary = upsert_jobs(sheet_client, jobs, seen_date=seen_date)
+    candidate_jobs = parsed_alerts_to_jobs(alerts, scoring_rules=rules, seen_date=seen_date)
+    accepted_jobs, final_gate_rejections = filter_jobs_for_upsert(candidate_jobs)
+    upsert_summary = upsert_jobs(sheet_client, candidate_jobs, seen_date=seen_date)
 
     if not emails:
         status = "no_labeled_emails"
-    elif not jobs:
+    elif not accepted_jobs:
         status = "no_jobs_extracted"
     else:
         status = "success"
@@ -399,12 +401,12 @@ def run_gmail_alerts_smoke_test() -> dict[str, object]:
         build_gmail_run_record(
             emails_read=len(emails),
             alerts_parsed=len(alerts),
-            jobs_found=len(jobs),
+            jobs_found=len(accepted_jobs),
             upsert_summary=upsert_summary.to_dict(),
             status=status,
             label_name=settings.gmail_label_name,
-            rejected_count=rejected_count,
-            quarantined_count=quarantined_count,
+            rejected_count=rejected_count + len(final_gate_rejections),
+            quarantined_count=quarantined_count + len(final_gate_rejections),
         )
     )
 
@@ -414,7 +416,9 @@ def run_gmail_alerts_smoke_test() -> dict[str, object]:
         "gmail_label_name": settings.gmail_label_name,
         "emails_read": len(emails),
         "alerts_parsed": len(alerts),
-        "jobs_found": len(jobs),
+        "candidate_jobs_found": len(candidate_jobs),
+        "jobs_found": len(accepted_jobs),
+        "final_gate_rejected_jobs": len(final_gate_rejections),
         "low_confidence_alerts": len([alert for alert in alerts if alert.confidence == "low"]),
         "rejected_alerts": rejected_count,
         "quarantined_alerts": quarantined_count,
@@ -429,7 +433,7 @@ def run_gmail_alerts_smoke_test() -> dict[str, object]:
                 "alert_tier": job.alert_tier,
                 "canonical_url": job.canonical_url,
             }
-            for job in sorted(jobs, key=lambda item: item.total_score, reverse=True)[:10]
+            for job in sorted(accepted_jobs, key=lambda item: item.total_score, reverse=True)[:10]
         ],
     }
 

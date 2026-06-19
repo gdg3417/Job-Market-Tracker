@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
+from src.data_quality import append_rejected_jobs, filter_jobs_for_upsert
 from src.dedupe import (
     UpsertSummary,
     build_job_source_record,
@@ -100,11 +101,18 @@ def upsert_jobs(
 ) -> UpsertSummary:
     current_date = seen_date or today_iso()
     summary = UpsertSummary()
+    incoming_jobs_list = list(incoming_jobs)
+    summary.records_seen = len(incoming_jobs_list)
+
+    accepted_jobs, rejected_jobs = filter_jobs_for_upsert(incoming_jobs_list)
+    append_rejected_jobs(sheet_client, rejected_jobs)
+    if not accepted_jobs:
+        return summary
+
     existing_jobs, row_by_job_key = _load_existing_jobs(sheet_client)
     existing_source_rows = _read_records_with_row_numbers(sheet_client, "Job_Sources")
 
-    for incoming_job in incoming_jobs:
-        summary.records_seen += 1
+    for incoming_job in accepted_jobs:
         incoming_job = ensure_job_key(incoming_job)
         incoming_job.last_seen_date = current_date
         if not incoming_job.first_seen_date:

@@ -10,6 +10,7 @@ from urllib.parse import urljoin, urlsplit
 import requests
 from bs4 import BeautifulSoup
 
+from src.data_quality import job_url_rejection_reason, title_has_role_signal
 from src.models import JobPosting
 from src.normalize import clean_text, normalize_raw_job, normalize_url
 from src.scoring import score_job
@@ -91,6 +92,16 @@ IGNORED_HOST_TERMS = (
     "x.com",
     "instagram.com",
     "youtube.com",
+)
+STATIC_SOURCE_DENY_TERMS = (
+    "google jobs",
+    "jobs.google",
+    "ladders.com",
+    "linkedin",
+    "indeed",
+    "simplyhired",
+    "theladders",
+    "ziprecruiter",
 )
 IGNORED_PATH_TERMS = (
     "benefits",
@@ -193,7 +204,7 @@ def _source_matches_static_page(company_row: dict[str, Any]) -> bool:
     text = _source_text(company_row)
     if "greenhouse" in text or "lever" in text:
         return False
-    if any(blocked in text for blocked in ["linkedin", "indeed"]):
+    if any(blocked in text for blocked in STATIC_SOURCE_DENY_TERMS):
         return False
     explicit_static_terms = [
         "static",
@@ -453,6 +464,17 @@ class StaticPageCandidate:
         return self.confidence == "low"
 
 
+def _candidate_rejection_reason(candidate: StaticPageCandidate) -> str:
+    if not title_has_role_signal(candidate.title):
+        return "title_lacks_role_signal"
+    reason = job_url_rejection_reason(candidate.url, STATIC_PAGE_SOURCE)
+    if reason:
+        return reason
+    if candidate.requires_manual_review and candidate.source_kind != "json_ld":
+        return "manual_review_link_candidate"
+    return ""
+
+
 def _extract_json_ld_candidates(
     soup: BeautifulSoup,
     source_url: str,
@@ -490,20 +512,20 @@ def _extract_json_ld_candidates(
             if score < 4 and not include_matches:
                 continue
 
-            seen_urls.add(url)
-            confidence = _confidence_from_score(score, title, include_matches)
-            candidates.append(
-                StaticPageCandidate(
-                    title=title,
-                    url=url,
-                    location=location,
-                    confidence=confidence,
-                    score=score,
-                    evidence=evidence,
-                    description=description,
-                    source_kind="json_ld",
-                )
+            candidate = StaticPageCandidate(
+                title=title,
+                url=url,
+                location=location,
+                confidence=_confidence_from_score(score, title, include_matches),
+                score=score,
+                evidence=evidence,
+                description=description,
+                source_kind="json_ld",
             )
+            if _candidate_rejection_reason(candidate):
+                continue
+            seen_urls.add(url)
+            candidates.append(candidate)
 
     return candidates
 
@@ -553,20 +575,21 @@ def extract_static_page_candidates(
         if score < 3 and not include_matches:
             continue
 
-        seen_urls.add(url)
-        confidence = _confidence_from_score(score, title, include_matches)
-        candidates.append(
-            StaticPageCandidate(
-                title=title,
-                url=url,
-                location=location,
-                confidence=confidence,
-                score=score,
-                evidence=evidence,
-                description=context_text,
-                source_kind="link",
-            )
+        candidate = StaticPageCandidate(
+            title=title,
+            url=url,
+            location=location,
+            confidence=_confidence_from_score(score, title, include_matches),
+            score=score,
+            evidence=evidence,
+            description=context_text,
+            source_kind="link",
         )
+        if _candidate_rejection_reason(candidate):
+            continue
+
+        seen_urls.add(url)
+        candidates.append(candidate)
 
     return candidates
 

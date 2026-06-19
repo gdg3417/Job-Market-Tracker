@@ -11,6 +11,7 @@ class FakeSheetClient:
     def __init__(self, jobs: list[dict[str, Any]] | None = None, sources: list[dict[str, Any]] | None = None):
         self.jobs = jobs or []
         self.sources = sources or []
+        self.rejected: list[dict[str, Any]] = []
         self.updated_jobs: list[tuple[int, dict[str, Any]]] = []
         self.updated_sources: list[tuple[int, dict[str, Any]]] = []
 
@@ -35,12 +36,16 @@ class FakeSheetClient:
         self.sources[row_number - 2] = dict(record)
         self.updated_sources.append((row_number, dict(record)))
 
+    def append_records(self, worksheet_name: str, records: list[dict[str, Any]]) -> None:
+        if worksheet_name == "Rejected_Jobs":
+            self.rejected.extend(dict(record) for record in records)
+
 
 def make_job(
     *,
     source_primary: str = "greenhouse",
     source_job_id: str = "job-1",
-    url: str = "https://example.com/jobs/1",
+    url: str = "https://example.com/jobs/director-revenue-strategy-12345",
     title: str = "Director, Revenue Strategy",
     company: str = "Acme",
     location: str = "Dallas, TX",
@@ -90,7 +95,7 @@ def test_upsert_same_job_twice_does_not_create_duplicate_job_or_source():
 def test_upsert_same_job_from_two_sources_creates_one_job_and_two_sources():
     client = FakeSheetClient()
     greenhouse_job = make_job(source_primary="greenhouse", source_job_id="gh-1")
-    lever_job = make_job(source_primary="lever", source_job_id="lever-1")
+    lever_job = make_job(source_primary="lever", source_job_id="lever-1", url="https://jobs.lever.co/acme/8f9a7b6c5d4e3f2a1b")
 
     summary = upsert_jobs(client, [greenhouse_job, lever_job], seen_date="2026-06-16")
 
@@ -158,3 +163,24 @@ def test_upsert_confirmed_closed_job_seen_again_becomes_reopened():
     assert client.jobs[0]["closed_date"] == ""
     assert client.jobs[0]["first_seen_date"] == "2026-06-01"
     assert client.jobs[0]["last_seen_date"] == "2026-06-16"
+
+
+def test_upsert_rejects_bad_job_before_jobs_or_sources_write():
+    client = FakeSheetClient()
+    good = make_job()
+    bad = make_job(
+        title="New jobs match your preferences.",
+        source_primary="gmail_alert",
+        source_job_id="bad-1",
+        url="https://www.linkedin.com/jobs/view/4242424242",
+    )
+
+    summary = upsert_jobs(client, [good, bad], seen_date="2026-06-16")
+
+    assert summary.records_seen == 2
+    assert summary.jobs_created == 1
+    assert len(client.jobs) == 1
+    assert len(client.sources) == 1
+    assert len(client.rejected) == 1
+    assert client.rejected[0]["title"] == "New jobs match your preferences."
+    assert "generic_alert_or_search_title" in client.rejected[0]["rejection_reason"]
