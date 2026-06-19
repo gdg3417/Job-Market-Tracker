@@ -193,5 +193,32 @@ def test_valid_linkedin_jobs_view_record_is_accepted():
     assert jobs[0].title == "Director, Business Operations"
 
 
+def test_linkedin_job_alert_confirmation_email_is_quarantined_not_upserted():
+    email = GmailAlertEmail(
+        message_id="confirm-1",
+        subject="Grayson: your job alert for ROLEX in Dallas-Fort Worth Metroplex has been created",
+        sender="LinkedIn Job Alerts <jobalerts-noreply@linkedin.com>",
+        received_at="Fri, 19 Jun 2026 08:44:27 +0000 (UTC)",
+        body_text="""
+        Your job alert has been created: ROLEX in Dallas-Fort Worth Metroplex.
+        You'll receive notifications when new jobs are posted that match your search preferences.
+
+        Assistant Operations Manager
+        Richemont
+        Grand Prairie, Texas, United States
+        View job: https://www.linkedin.com/comm/jobs/view/4417862072?alertAction=markasviewed
+        """,
+    )
+    alerts = parse_job_alert_email(email)
+    assert len(alerts) == 1
+    assert alerts[0].is_rejected is True
+    assert alerts[0].confidence == "rejected"
+    assert alerts[0].rejection_reason == "linkedin_job_alert_confirmation"
+    assert alerts[0].title == ""
+    assert alerts[0].company == ""
+    assert should_upsert_alert(alerts[0]) is False
+    assert parsed_alerts_to_jobs(alerts) == []
+
+
 def test_received_date_from_header_defaults_safely():
     assert received_date_from_header("not a real date")
