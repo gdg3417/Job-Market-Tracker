@@ -1,6 +1,6 @@
 # Operations runbook
 
-This runbook documents the current Job Market Tracker operating flow after Sprints 13 through 16.
+This runbook documents the current Job Market Tracker operating flow after Sprint 20.
 
 ## Local setup
 
@@ -13,23 +13,7 @@ pip install -r requirements.txt
 pytest
 ```
 
-For a first-time setup, create `.env` from `.env.example` and point local credentials to files under the ignored `credentials/` folder.
-
-Required Google Sheets environment values:
-
-```text
-GOOGLE_SHEET_ID=your_sheet_id_here
-GOOGLE_APPLICATION_CREDENTIALS=credentials/google-credentials.json
-```
-
-Optional Gmail values:
-
-```text
-GMAIL_CLIENT_CONFIG=credentials/gmail-client-config.json
-GMAIL_TOKEN_JSON=credentials/gmail-token.json
-GMAIL_LABEL_NAME=Job Tracker
-GMAIL_MAX_RESULTS=50
-```
+For first-time setup, create `.env` from `.env.example` and point local credential values to files under the ignored `credentials/` folder.
 
 ## Local validation sequence
 
@@ -51,6 +35,8 @@ Expected results:
 3. Static page ingestion does not recreate generic search rows.
 4. Gmail ingestion does not recreate known alert metadata rows.
 5. Dashboard and Digest write successfully.
+6. The Dashboard top section gives a clear answer.
+7. The Dashboard has no `#REF!` or `#VALUE!`.
 
 ## Manual GitHub Actions run
 
@@ -62,20 +48,9 @@ Use GitHub Actions when local validation is clean.
 4. Choose `Run workflow` on `main`.
 5. Review the Step Summary when the run finishes.
 
-The workflow should report:
+The workflow should report source counts, Gmail counts when available, Dashboard rows written, Digest rows written, and final status.
 
-```text
-Static jobs found
-Static jobs rejected
-Gmail emails read
-Gmail jobs accepted
-Gmail alerts rejected
-Dashboard rows written
-Digest rows written
-Final status
-```
-
-If Gmail secrets are missing, the workflow should skip Gmail ingestion cleanly. If required Google Sheets secrets are missing, the workflow should fail before ingestion.
+If optional Gmail configuration is missing, Gmail ingestion should skip cleanly. Required Google Sheets configuration must exist or the workflow fails before ingestion.
 
 ## Schema validation and repair
 
@@ -113,7 +88,63 @@ Refresh Dashboard and Digest manually with:
 python -m src.dashboard
 ```
 
-This reads `Jobs`, rewrites `Dashboard`, rewrites `Digest`, and appends a run record. If this command fails, review output is incomplete even if ingestion succeeded.
+This reads `Jobs`, `Target_Companies`, `Config_Companies`, `Rejected_Jobs`, and `Runs`, then rewrites `Dashboard` and `Digest` and appends a run record.
+
+The Sprint 20 Dashboard writes plain values, not spreadsheet formulas. It should show:
+
+1. Executive answer
+2. Action queue
+3. Tracker health
+4. Source health
+5. Top roles to review
+6. Source cleanup queue
+
+The executive answer can be:
+
+1. `Review roles now`
+2. `Review strong fits this week`
+3. `Review target company roles`
+4. `Source cleanup needed`
+5. `No action needed this week`
+
+## Weekly email digest
+
+The weekly email is handled by a bound Google Apps Script file:
+
+```text
+apps_script/weekly_digest_email.gs
+```
+
+Setup instructions are in:
+
+```text
+docs/sprint_20_weekly_email_dashboard.md
+```
+
+The email reads the `Digest` tab and sends a weekly summary. It is not part of the daily GitHub Actions workflow.
+
+Recommended trigger:
+
+```text
+Monday around 8:00 AM Central
+```
+
+Manual Sheet menu:
+
+```text
+Job Tracker
+  Send test weekly digest
+  Send weekly digest now
+```
+
+## Weekly review process
+
+1. Open the Dashboard.
+2. Read `This week's answer`.
+3. If it says `Review roles now`, inspect Immediate review rows the same day.
+4. If it says `Review strong fits this week`, review Strong fit and Target company watchlist rows during weekly review.
+5. If it says `Source cleanup needed`, inspect Source cleanup queue and `Rejected_Jobs`.
+6. If it says `No action needed this week`, no job review is required.
 
 ## Data quality cleanup
 
@@ -172,28 +203,6 @@ manual_review_only
 disabled
 ```
 
-Sprint 18 should formalize source quality and ingestion mode fields in `Config_Companies` if they are not already present.
-
-## Secrets and credential handling
-
-Do not commit credentials.
-
-GitHub required secrets:
-
-```text
-GOOGLE_SHEET_ID
-GOOGLE_SERVICE_ACCOUNT_JSON
-```
-
-GitHub optional Gmail secrets:
-
-```text
-GMAIL_CLIENT_CONFIG
-GMAIL_TOKEN_JSON
-```
-
-Local credential files should stay under `credentials/`. The daily workflow writes secret JSON values to temporary runner files and should not print credential contents.
-
 ## Failure handling
 
 If schema validation fails, stop and repair the workbook before ingestion.
@@ -203,3 +212,5 @@ If static page rejected rows spike, audit `Config_Companies` first. The likely c
 If Gmail rejected rows exceed accepted jobs, inspect recent alert email structure and `Rejected_Jobs` before relaxing parser rules.
 
 If Dashboard refresh fails, rerun `python -m src.dashboard` after resolving the error because Digest and Dashboard output may be stale.
+
+If the weekly email does not arrive, run `Send test weekly digest` from the Sheet menu and then inspect Apps Script executions and triggers.
