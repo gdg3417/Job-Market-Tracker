@@ -1,80 +1,51 @@
 # Job Market Tracker
 
-A zero added cost Python, GitHub Actions, and Google Sheets job market tracker for commercial leadership, business operations, revenue strategy, business insights, corporate strategy, product line management, category management, Chief of Staff, and P&L pathway roles.
+A zero added cost Python, GitHub Actions, Google Sheets, and Google Apps Script job market tracker for commercial leadership, business operations, revenue strategy, business insights, corporate strategy, product line management, category management, Chief of Staff, and P&L pathway roles.
 
 The tracker is intentionally not a generic finance job scraper. It monitors roles that could improve compensation, benefits, commute, flexibility, executive exposure, operating ownership, team leadership, and long-term path toward VP, SVP, business unit leadership, or P&L ownership.
 
 ## Current status
 
-Sprints 1 through 19 are implemented in code. The current system supports Google Sheets writes, Greenhouse and Lever ingestion, static company career page ingestion, Gmail alert ingestion, dedupe and lifecycle handling, Dashboard and Digest refresh, workbook schema validation, Gmail quarantine handling, final data quality gates, a safer daily GitHub Actions workflow, source configuration auditing, and focused scoring for passive job monitoring.
+Sprints 1 through 20 are implemented in code.
 
-Sprint 19 tunes scoring so strategic commercial, revenue, product line, category management, GM track, Chief of Staff, pricing, margin, growth, and P&L roles rise in the Digest while generic PMO, IT support, technician, billing, insurance operations, generic office, and project coordination roles stay low or are excluded.
+The current system supports:
 
-The daily workflow is safe to run only after the workbook schema validates. It runs tests, validates required secrets, writes credentials to temporary runner files, validates the workbook schema, records workflow validation, runs static career pages, runs Gmail ingestion when optional Gmail secrets exist, runs Greenhouse, Lever, and lifecycle handling, then refreshes Dashboard and Digest.
+1. Google Sheets writes
+2. Greenhouse and Lever ingestion
+3. Static company career page ingestion
+4. Gmail alert ingestion
+5. Dedupe and lifecycle handling
+6. Dashboard and Digest refresh
+7. Workbook schema validation
+8. Gmail quarantine handling
+9. Final data quality gates
+10. A safer daily GitHub Actions workflow
+11. Source configuration auditing
+12. Focused scoring for passive job monitoring
+13. A plain-English executive Dashboard
+14. A Google Apps Script weekly email digest
 
-Important source rule: job boards should not be scraped as generic static pages. LinkedIn, Indeed, Google Jobs, Built In, and The Ladders should enter through Gmail alerts, explicit APIs, direct ATS posting URLs, or should be disabled. Static page ingestion should focus on reliable target company career pages and direct posting URLs.
+Sprint 20 redesigns the Dashboard so it is an action-oriented executive summary instead of a fragile formula page. It also adds a bound Apps Script weekly digest email that can be scheduled for Monday around 8:00 AM Central.
 
 ## Repo structure
 
 ```text
 job-market-tracker/
-  README.md
-  requirements.txt
-  .gitignore
-  .env.example
+  apps_script/
+    weekly_digest_email.gs
   config/
     scoring_rules.yml
     target_profile.yml
   docs/
     operations_runbook.md
-    sprint_2_google_sheets_setup.md
-    sprint_9_gmail_alert_setup.md
-    sprint_15_data_quality_gates.md
-    sprint_16_workflow_readiness.md
-    sprint_18_source_configuration_cleanup.md
-    sprint_19_scoring_digest_usefulness.md
+    sprint_20_weekly_email_dashboard.md
   src/
-    __init__.py
-    main.py
-    settings.py
-    models.py
-    normalize.py
-    dedupe.py
-    lifecycle.py
-    job_upsert.py
-    scoring.py
-    sheets.py
-    digest.py
     dashboard.py
-    data_quality.py
-    schema.py
-    source_audit.py
-    workflow_validation.py
-    companies.py
-    sources/
-      __init__.py
-      greenhouse.py
-      lever.py
-      static_pages.py
-      gmail_alerts.py
   tests/
-    __init__.py
     test_dashboard.py
-    test_data_quality.py
-    test_dedupe.py
-    test_gmail_alerts.py
-    test_gmail_alerts_main.py
-    test_job_upsert.py
-    test_normalize.py
-    test_schema.py
-    test_scoring.py
-    test_sheets.py
-    test_source_audit.py
-    test_static_pages.py
-  .github/
-    workflows/
-      daily-run.yml
 ```
+
+Other source, test, config, and workflow files remain in their existing locations.
 
 ## Workbook structure
 
@@ -96,9 +67,7 @@ Digest
 Dashboard
 ```
 
-`Config_Companies` includes `source_quality` and `ingestion_mode` fields so job boards, broken URLs, static company pages, and ATS sources can be classified explicitly.
-
-`Rejected_Jobs` captures records blocked by final quality gates. It is not a staging tab for good jobs. Rows in that tab should be reviewed for source quality issues, parser misses, or source URLs that should be disabled or corrected.
+`Rejected_Jobs` captures records blocked by final quality gates. It is not a staging tab for good jobs.
 
 ## Local setup
 
@@ -122,20 +91,6 @@ If script execution is blocked in PowerShell, run this once for the current user
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ```
 
-For macOS or Linux:
-
-```bash
-cd ~/Desktop
-git clone https://github.com/gdg3417/Job-Market-Tracker.git
-cd Job-Market-Tracker
-python3.11 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-cp .env.example .env
-pytest
-```
-
 ## Core validation commands
 
 Run these before trusting an unattended daily workflow run:
@@ -155,7 +110,17 @@ Use this command only when the workbook headers or timezone need repair:
 python -m src.schema --repair-headers
 ```
 
-After Sprint 18, run the repair command once so `Config_Companies` has the `source_quality` and `ingestion_mode` headers.
+## Weekly email digest
+
+Sprint 20 adds `apps_script/weekly_digest_email.gs` for a bound Google Apps Script weekly digest.
+
+Setup is documented in:
+
+```text
+docs/sprint_20_weekly_email_dashboard.md
+```
+
+The weekly email reads the `Digest` tab, sends through Apps Script, and can be scheduled for Monday around 8:00 AM Central. It should not be run from the daily GitHub Actions workflow.
 
 ## Main commands
 
@@ -178,22 +143,6 @@ python -m src.workflow_validation
 The daily workflow is `.github/workflows/daily-run.yml`.
 
 It supports manual runs with `workflow_dispatch` and scheduled runs around 06:30 AM Central. The workflow checks the Central schedule window so duplicate UTC cron entries do not both run during daylight saving changes.
-
-Required secrets:
-
-```text
-GOOGLE_SHEET_ID
-GOOGLE_SERVICE_ACCOUNT_JSON
-```
-
-Optional Gmail secrets:
-
-```text
-GMAIL_CLIENT_CONFIG
-GMAIL_TOKEN_JSON
-```
-
-If optional Gmail secrets are missing, Gmail ingestion skips cleanly. Required Google Sheets secrets must exist or the workflow fails before ingestion.
 
 ## Sprint implementation status
 
@@ -218,30 +167,4 @@ If optional Gmail secrets are missing, Gmail ingestion skips cleanly. Required G
 | Sprint 17 | Complete | Documentation and runbook cleanup |
 | Sprint 18 | Complete | Source configuration audit, source quality fields, and ingestion mode recommendations |
 | Sprint 19 | Complete | Scoring tuning and focused Digest sections for weekly review usefulness |
-
-## Known limitations
-
-Static HTML extraction misses JavaScript-rendered job boards and career sites. Some sources need ATS APIs, Gmail alerts, or manual URL correction.
-
-Static extraction can produce false positives without strict guards, which is why data quality gates reject generic titles, navigation URLs, search URLs, and weak job board links.
-
-Gmail alert parsing depends on email structure. If a sender changes its template, candidate jobs may be rejected or quarantined until parser logic is updated.
-
-Salary often requires manual research. The tracker can store salary fields, but many postings omit compensation.
-
-Commute is rules-based, not map-based. Commute estimates should be treated as directional until reviewed manually.
-
-## Documentation
-
-Operational procedures are in `docs/operations_runbook.md`.
-
-Sprint details are in:
-
-```text
-docs/sprint_15_data_quality_gates.md
-docs/sprint_16_workflow_readiness.md
-docs/sprint_18_source_configuration_cleanup.md
-docs/sprint_19_scoring_digest_usefulness.md
-```
-
-The next planned implementation sprint has not been defined.
+| Sprint 20 | Complete | Plain-English Dashboard and Apps Script weekly email digest |

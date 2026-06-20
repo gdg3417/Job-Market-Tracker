@@ -40,7 +40,7 @@ def test_digest_headers_include_review_fields():
     assert "score_explanation" in DIGEST_HEADERS
 
 
-def test_digest_rows_include_focused_sprint_19_sections_without_duplicates():
+def test_digest_rows_include_focused_sprint_20_sections_without_duplicates():
     jobs = [
         make_job(job_key="immediate", total_score=90, alert_tier="immediate_review"),
         make_job(job_key="strong", title="Senior Manager, Revenue Strategy", total_score=80, alert_tier="strong_fit"),
@@ -57,6 +57,12 @@ def test_digest_rows_include_focused_sprint_19_sections_without_duplicates():
     assert "P&L pathway" in sections
     job_titles = [row[2] for row in rows if row[0] != "Rejected source audit"]
     assert len(job_titles) == len(set(job_titles))
+
+
+def test_digest_caps_rows_per_section_at_sprint_20_limits():
+    jobs = [make_job(job_key=f"immediate-{index}", title=f"Director Commercial Strategy {index}") for index in range(12)]
+    rows = build_digest_rows(jobs, as_of="2026-06-17")
+    assert sum(1 for row in rows if row[0] == "Immediate review") == 10
 
 
 def test_target_company_watchlist_section_uses_target_company_rows():
@@ -102,19 +108,43 @@ def test_build_digest_values_includes_title_metadata_headers_and_rows():
     assert len(values) > 5
 
 
-def test_dashboard_values_include_core_sprint_19_sections():
-    values = build_dashboard_values()
+def test_dashboard_values_are_plain_executive_summary_not_formulas():
+    job = make_job()
+    digest_rows = build_digest_rows([job], as_of="2026-06-17")
+    values = build_dashboard_values(
+        [job],
+        digest_rows=digest_rows,
+        config_company_rows=[{"source_type": "static", "ingestion_mode": "static_direct", "active": "TRUE"}],
+        rejected_job_rows=[],
+        runs_rows=[{"run_type": "sprint_16_workflow_validation", "status": "success", "finished_at": "2026-06-17T12:00:00Z"}],
+        generated_at="2026-06-17T13:00:00Z",
+    )
     flattened = "\n".join(str(cell) for row in values for cell in row)
     for expected in [
-        "Immediate review jobs",
-        "Strong fit open jobs",
-        "Target company watchlist jobs",
-        "Jobs needing salary research",
-        "Remote or short commute jobs",
-        "P&L pathway jobs",
-        "Rejected source audit rows",
-        "Salary range by role family",
-        "Average days open by role family",
-        "Companies with repeat postings",
+        "This week's answer",
+        "Review roles now",
+        "Action queue",
+        "Immediate review",
+        "Strong fit",
+        "Target company watchlist",
+        "Needs salary research",
+        "Remote or short commute",
+        "P&L pathway",
+        "Tracker health",
+        "Source health",
+        "Top roles to review",
+        "Source cleanup queue",
     ]:
         assert expected in flattened
+    assert "=COUNTIF" not in flattened
+    assert "=COUNTIFS" not in flattened
+    assert "=QUERY" not in flattened
+    assert "#REF!" not in flattened
+    assert "#VALUE!" not in flattened
+
+
+def test_dashboard_says_no_roles_to_review_when_empty():
+    values = build_dashboard_values([], digest_rows=[], rejected_job_rows=[])
+    flattened = "\n".join(str(cell) for row in values for cell in row)
+    assert "No action needed this week" in flattened
+    assert "No roles to review" in flattened
