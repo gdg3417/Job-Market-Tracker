@@ -6,7 +6,7 @@ The tracker is intentionally not a generic finance job scraper. It monitors role
 
 ## Current status
 
-Sprints 1 through 16 are implemented in code. The current system supports Google Sheets writes, Greenhouse and Lever ingestion, static company career page ingestion, Gmail alert ingestion, dedupe and lifecycle handling, Dashboard and Digest refresh, workbook schema validation, Gmail quarantine handling, final data quality gates, and a safer daily GitHub Actions workflow.
+Sprints 1 through 18 are implemented in code. The current system supports Google Sheets writes, Greenhouse and Lever ingestion, static company career page ingestion, Gmail alert ingestion, dedupe and lifecycle handling, Dashboard and Digest refresh, workbook schema validation, Gmail quarantine handling, final data quality gates, a safer daily GitHub Actions workflow, and source configuration auditing.
 
 The daily workflow is safe to run only after the workbook schema validates. It runs tests, validates required secrets, writes credentials to temporary runner files, validates the workbook schema, records workflow validation, runs static career pages, runs Gmail ingestion when optional Gmail secrets exist, runs Greenhouse, Lever, and lifecycle handling, then refreshes Dashboard and Digest.
 
@@ -29,6 +29,7 @@ job-market-tracker/
     sprint_9_gmail_alert_setup.md
     sprint_15_data_quality_gates.md
     sprint_16_workflow_readiness.md
+    sprint_18_source_configuration_cleanup.md
   src/
     __init__.py
     main.py
@@ -44,6 +45,7 @@ job-market-tracker/
     dashboard.py
     data_quality.py
     schema.py
+    source_audit.py
     workflow_validation.py
     companies.py
     sources/
@@ -64,6 +66,7 @@ job-market-tracker/
     test_schema.py
     test_scoring.py
     test_sheets.py
+    test_source_audit.py
     test_static_pages.py
   .github/
     workflows/
@@ -89,6 +92,8 @@ Runs
 Digest
 Dashboard
 ```
+
+`Config_Companies` includes `source_quality` and `ingestion_mode` fields so job boards, broken URLs, static company pages, and ATS sources can be classified explicitly.
 
 `Rejected_Jobs` captures records blocked by final quality gates. It is not a staging tab for good jobs. Rows in that tab should be reviewed for source quality issues, parser misses, or source URLs that should be disabled or corrected.
 
@@ -135,6 +140,7 @@ Run these before trusting an unattended daily workflow run:
 ```powershell
 pytest
 python -m src.schema --validate
+python -m src.source_audit
 python -m src.main --gmail-alerts-smoke-test
 python -m src.main --static-pages-smoke-test
 python -m src.dashboard
@@ -146,6 +152,8 @@ Use this command only when the workbook headers or timezone need repair:
 python -m src.schema --repair-headers
 ```
 
+After Sprint 18, run the repair command once so `Config_Companies` has the `source_quality` and `ingestion_mode` headers.
+
 ## Main commands
 
 ```powershell
@@ -156,6 +164,8 @@ python -m src.main --lever-smoke-test
 python -m src.main --job-upsert-smoke-test
 python -m src.main --gmail-alerts-smoke-test
 python -m src.main --static-pages-smoke-test
+python -m src.source_audit
+python -m src.source_audit --apply-recommendations
 python -m src.dashboard
 python -m src.workflow_validation
 ```
@@ -202,7 +212,8 @@ If optional Gmail secrets are missing, Gmail ingestion skips cleanly. Required G
 | Sprint 14 | Complete | Gmail quarantine and cleanup handling |
 | Sprint 15 | Complete | Final data quality gates and `Rejected_Jobs` capture |
 | Sprint 16 | Complete | Workflow automation readiness and safer daily run ordering |
-| Sprint 17 | In progress | Documentation and runbook cleanup |
+| Sprint 17 | Complete | Documentation and runbook cleanup |
+| Sprint 18 | Complete | Source configuration audit, source quality fields, and ingestion mode recommendations |
 
 ## Known limitations
 
@@ -225,6 +236,7 @@ Sprint details are in:
 ```text
 docs/sprint_15_data_quality_gates.md
 docs/sprint_16_workflow_readiness.md
+docs/sprint_18_source_configuration_cleanup.md
 ```
 
-The next planned implementation sprint is Sprint 18, source configuration cleanup.
+The next planned implementation sprint is Sprint 19, scoring and Digest usefulness.

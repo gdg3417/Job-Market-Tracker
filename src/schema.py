@@ -12,7 +12,7 @@ from src.models import JOB_FIELDS
 EXPECTED_TIMEZONE = "America/Chicago"
 RUNS_HEADERS = "run_id run_type source_type source_name status started_at finished_at duration_seconds records_found records_inserted records_updated records_failed rows_read config_companies_rows config_searches_rows companies_read searches_read error_message notes created_at updated_at".split()
 CONFIG_SEARCHES_HEADERS = "search_id bucket role_family include_keywords exclude_keywords locations remote_allowed hybrid_allowed salary_min salary_max role_level p_and_l_path_relevance active notes".split()
-CONFIG_COMPANIES_HEADERS = "company_id company_name parent_company source_type source_slug source_url ats_platform location_focus industry_bucket company_size_bucket ownership_type priority_tier active notes".split()
+CONFIG_COMPANIES_HEADERS = "company_id company_name parent_company source_type source_slug source_url ats_platform location_focus industry_bucket company_size_bucket ownership_type priority_tier source_quality ingestion_mode active notes".split()
 SNAPSHOTS_HEADERS = "snapshot_id snapshot_date job_key company title status total_score alert_tier salary_min salary_max total_comp_estimate remote_status work_model commute_estimate_minutes role_family p_and_l_path_score growth_ownership_score notes".split()
 DIGEST_HEADERS = "digest_section company title location remote_status work_model commute_estimate_minutes role_family role_level total_score alert_tier salary_min salary_max total_comp_estimate days_open first_seen_date last_seen_date canonical_url score_explanation".split()
 DASHBOARD_HEADERS = ["Job Market Tracker Dashboard"]
