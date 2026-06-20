@@ -164,6 +164,22 @@ def test_static_page_company_rows_filters_active_static_sources():
     assert filtered[0]["company_name"] == "Acme Industrial"
 
 
+def test_static_page_company_rows_respects_sprint18_source_audit_fields():
+    rows = [
+        company_row(company_name="Static Direct", ingestion_mode="static_direct", source_quality="success"),
+        company_row(company_name="Gmail Only", ingestion_mode="gmail_only", source_quality="too_noisy"),
+        company_row(company_name="Manual Review", ingestion_mode="manual_review_only", source_quality="needs_manual_url_correction"),
+        company_row(company_name="Disabled", ingestion_mode="disabled", source_quality="disable_recommended"),
+        company_row(company_name="Failed Static", ingestion_mode="static_direct", source_quality="failed"),
+        company_row(company_name="Built In", source_type="job_board", ats_platform="job_board", source_url="https://builtin.com/jobs/dallas/operations"),
+        company_row(company_name="Google Alerts", source_type="job_alert", ats_platform="gmail_alert", source_url="https://www.google.com/search?q=commercial+strategy+manager+jobs+Dallas"),
+    ]
+
+    filtered = static_page_company_rows(rows)
+
+    assert [row["company_name"] for row in filtered] == ["Static Direct"]
+
+
 def test_static_page_company_rows_accepts_common_non_greenhouse_ats_sources():
     rows = [
         company_row(

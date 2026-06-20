@@ -94,7 +94,9 @@ IGNORED_HOST_TERMS = (
     "youtube.com",
 )
 STATIC_SOURCE_DENY_TERMS = (
+    "builtin.com",
     "google jobs",
+    "google.com/search",
     "jobs.google",
     "ladders.com",
     "linkedin",
@@ -103,6 +105,14 @@ STATIC_SOURCE_DENY_TERMS = (
     "theladders",
     "ziprecruiter",
 )
+STATIC_ELIGIBLE_INGESTION_MODES = {"", "static_direct"}
+STATIC_BLOCKED_INGESTION_MODES = {"gmail_only", "manual_review_only", "disabled"}
+STATIC_BLOCKED_SOURCE_QUALITIES = {
+    "failed",
+    "too_noisy",
+    "needs_manual_url_correction",
+    "disable_recommended",
+}
 IGNORED_PATH_TERMS = (
     "benefits",
     "blog",
@@ -193,14 +203,37 @@ def _is_truthy(value: Any, default: bool = True) -> bool:
 def _source_text(company_row: dict[str, Any]) -> str:
     return " ".join(
         clean_text(company_row.get(field_name, "")).lower()
-        for field_name in ["source_type", "ats_platform", "source_primary", "source_url", "source_slug"]
+        for field_name in [
+            "company_name",
+            "source_type",
+            "ats_platform",
+            "source_primary",
+            "source_url",
+            "source_slug",
+            "source_quality",
+            "ingestion_mode",
+        ]
     )
+
+
+def _normalized_config_value(value: Any) -> str:
+    return clean_text(value).strip().lower()
 
 
 def _source_matches_static_page(company_row: dict[str, Any]) -> bool:
     source_url = clean_text(company_row.get("source_url"))
     if not source_url:
         return False
+
+    ingestion_mode = _normalized_config_value(company_row.get("ingestion_mode"))
+    source_quality = _normalized_config_value(company_row.get("source_quality"))
+    if ingestion_mode in STATIC_BLOCKED_INGESTION_MODES:
+        return False
+    if ingestion_mode not in STATIC_ELIGIBLE_INGESTION_MODES:
+        return False
+    if source_quality in STATIC_BLOCKED_SOURCE_QUALITIES:
+        return False
+
     text = _source_text(company_row)
     if "greenhouse" in text or "lever" in text:
         return False
