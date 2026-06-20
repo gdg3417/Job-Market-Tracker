@@ -28,17 +28,24 @@ role_family_keywords:
     - GTM
     - pricing strategy
     - sales strategy
+    - commercial growth
+    - commercial planning
+    - market strategy
   Revenue Strategy:
     - revenue strategy
     - revenue growth
+    - revenue operations strategy
     - monetization strategy
     - commercial growth
+    - profitable growth
   Business Operations:
     - business operations
     - strategy operations
+    - strategy and operations
     - bizops
     - operating cadence
     - operating reviews
+    - executive cadence
     - service operations
     - regional operations
     - distribution operations
@@ -53,10 +60,14 @@ role_family_keywords:
     - value creation
     - strategic planning
     - enterprise strategy
+    - strategic initiatives
   Product Line Management:
     - product line
+    - product line management
+    - product line manager
     - segment management
     - category management
+    - category manager
     - category strategy
     - product strategy
     - portfolio management
@@ -76,6 +87,12 @@ role_family_keywords:
     - inventory productivity
   Chief of Staff:
     - chief of staff
+    - chief of staff to CEO
+    - chief of staff to the CEO
+    - chief of staff to President
+    - chief of staff to the President
+    - chief of staff to GM
+    - chief of staff to the GM
     - office of the CEO
     - office of the president
     - office of the GM
@@ -117,11 +134,19 @@ team_leadership_keywords:
 positive_keywords:
   p_and_l_path:
     - P&L
+    - P&L ownership
+    - P&L accountability
     - profit and loss
     - general manager
+    - general management
     - GM track
+    - GM pathway
+    - GM succession
+    - business owner
+    - business ownership
     - business unit
     - business unit leader
+    - business unit ownership
     - product line ownership
     - product line profitability
     - segment strategy
@@ -136,14 +161,20 @@ positive_keywords:
   growth_ownership:
     - revenue strategy
     - revenue growth
+    - own revenue
+    - owner of revenue
     - margin expansion
     - margin improvement
+    - margin ownership
+    - pricing
     - pricing strategy
+    - price realization
     - sales strategy
     - go-to-market
     - GTM
     - growth strategy
     - commercial strategy
+    - commercial growth
     - value creation
     - market expansion
     - profitable growth
@@ -166,9 +197,13 @@ positive_keywords:
     - senior leadership
     - executive team
     - ELT
+    - executive cadence
+    - executive operating review
+    - business review with executives
   operating_cadence:
     - business operations
     - operating cadence
+    - executive cadence
     - cross-functional
     - sales operations
     - commercial operations
@@ -181,6 +216,7 @@ positive_keywords:
     - performance management
     - KPI reviews
     - weekly business review
+    - monthly business review
 negative_keywords:
   hard_exclude:
     - staff accountant
@@ -197,15 +233,30 @@ negative_keywords:
     - commission-only
     - financial advisor
     - insurance sales
+    - insurance operations associate
     - retail associate
     - sales associate
     - boutique associate
     - client advisor
     - watchmaker
+    - technician
     - service technician
     - repair technician
+    - support specialist
+    - billing specialist
+    - office manager
+    - project coordinator
+    - program coordinator
+    - operations coordinator
+    - operations associate
+    - help desk
+    - desktop support
     - bench jeweler
     - brand ambassador
+    - job search
+    - jobs near me
+    - top companies
+    - resume builder
   penalties:
     controller-only: 35
     controller: 25
@@ -229,6 +280,29 @@ negative_keywords:
     treasury: 12
     AR strategy: 8
     collections strategy: 8
+    generic PMO: 35
+    PMO: 25
+    project management office: 30
+    project manager: 30
+    program manager: 20
+    implementation manager: 20
+    implementation project manager: 30
+    project tracking: 20
+    project plan: 15
+    status reporting: 15
+    generic operations: 25
+    administrative operations: 25
+    office operations: 25
+    day-to-day operations: 20
+    billing operations: 25
+    claims operations: 25
+    insurance operations: 30
+    IT infrastructure: 35
+    infrastructure operations: 30
+    systems administrator: 35
+    network engineer: 30
+    technical support: 30
+    helpdesk: 35
     store manager: 25
     retail store manager: 35
     75% travel: 25
