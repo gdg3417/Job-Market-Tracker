@@ -6,7 +6,9 @@ The tracker is intentionally not a generic finance job scraper. It monitors role
 
 ## Current status
 
-Sprints 1 through 18 are implemented in code. The current system supports Google Sheets writes, Greenhouse and Lever ingestion, static company career page ingestion, Gmail alert ingestion, dedupe and lifecycle handling, Dashboard and Digest refresh, workbook schema validation, Gmail quarantine handling, final data quality gates, a safer daily GitHub Actions workflow, and source configuration auditing.
+Sprints 1 through 19 are implemented in code. The current system supports Google Sheets writes, Greenhouse and Lever ingestion, static company career page ingestion, Gmail alert ingestion, dedupe and lifecycle handling, Dashboard and Digest refresh, workbook schema validation, Gmail quarantine handling, final data quality gates, a safer daily GitHub Actions workflow, source configuration auditing, and focused scoring for passive job monitoring.
+
+Sprint 19 tunes scoring so strategic commercial, revenue, product line, category management, GM track, Chief of Staff, pricing, margin, growth, and P&L roles rise in the Digest while generic PMO, IT support, technician, billing, insurance operations, generic office, and project coordination roles stay low or are excluded.
 
 The daily workflow is safe to run only after the workbook schema validates. It runs tests, validates required secrets, writes credentials to temporary runner files, validates the workbook schema, records workflow validation, runs static career pages, runs Gmail ingestion when optional Gmail secrets exist, runs Greenhouse, Lever, and lifecycle handling, then refreshes Dashboard and Digest.
 
@@ -30,6 +32,7 @@ job-market-tracker/
     sprint_15_data_quality_gates.md
     sprint_16_workflow_readiness.md
     sprint_18_source_configuration_cleanup.md
+    sprint_19_scoring_digest_usefulness.md
   src/
     __init__.py
     main.py
@@ -214,6 +217,7 @@ If optional Gmail secrets are missing, Gmail ingestion skips cleanly. Required G
 | Sprint 16 | Complete | Workflow automation readiness and safer daily run ordering |
 | Sprint 17 | Complete | Documentation and runbook cleanup |
 | Sprint 18 | Complete | Source configuration audit, source quality fields, and ingestion mode recommendations |
+| Sprint 19 | Complete | Scoring tuning and focused Digest sections for weekly review usefulness |
 
 ## Known limitations
 
@@ -237,6 +241,7 @@ Sprint details are in:
 docs/sprint_15_data_quality_gates.md
 docs/sprint_16_workflow_readiness.md
 docs/sprint_18_source_configuration_cleanup.md
+docs/sprint_19_scoring_digest_usefulness.md
 ```
 
-The next planned implementation sprint is Sprint 19, scoring and Digest usefulness.
+The next planned implementation sprint has not been defined.

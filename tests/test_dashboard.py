@@ -40,27 +40,58 @@ def test_digest_headers_include_review_fields():
     assert "score_explanation" in DIGEST_HEADERS
 
 
-def test_digest_rows_include_immediate_review_pnl_and_commute_sections():
-    job = make_job()
-    rows = build_digest_rows([job], as_of="2026-06-17")
+def test_digest_rows_include_focused_sprint_19_sections_without_duplicates():
+    jobs = [
+        make_job(job_key="immediate", total_score=90, alert_tier="immediate_review"),
+        make_job(job_key="strong", title="Senior Manager, Revenue Strategy", total_score=80, alert_tier="strong_fit"),
+        make_job(job_key="salary", title="Manager, Business Operations", salary_min=None, salary_max=None, total_comp_estimate=None, total_score=68, alert_tier="track_only"),
+        make_job(job_key="commute", title="Manager, Pricing Strategy", remote_status="remote", work_model="remote", commute_estimate_minutes=None, total_score=66, alert_tier="track_only"),
+        make_job(job_key="pnl", title="Manager, Product Line Strategy", location="Dallas, TX", remote_status="onsite", work_model="in_office", commute_estimate_minutes=45, total_score=64, alert_tier="ignore"),
+    ]
+    rows = build_digest_rows(jobs, as_of="2026-06-17")
     sections = [row[0] for row in rows]
     assert "Immediate review" in sections
+    assert "Strong fit" in sections
+    assert "Needs salary research" in sections
+    assert "Remote or short commute" in sections
     assert "P&L pathway" in sections
-    assert "Remote, hybrid, or short commute" in sections
-    assert "New this week" in sections
+    job_titles = [row[2] for row in rows if row[0] != "Rejected source audit"]
+    assert len(job_titles) == len(set(job_titles))
+
+
+def test_target_company_watchlist_section_uses_target_company_rows():
+    job = make_job(company="Fossil Group", title="Manager, Commercial Strategy", total_score=62, alert_tier="ignore", p_and_l_path_score=4)
+    rows = build_digest_rows(
+        [job],
+        as_of="2026-06-17",
+        target_company_rows=[{"company_name": "Fossil Group", "priority_tier": "Tier 1", "active": "TRUE"}],
+    )
+    assert any(row[0] == "Target company watchlist" for row in rows)
+
+
+def test_rejected_source_audit_section_maps_rejected_rows():
+    rows = build_digest_rows(
+        [],
+        rejected_job_rows=[
+            {
+                "source": "static_pages",
+                "title": "Job Search Search Jobs",
+                "company": "The Ladders",
+                "url": "https://www.theladders.com/jobs/search-jobs",
+                "rejection_reason": "source URL is a search page",
+                "created_at": "2026-06-17T12:00:00Z",
+            }
+        ],
+    )
+    assert rows[0][0] == "Rejected source audit"
+    assert rows[0][1] == "The Ladders"
+    assert "search page" in rows[0][-1]
 
 
 def test_digest_excludes_closed_old_jobs_from_open_sections():
     job = make_job(status="confirmed_closed", closed_date="2026-05-01", total_score=95)
     rows = build_digest_rows([job], as_of="2026-06-17")
     assert rows == []
-
-
-def test_missing_salary_review_section_for_scored_open_job():
-    job = make_job(salary_min=None, salary_max=None, total_comp_estimate=None, total_score=78, alert_tier="strong_fit")
-    rows = build_digest_rows([job], as_of="2026-06-17")
-    sections = [row[0] for row in rows]
-    assert "Missing salary review" in sections
 
 
 def test_build_digest_values_includes_title_metadata_headers_and_rows():
@@ -71,20 +102,19 @@ def test_build_digest_values_includes_title_metadata_headers_and_rows():
     assert len(values) > 5
 
 
-def test_dashboard_values_include_core_sprint_11_sections():
+def test_dashboard_values_include_core_sprint_19_sections():
     values = build_dashboard_values()
     flattened = "\n".join(str(cell) for row in values for cell in row)
     for expected in [
-        "New jobs this week",
         "Immediate review jobs",
         "Strong fit open jobs",
+        "Target company watchlist jobs",
+        "Jobs needing salary research",
+        "Remote or short commute jobs",
         "P&L pathway jobs",
-        "Remote jobs",
-        "Jobs within 15 minutes",
-        "Jobs within 30 minutes",
+        "Rejected source audit rows",
         "Salary range by role family",
         "Average days open by role family",
         "Companies with repeat postings",
-        "Jobs with missing salary",
     ]:
         assert expected in flattened

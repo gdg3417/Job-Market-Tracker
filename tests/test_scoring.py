@@ -27,6 +27,57 @@ def test_strong_commercial_strategy_job_scores_immediate_review():
     assert "total=" in scored.score_explanation
 
 
+def test_generic_pmo_project_manager_stays_low():
+    rules = load_scoring_rules(RULES_PATH)
+    job = normalize_raw_job(
+        {
+            "company": "Acme",
+            "title": "Senior Program Manager, PMO",
+            "location": "Dallas, TX",
+            "salary": "$150,000 - $170,000",
+            "description": "Generic PMO project manager role focused on project plan maintenance, status reporting, project tracking, and implementation governance.",
+        }
+    )
+    scored = score_job(job, rules)
+    assert scored.total_score < 65
+    assert scored.alert_tier == "ignore"
+    assert "penalty=" in scored.score_explanation
+
+
+def test_low_value_support_billing_and_coordinator_roles_are_excluded():
+    rules = load_scoring_rules(RULES_PATH)
+    examples = [
+        {"title": "Billing Specialist", "description": "Billing operations and invoice support."},
+        {"title": "Insurance Operations Associate", "description": "Claims operations and policy processing."},
+        {"title": "Project Coordinator", "description": "Meeting notes, status reporting, and project tracking."},
+        {"title": "IT Infrastructure Support Specialist", "description": "Help desk, desktop support, and network tickets."},
+    ]
+    for raw in examples:
+        job = normalize_raw_job({"company": "Acme", "location": "Dallas, TX", "salary": "$70,000 - $100,000", **raw})
+        scored = score_job(job, rules)
+        assert scored.alert_tier == "exclude"
+        assert scored.total_score == 0
+        assert "hard_exclude=true" in scored.score_explanation
+
+
+def test_chief_of_staff_to_gm_scores_as_strategic_role():
+    rules = load_scoring_rules(RULES_PATH)
+    job = normalize_raw_job(
+        {
+            "company": "Acme Industrial",
+            "title": "Chief of Staff to the General Manager",
+            "location": "Plano, TX Hybrid",
+            "salary": "$180,000 - $215,000",
+            "description": "Lead strategic initiatives, executive cadence, weekly business reviews, margin improvement, pricing strategy, and business unit operating performance with the GM and leadership team.",
+        }
+    )
+    scored = score_job(job, rules, company_context={"industry_bucket": "industrial products", "ownership_type": "PE-backed"})
+    assert scored.alert_tier in {"strong_fit", "immediate_review"}
+    assert scored.total_score >= 75
+    assert scored.p_and_l_path_score > 0
+    assert scored.growth_ownership_score > 0
+
+
 def test_accounting_job_is_excluded():
     rules = load_scoring_rules(RULES_PATH)
     job = normalize_raw_job(
