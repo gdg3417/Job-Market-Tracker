@@ -9,7 +9,10 @@ from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_DIR = PROJECT_ROOT / "config"
-DEFAULT_GMAIL_SMOKE_MAX_RESULTS = 5
+DEFAULT_GMAIL_MAX_RESULTS = 50
+MAX_GMAIL_MAX_RESULTS = 500
+# Backward-compatible alias for callers that still import the Sprint 9 name.
+DEFAULT_GMAIL_SMOKE_MAX_RESULTS = DEFAULT_GMAIL_MAX_RESULTS
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,7 +26,7 @@ class Settings:
     gmail_client_config: str = ""
     gmail_token_json: str = ""
     gmail_label_name: str = "Job Tracker"
-    gmail_max_results: int = DEFAULT_GMAIL_SMOKE_MAX_RESULTS
+    gmail_max_results: int = DEFAULT_GMAIL_MAX_RESULTS
     dry_run: bool = True
 
 
@@ -61,9 +64,9 @@ def load_settings() -> Settings:
     gmail_client_config = _resolve_project_path(os.getenv("GMAIL_CLIENT_CONFIG", ""))
     gmail_token_json = _resolve_project_path(os.getenv("GMAIL_TOKEN_JSON", ""))
     gmail_max_results = _clamp_int(
-        _as_int(os.getenv("GMAIL_MAX_RESULTS"), DEFAULT_GMAIL_SMOKE_MAX_RESULTS),
+        _as_int(os.getenv("GMAIL_MAX_RESULTS"), DEFAULT_GMAIL_MAX_RESULTS),
         minimum=1,
-        maximum=DEFAULT_GMAIL_SMOKE_MAX_RESULTS,
+        maximum=MAX_GMAIL_MAX_RESULTS,
     )
     return Settings(
         google_sheet_id=os.getenv("GOOGLE_SHEET_ID", ""),
