@@ -124,7 +124,7 @@ python -m src.schema --repair-headers
 
 ## LinkedIn Gmail digest parsing
 
-LinkedIn job alert digests are parsed from the plain-text MIME body when it contains direct posting links. The HTML body is used only when the plain-text alternative does not contain direct postings.
+LinkedIn digest emails are parsed from both available MIME alternatives. When the same LinkedIn job ID appears in both, the parser retains the more complete valid card. Plain text or HTML can be used independently when only one contains direct postings.
 
 Each direct LinkedIn posting is normalized to:
 
