@@ -8,7 +8,7 @@ from typing import Any, Iterable
 from src.data_quality import filter_jobs_for_upsert, rejected_job_record
 from src.job_upsert import upsert_jobs
 from src.models import today_iso, utc_now_iso
-from src.schema import GMAIL_MESSAGES_HEADERS, REJECTED_JOBS_HEADERS, SchemaValidationError, compare_headers, HeaderSpec
+from src.schema import GMAIL_MESSAGES_HEADERS, REJECTED_JOBS_HEADERS, HeaderSpec, SchemaValidationError, compare_headers
 from src.scoring import load_scoring_rules
 from src.settings import load_settings
 from src.sheets import SheetClient, with_quota_backoff
@@ -34,6 +34,8 @@ SUPPORTED_MESSAGE_STATUSES = COMPLETED_MESSAGE_STATUSES | RETRYABLE_MESSAGE_STAT
 @dataclass(slots=True)
 class GmailListBatch:
     message_refs: list[dict[str, str]]
+    pending_message_ids: list[str]
+    messages_listed: int
     pages_fetched: int
     result_size_estimate: int
     messages_already_processed: int
@@ -44,6 +46,7 @@ class GmailIngestionSummary:
     status: str
     gmail_label_name: str
     messages_fetched: int = 0
+    messages_listed: int = 0
     pages_fetched: int = 0
     messages_already_processed: int = 0
     new_messages_processed: int = 0
@@ -154,17 +157,18 @@ def list_labeled_gmail_message_refs(
 ) -> GmailListBatch:
     label_id = find_gmail_label_id(service, label_name)
     completed = completed_ids or set()
-    refs: list[dict[str, str]] = []
+    pending_refs: list[dict[str, str]] = []
     page_token = ""
     pages_fetched = 0
     result_size_estimate = 0
+    messages_listed = 0
+    messages_already_processed = 0
 
-    while len(refs) < max_results:
-        page_size = min(500, max_results - len(refs))
+    while True:
         request_kwargs: dict[str, Any] = {
             "userId": "me",
             "labelIds": [label_id],
-            "maxResults": page_size,
+            "maxResults": 500,
         }
         if query:
             request_kwargs["q"] = query
@@ -178,30 +182,32 @@ def list_labeled_gmail_message_refs(
             _as_int(response.get("resultSizeEstimate"), 0),
         )
         for item in response.get("messages", []) or []:
-            if len(refs) >= max_results:
-                break
             message_id = str(item.get("id") or "").strip()
-            if message_id:
-                refs.append(
-                    {
-                        "id": message_id,
-                        "threadId": str(item.get("threadId") or "").strip(),
-                    }
-                )
+            if not message_id:
+                continue
+            messages_listed += 1
+            if not force_reprocess and message_id in completed:
+                messages_already_processed += 1
+                continue
+            pending_refs.append(
+                {
+                    "id": message_id,
+                    "threadId": str(item.get("threadId") or "").strip(),
+                }
+            )
 
         page_token = str(response.get("nextPageToken") or "").strip()
         if not page_token:
             break
 
-    already_processed = 0
-    if not force_reprocess:
-        already_processed = sum(1 for item in refs if item["id"] in completed)
-
+    selected_refs = pending_refs[:max_results]
     return GmailListBatch(
-        message_refs=refs,
+        message_refs=selected_refs,
+        pending_message_ids=[item["id"] for item in pending_refs],
+        messages_listed=messages_listed,
         pages_fetched=pages_fetched,
-        result_size_estimate=max(result_size_estimate, len(refs)),
-        messages_already_processed=already_processed,
+        result_size_estimate=max(result_size_estimate, messages_listed),
+        messages_already_processed=messages_already_processed,
     )
 
 
@@ -378,18 +384,13 @@ def run_gmail_ingestion(*, force_reprocess: bool = False) -> dict[str, Any]:
         status="success",
         gmail_label_name=settings.gmail_label_name,
         messages_fetched=len(batch.message_refs),
+        messages_listed=batch.messages_listed,
         pages_fetched=batch.pages_fetched,
         messages_already_processed=batch.messages_already_processed,
         force_reprocess=force_reprocess,
     )
 
-    eligible_refs = [
-        item
-        for item in batch.message_refs
-        if force_reprocess or item["id"] not in completed_message_ids(ledger)
-    ]
-    completed_this_run = 0
-
+    eligible_refs = batch.message_refs
     for item in eligible_refs:
         message_id = item["id"]
         existing_entry = ledger.get(message_id)
@@ -449,7 +450,6 @@ def run_gmail_ingestion(*, force_reprocess: bool = False) -> dict[str, Any]:
             )
             upsert_gmail_message_record(sheet_client, ledger, record)
             summary.new_messages_processed += 1
-            completed_this_run += 1
             if status == "no_jobs":
                 summary.no_jobs_messages += 1
         except Exception as error:
@@ -471,14 +471,21 @@ def run_gmail_ingestion(*, force_reprocess: bool = False) -> dict[str, Any]:
                 ) from error
             summary.failed_messages += 1
 
-    unlisted_backlog = max(0, batch.result_size_estimate - len(batch.message_refs))
-    summary.backlog_remaining = unlisted_backlog + sum(
+    retryable_selected = sum(
         1
         for item in eligible_refs
         if str((ledger.get(item["id"]) or (0, {}))[1].get("status") or "") == "retryable_failure"
     )
+    if force_reprocess:
+        summary.backlog_remaining = max(0, len(batch.pending_message_ids) - len(eligible_refs)) + retryable_selected
+    else:
+        summary.backlog_remaining = sum(
+            1
+            for message_id in batch.pending_message_ids
+            if str((ledger.get(message_id) or (0, {}))[1].get("status") or "") not in COMPLETED_MESSAGE_STATUSES
+        )
 
-    if not batch.message_refs:
+    if batch.messages_listed == 0:
         summary.status = "no_labeled_emails"
     elif not eligible_refs:
         summary.status = "no_new_messages"
