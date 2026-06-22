@@ -347,6 +347,35 @@ def _email_rejection_alert(email: GmailAlertEmail, received_date: str, rejection
     )
 
 
+def _parse_linkedin_digest_email(email: GmailAlertEmail, received_date: str) -> list[ParsedJobAlert]:
+    from src.sources.linkedin_digest import parse_linkedin_digest
+
+    cards = parse_linkedin_digest(email.body_text, email.body_html)
+    alerts: list[ParsedJobAlert] = []
+    for card in cards:
+        alerts.append(
+            ParsedJobAlert(
+                title=card.title,
+                company=card.company,
+                location=card.location,
+                url=card.url,
+                source="gmail_alert",
+                source_job_id=f"linkedin-{card.job_id}",
+                received_date=received_date,
+                confidence="rejected" if card.is_rejected else "high",
+                extraction_notes=f"origin=linkedin; extraction=linkedin_digest_card; linkedin_job_id={card.job_id}",
+                is_rejected=card.is_rejected,
+                rejection_reason=card.rejection_reason,
+                raw_evidence=card.evidence,
+                message_id=email.message_id,
+                thread_id=email.thread_id,
+                subject=email.subject,
+                sender=email.sender,
+            )
+        )
+    return alerts
+
+
 def parse_job_alert_email(email: GmailAlertEmail) -> list[ParsedJobAlert]:
     body = email.combined_body
     if not (email.subject or body):
@@ -355,6 +384,19 @@ def parse_job_alert_email(email: GmailAlertEmail) -> list[ParsedJobAlert]:
     email_rejection_reason = _email_level_rejection_reason(email)
     if email_rejection_reason:
         return [_email_rejection_alert(email, received_date, email_rejection_reason)]
+
+    from src.sources.linkedin_digest import is_linkedin_digest_email
+
+    if is_linkedin_digest_email(
+        subject=email.subject,
+        sender=email.sender,
+        body_text=email.body_text,
+        body_html=email.body_html,
+    ):
+        digest_alerts = _parse_linkedin_digest_email(email, received_date)
+        if digest_alerts:
+            return digest_alerts
+
     lines = _meaningful_lines(body) or _meaningful_lines(email.subject)
     urls = extract_urls(body, email.subject) or [""]
     alerts: list[ParsedJobAlert] = []
