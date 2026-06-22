@@ -1,10 +1,10 @@
 # Operations runbook
 
-This runbook documents the current Job Market Tracker operating flow after Sprint 21.
+This runbook documents the Job Market Tracker operating flow after Sprint 23.
 
 ## Local setup
 
-Run from PowerShell in the repo root:
+Run from PowerShell in the repository root:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
@@ -13,145 +13,134 @@ pip install -r requirements.txt
 pytest
 ```
 
-For first-time setup, create `.env` from `.env.example` and point local credential values to files under the ignored `credentials/` folder.
+For first-time setup, create `.env` from `.env.example` and point local credential values to files under the ignored `credentials` folder.
 
-## Local validation sequence
+## Validation sequence
 
 Run this sequence before trusting an unattended workflow run:
 
 ```powershell
 pytest
+python -m src.gmail_ingestion --ensure-ledger
 python -m src.schema --validate
+python -m src.source_audit
 python -m src.main --static-pages-smoke-test
-python -m src.main --gmail-alerts-smoke-test
+python -m src.gmail_ingestion --run
 python -m src.main --job-upsert-smoke-test
 python -m src.dashboard
 ```
 
 Expected results:
 
-1. `pytest` passes.
-2. `python -m src.schema --validate` returns JSON with `ok: true`.
-3. Static page ingestion does not recreate generic search rows.
-4. Gmail ingestion does not recreate known alert metadata rows.
-5. LinkedIn digest cards retain the correct title, company, location, and canonical direct URL.
-6. Dashboard and Digest write successfully.
-7. The Dashboard top section gives a clear answer.
-8. The Dashboard has no `#REF!` or `#VALUE!`.
+1. All tests pass.
+2. Schema validation returns `ok: true`.
+3. Static ingestion does not create generic search rows.
+4. Gmail ingestion records every attempted message in `Gmail_Messages`.
+5. LinkedIn digest cards retain their correct title, company, location, and canonical URL.
+6. Dashboard and Digest write successfully without formula errors.
 
-## Manual GitHub Actions run
+## Workbook schema
 
-Use GitHub Actions when local validation is clean.
+The required tabs are:
 
-1. Open the repo in GitHub.
-2. Go to Actions.
-3. Select `Job Tracker Daily Run`.
-4. Choose `Run workflow` on `main`.
-5. Review the Step Summary when the run finishes.
+```text
+Config_Searches
+Config_Companies
+Scoring_Rules
+Target_Companies
+Jobs
+Job_Sources
+Rejected_Jobs
+Gmail_Messages
+Snapshots
+Runs
+Digest
+Dashboard
+```
 
-The workflow should report source counts, Gmail counts when available, Dashboard rows written, Digest rows written, and final status.
-
-If optional Gmail configuration is missing, Gmail ingestion should skip cleanly. Required Google Sheets configuration must exist or the workflow fails before ingestion.
-
-## Schema validation and repair
-
-Validate schema:
+Validate the schema:
 
 ```powershell
 python -m src.schema --validate
 ```
 
-Repair headers and workbook timezone:
+Repair canonical headers and the workbook timezone:
 
 ```powershell
 python -m src.schema --repair-headers
 ```
 
-Use repair when:
+Use repair when a required tab is missing, a header was edited, or the workbook timezone is not `America/Chicago`.
 
-1. A worksheet header was edited manually.
-2. A required worksheet such as `Rejected_Jobs` is missing.
-3. The workbook timezone is not `America/Chicago`.
-4. A write fails because expected headers are missing.
+## Gmail ingestion
 
-After repair, run:
+The production Gmail command is:
 
 ```powershell
+python -m src.gmail_ingestion --run
+```
+
+The command lists every page of messages under the configured Gmail label, skips completed message IDs, and processes up to `GMAIL_MAX_RESULTS` pending messages.
+
+Default configuration:
+
+```text
+GMAIL_LABEL_NAME=Job Tracker
+GMAIL_MAX_RESULTS=50
+```
+
+The supported maximum is 500.
+
+### Gmail message statuses
+
+```text
+success
+no_jobs
+retryable_failure
+permanent_failure
+```
+
+A message is marked complete only after accepted jobs, rejected records, and the ledger status are written. Opening or reading an email does not affect ingestion.
+
+`success`, `no_jobs`, and `permanent_failure` are skipped during normal runs. `retryable_failure` is retried.
+
+### Rejected records
+
+`Rejected_Jobs` is keyed by `rejected_id` for Gmail processing. Repeated runs update or skip existing rejection rows rather than appending duplicates.
+
+Legitimate alert rejection does not fail a Gmail run. The Gmail step fails when every selected pending message fails to process.
+
+### Controlled replay
+
+Use only for debugging or deliberate replay:
+
+```powershell
+python -m src.gmail_ingestion --run --force-reprocess
+```
+
+### Backlog release
+
+The production backlog is released only after Sprint 23 is merged and the validation sequence passes.
+
+Run:
+
+```powershell
+python -m src.gmail_ingestion --ensure-ledger
 python -m src.schema --validate
+python -m src.gmail_ingestion --run
+python -m src.rescore_jobs
 python -m src.dashboard
 ```
 
-## Dashboard and Digest refresh
+Confirm all labeled messages have ledger rows, backlog is zero, Topgolf and Toyota are correct, and both appear in `High-signal titles needing review`.
 
-Refresh Dashboard and Digest manually with:
+Run Gmail ingestion again. The expected result is zero newly processed messages and zero remaining backlog.
 
-```powershell
-python -m src.dashboard
-```
-
-This reads `Jobs`, `Target_Companies`, `Config_Companies`, `Rejected_Jobs`, and `Runs`, then rewrites `Dashboard` and `Digest` and appends a run record.
-
-The Sprint 20 Dashboard writes plain values, not spreadsheet formulas. It should show:
-
-1. Executive answer
-2. Action queue
-3. Tracker health
-4. Source health
-5. Top roles to review
-6. Source cleanup queue
-
-The executive answer can be:
-
-1. `Review roles now`
-2. `Review strong fits this week`
-3. `Review target company roles`
-4. `Source cleanup needed`
-5. `No action needed this week`
-
-## Weekly email digest
-
-The weekly email is handled by a bound Google Apps Script file:
-
-```text
-apps_script/weekly_digest_email.gs
-```
-
-Setup instructions are in:
-
-```text
-docs/sprint_20_weekly_email_dashboard.md
-```
-
-The email reads the `Digest` tab and sends a weekly summary. It is not part of the daily GitHub Actions workflow.
-
-Recommended trigger:
-
-```text
-Monday around 8:00 AM Central
-```
-
-Manual Sheet menu:
-
-```text
-Job Tracker
-  Send test weekly digest
-  Send weekly digest now
-```
-
-## Weekly review process
-
-1. Open the Dashboard.
-2. Read `This week's answer`.
-3. If it says `Review roles now`, inspect Immediate review rows the same day.
-4. If it says `Review strong fits this week`, review Strong fit and Target company watchlist rows during weekly review.
-5. If it says `Source cleanup needed`, inspect Source cleanup queue and `Rejected_Jobs`.
-6. If it says `No action needed this week`, no job review is required.
+Detailed backlog instructions are in `docs/sprint_23_gmail_ingestion.md`.
 
 ## LinkedIn digest parsing
 
-LinkedIn digest emails are parsed from both available MIME alternatives. When the same LinkedIn job ID appears in both, the parser retains the more complete valid card. Plain text or HTML can be used independently when only one contains direct postings.
-
-A valid card should contain:
+A valid LinkedIn card contains:
 
 ```text
 Job title
@@ -160,117 +149,121 @@ Location, when present
 Direct LinkedIn posting URL
 ```
 
-Accepted LinkedIn URLs are canonicalized to:
+Accepted URLs are canonicalized to:
 
 ```text
 https://www.linkedin.com/jobs/view/<job_id>
 ```
 
-The source ID must be:
+The source ID is:
 
 ```text
 linkedin-<job_id>
 ```
 
-This source ID must not include the Gmail message ID or the URL position in the email.
+Search pages, Premium links, alert management links, unsubscribe links, help pages, and LinkedIn navigation links do not create jobs.
 
-Do not create job records from:
+Malformed cards are rejected individually. Valid cards in the same email remain eligible. LinkedIn alert confirmation emails remain quarantined and complete as no-job messages.
 
-```text
-See all jobs
-LinkedIn search pages
-Premium offers
-Manage alerts
-Unsubscribe
-Help pages
-Feed or navigation links
-Messaging links
-My Network links
-Notification links
-```
-
-A malformed card should create an individual rejected alert when a direct posting ID is present. It must not cause the other valid cards in the same email to be discarded.
-
-LinkedIn job alert confirmation emails remain quarantined as `linkedin_job_alert_confirmation`.
-
-Sprint 21 validation fixtures:
+Regression fixtures:
 
 ```text
 tests/fixtures/linkedin_topgolf.eml
 tests/fixtures/linkedin_toyota.eml
 ```
 
-Do not run a Gmail production backfill during Sprint 21. Backlog release remains part of the later Gmail reliability sprint.
+## Sparse Gmail review routing
 
-## Data quality cleanup
-
-Use `Rejected_Jobs` as the first cleanup view.
-
-Review these fields:
+Sparse Gmail records with strategically relevant management titles receive:
 
 ```text
-source
-title
-company
-url
-rejection_reason
-extraction_notes
-raw_evidence
-created_at
+manual_review=true
+review_reason=sparse_gmail_high_signal_title
 ```
 
-Recommended actions:
+The numerical score is not increased. Qualifying records appear in `High-signal titles needing review`.
 
-1. If the source is a job board search page, disable or reclassify the source in `Config_Companies`.
-2. If the URL is a company career landing page, replace it with a direct ATS or posting path where available.
-3. If the row is Gmail alert metadata, leave it rejected and improve parser rules only if good postings are also blocked.
-4. If a valid direct posting was rejected, add a focused test before loosening the data quality gate.
-5. Remove corresponding malformed rows from `Job_Sources` when cleaning old polluted `Jobs` rows.
+Re-score existing open Gmail jobs with:
 
-Do not move rejected rows directly into `Jobs`. Rejected rows should either drive source cleanup or parser hardening.
-
-## Source rules
-
-Static page ingestion should prioritize target company career pages and direct posting URLs.
-
-Do not use generic static scraping for:
-
-```text
-LinkedIn
-Indeed
-Google Jobs
-Built In
-The Ladders
-near-me pages
-search result pages
-category browse pages
-resume or profile pages
-help or services pages
+```powershell
+python -m src.rescore_jobs
 ```
 
-Preferred ingestion modes:
+## Dashboard and Digest
 
-```text
-greenhouse
-lever
-static_direct
-gmail_only
-manual_review_only
-disabled
+Refresh both outputs manually with:
+
+```powershell
+python -m src.dashboard
 ```
+
+The Dashboard should provide an executive answer, action queue, tracker health, source health, top roles, and source cleanup queue.
+
+The weekly email is handled by `apps_script/weekly_digest_email.gs`. It is separate from the daily GitHub Actions workflow.
+
+## GitHub Actions
+
+The daily workflow is `.github/workflows/daily-run.yml`.
+
+### Scheduled execution
+
+Two UTC schedule entries remain for daylight-saving coverage. The workflow no longer depends on a 15-minute Central execution window.
+
+Scheduled runs check `Runs` for a successful `daily_workflow_completion` record for the current Central date.
+
+1. The first invocation runs when no successful completion exists.
+2. A delayed first invocation still runs.
+3. The second invocation skips after a successful first invocation.
+4. The second invocation runs when the first invocation failed.
+5. Manual dispatch always bypasses the lock.
+6. Completion is recorded only after every required workflow step succeeds.
+
+### Manual run
+
+1. Open the repository in GitHub.
+2. Select Actions.
+3. Select `Job Tracker Daily Run`.
+4. Choose `Run workflow` on `main`.
+5. Leave `force_reprocess` off unless a controlled replay is required.
+6. Review the Step Summary.
+
+The summary reports the daily gate result, Gmail pages and messages, processing outcomes, backlog, accepted jobs, rejected alerts, and Dashboard and Digest row counts.
 
 ## Failure handling
 
-If schema validation fails, stop and repair the workbook before ingestion.
+### Schema validation failure
 
-If static page rejected rows spike, audit `Config_Companies` first. The likely cause is a job board, search URL, category page, or JavaScript-heavy career site being treated as a static source.
+Repair headers before ingestion:
 
-If Gmail rejected rows exceed accepted jobs, inspect recent alert email structure and `Rejected_Jobs` before relaxing parser rules.
+```powershell
+python -m src.schema --repair-headers
+python -m src.schema --validate
+```
 
-If multiple LinkedIn posting URLs receive the same title or company, confirm the digest path was detected and inspect both MIME alternatives and their card boundaries. Do not fix this by falling back to the email subject.
+### Gmail retryable failures
 
-If a LinkedIn posting is duplicated across alert emails, confirm its source ID uses only the LinkedIn job ID.
+Inspect `Gmail_Messages.error_message`, correct the cause, then rerun:
 
-If Dashboard refresh fails, rerun `python -m src.dashboard` after resolving the error because Digest and Dashboard output may be stale.
+```powershell
+python -m src.gmail_ingestion --run
+```
 
-If the weekly email does not arrive, run `Send test weekly digest` from the Sheet menu and then inspect Apps Script executions and triggers.
+### Gmail backlog remains
+
+Review retryable rows and the GitHub Actions summary. A backlog warning means processing is incomplete, not that accepted jobs were lost.
+
+### Rejected Gmail volume is high
+
+Inspect recent email structure and `Rejected_Jobs`. Add a focused parser test before loosening quality rules.
+
+### Dashboard refresh fails
+
+Resolve the underlying error, then rerun:
+
+```powershell
+python -m src.dashboard
+```
+
+### Weekly email fails
+
+Use `Send test weekly digest` from the Sheet menu, then inspect Apps Script executions and triggers.

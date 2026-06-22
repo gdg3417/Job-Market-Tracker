@@ -19,6 +19,7 @@ DASHBOARD_HEADERS = ["Job Market Tracker Dashboard"]
 SCORING_RULES_HEADERS = "rule_id category rule_name max_points positive_signals negative_signals scoring_logic active notes".split()
 TARGET_COMPANIES_HEADERS = "target_company_id company_name parent_company industry_bucket company_size_bucket ownership_type priority_tier location_focus commute_bucket p_and_l_path_rationale role_families_to_watch score_boost_points active notes".split()
 REJECTED_JOBS_HEADERS = "rejected_id source message_id thread_id subject sender received_date title company location url confidence rejection_reason extraction_notes raw_evidence created_at updated_at".split()
+GMAIL_MESSAGES_HEADERS = "message_id thread_id subject sender received_at status attempt_count alerts_parsed jobs_accepted jobs_rejected error_message first_processed_at last_processed_at".split()
 
 
 class SchemaValidationError(ValueError):
@@ -84,6 +85,7 @@ CANONICAL_SCHEMA = {
     "Scoring_Rules": HeaderSpec("Scoring_Rules", SCORING_RULES_HEADERS),
     "Target_Companies": HeaderSpec("Target_Companies", TARGET_COMPANIES_HEADERS),
     "Rejected_Jobs": HeaderSpec("Rejected_Jobs", REJECTED_JOBS_HEADERS),
+    "Gmail_Messages": HeaderSpec("Gmail_Messages", GMAIL_MESSAGES_HEADERS),
 }
 
 

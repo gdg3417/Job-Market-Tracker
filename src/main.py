@@ -5,7 +5,7 @@ import json
 from datetime import datetime
 from typing import Any
 
-from src.data_quality import filter_jobs_for_upsert
+from src.gmail_ingestion import run_gmail_ingestion
 from src.job_upsert import upsert_jobs
 from src.lifecycle import LifecycleSummary, check_job_url_closed, update_lifecycle_for_missing_jobs
 from src.models import today_iso, utc_now_iso
@@ -13,14 +13,6 @@ from src.normalize import normalize_raw_job
 from src.scoring import load_scoring_rules, score_job
 from src.settings import load_settings
 from src.sheets import SheetClient, run_sprint2_smoke_test
-from src.sources.gmail_alerts import (
-    append_rejected_alerts,
-    build_gmail_run_record,
-    build_gmail_service,
-    fetch_labeled_gmail_emails,
-    parse_job_alert_email,
-    parsed_alerts_to_jobs,
-)
 from src.sources.greenhouse import greenhouse_company_rows, run_greenhouse_companies
 from src.sources.lever import lever_company_rows, run_lever_companies
 from src.sources.static_pages import run_static_page_companies, static_page_company_rows
@@ -41,7 +33,14 @@ def run_dry_smoke_test() -> dict[str, object]:
     settings = load_settings()
     rules = load_scoring_rules(settings.scoring_rules_path)
     job = normalize_raw_job(SAMPLE_JOB, source_primary="sample")
-    scored = score_job(job, rules, company_context={"industry_bucket": "industrial products manufacturing", "ownership_type": "private company"})
+    scored = score_job(
+        job,
+        rules,
+        company_context={
+            "industry_bucket": "industrial products manufacturing",
+            "ownership_type": "private company",
+        },
+    )
     return {
         "run_mode": "dry_run",
         "ran_at": datetime.now().isoformat(timespec="seconds"),
@@ -61,13 +60,11 @@ def run_greenhouse_smoke_test() -> dict[str, object]:
     company_rows = sheet_client.read_records("Config_Companies")
     greenhouse_rows = greenhouse_company_rows(company_rows)
     rules = load_scoring_rules(settings.scoring_rules_path)
-
     jobs, results = run_greenhouse_companies(
         greenhouse_rows,
         scoring_rules=rules,
         sheet_client=sheet_client,
     )
-
     failures = [result for result in results if result.status == "failed"]
     if not results:
         status = "no_greenhouse_sources"
@@ -75,7 +72,6 @@ def run_greenhouse_smoke_test() -> dict[str, object]:
         status = "partial_failure"
     else:
         status = "success"
-
     return {
         "run_mode": "sprint_5_greenhouse_smoke_test",
         "status": status,
@@ -106,13 +102,11 @@ def run_lever_smoke_test() -> dict[str, object]:
     company_rows = sheet_client.read_records("Config_Companies")
     lever_rows = lever_company_rows(company_rows)
     rules = load_scoring_rules(settings.scoring_rules_path)
-
     jobs, results = run_lever_companies(
         lever_rows,
         scoring_rules=rules,
         sheet_client=sheet_client,
     )
-
     failures = [result for result in results if result.status == "failed"]
     if not results:
         status = "no_lever_sources"
@@ -120,7 +114,6 @@ def run_lever_smoke_test() -> dict[str, object]:
         status = "partial_failure"
     else:
         status = "success"
-
     return {
         "run_mode": "sprint_6_lever_smoke_test",
         "status": status,
@@ -160,7 +153,6 @@ def build_sprint7_run_record(
         status = "partial_failure"
     else:
         status = "success"
-
     return {
         "run_id": f"sprint7_job_upsert_{run_timestamp}",
         "run_type": "sprint_7_job_upsert_smoke_test",
@@ -202,7 +194,6 @@ def build_sprint8_run_record(
         status = "partial_failure"
     else:
         status = "success"
-
     return {
         "run_id": f"sprint8_lifecycle_{run_timestamp}",
         "run_type": "sprint_8_lifecycle_tracking",
@@ -247,11 +238,7 @@ def build_sprint10_run_record(
         status = "no_jobs_found"
     else:
         status = "success"
-
-    notes = {
-        "upsert_summary": summary,
-        "low_confidence_count": low_confidence_count,
-    }
+    notes = {"upsert_summary": summary, "low_confidence_count": low_confidence_count}
     return {
         "run_id": f"sprint10_static_pages_{run_timestamp}",
         "run_type": "sprint_10_static_page_smoke_test",
@@ -283,7 +270,6 @@ def run_job_upsert_smoke_test() -> dict[str, object]:
     company_rows = sheet_client.read_records("Config_Companies")
     rules = load_scoring_rules(settings.scoring_rules_path)
     seen_date = today_iso()
-
     greenhouse_rows = greenhouse_company_rows(company_rows)
     greenhouse_jobs, greenhouse_results = run_greenhouse_companies(
         greenhouse_rows,
@@ -291,7 +277,6 @@ def run_job_upsert_smoke_test() -> dict[str, object]:
         sheet_client=None,
         seen_date=seen_date,
     )
-
     lever_rows = lever_company_rows(company_rows)
     lever_jobs, lever_results = run_lever_companies(
         lever_rows,
@@ -299,7 +284,6 @@ def run_job_upsert_smoke_test() -> dict[str, object]:
         sheet_client=None,
         seen_date=seen_date,
     )
-
     all_jobs = greenhouse_jobs + lever_jobs
     source_results = greenhouse_results + lever_results
     source_failures = [result for result in source_results if result.status == "failed"]
@@ -312,7 +296,6 @@ def run_job_upsert_smoke_test() -> dict[str, object]:
         )
     else:
         lifecycle_summary = LifecycleSummary()
-
     for result in source_results:
         sheet_client.append_run(result.to_run_record())
     sheet_client.append_run(
@@ -331,14 +314,12 @@ def run_job_upsert_smoke_test() -> dict[str, object]:
             summary=lifecycle_summary.to_dict(),
         )
     )
-
     if not source_results:
         status = "no_sources"
     elif source_failures:
         status = "partial_failure"
     else:
         status = "success"
-
     return {
         "run_mode": "sprint_7_job_upsert_and_sprint_8_lifecycle_smoke_test",
         "status": status,
@@ -364,78 +345,9 @@ def run_job_upsert_smoke_test() -> dict[str, object]:
     }
 
 
-def run_gmail_alerts_smoke_test() -> dict[str, object]:
-    settings = load_settings()
-    if not settings.gmail_client_config:
-        raise ValueError("GMAIL_CLIENT_CONFIG is required for Gmail alert ingestion")
-    if not settings.gmail_token_json:
-        raise ValueError("GMAIL_TOKEN_JSON is required for Gmail alert ingestion")
-
-    sheet_client = SheetClient.from_settings(settings)
-    rules = load_scoring_rules(settings.scoring_rules_path)
-    seen_date = today_iso()
-    service = build_gmail_service(settings.gmail_client_config, settings.gmail_token_json)
-    emails = fetch_labeled_gmail_emails(
-        service,
-        label_name=settings.gmail_label_name,
-        max_results=settings.gmail_max_results,
-    )
-
-    alerts = []
-    for email in emails:
-        alerts.extend(parse_job_alert_email(email))
-    quarantined_count = append_rejected_alerts(sheet_client, alerts)
-    rejected_count = quarantined_count
-    candidate_jobs = parsed_alerts_to_jobs(alerts, scoring_rules=rules, seen_date=seen_date)
-    accepted_jobs, final_gate_rejections = filter_jobs_for_upsert(candidate_jobs)
-    upsert_summary = upsert_jobs(sheet_client, candidate_jobs, seen_date=seen_date)
-
-    if not emails:
-        status = "no_labeled_emails"
-    elif not accepted_jobs:
-        status = "no_jobs_extracted"
-    else:
-        status = "success"
-
-    sheet_client.append_run(
-        build_gmail_run_record(
-            emails_read=len(emails),
-            alerts_parsed=len(alerts),
-            jobs_found=len(accepted_jobs),
-            upsert_summary=upsert_summary.to_dict(),
-            status=status,
-            label_name=settings.gmail_label_name,
-            rejected_count=rejected_count + len(final_gate_rejections),
-            quarantined_count=quarantined_count + len(final_gate_rejections),
-        )
-    )
-
-    return {
-        "run_mode": "sprint_9_gmail_alert_ingestion",
-        "status": status,
-        "gmail_label_name": settings.gmail_label_name,
-        "emails_read": len(emails),
-        "alerts_parsed": len(alerts),
-        "candidate_jobs_found": len(candidate_jobs),
-        "jobs_found": len(accepted_jobs),
-        "final_gate_rejected_jobs": len(final_gate_rejections),
-        "low_confidence_alerts": len([alert for alert in alerts if alert.confidence == "low"]),
-        "rejected_alerts": rejected_count,
-        "quarantined_alerts": quarantined_count,
-        "upsert_summary": upsert_summary.to_dict(),
-        "runs_rows_appended": 1,
-        "top_jobs": [
-            {
-                "company": job.company,
-                "title": job.title,
-                "location": job.location,
-                "total_score": job.total_score,
-                "alert_tier": job.alert_tier,
-                "canonical_url": job.canonical_url,
-            }
-            for job in sorted(accepted_jobs, key=lambda item: item.total_score, reverse=True)[:10]
-        ],
-    }
+def run_gmail_alerts_smoke_test() -> dict[str, Any]:
+    """Backward-compatible alias for the Sprint 23 ledger-backed Gmail runner."""
+    return run_gmail_ingestion()
 
 
 def run_static_pages_smoke_test() -> dict[str, object]:
@@ -446,7 +358,6 @@ def run_static_pages_smoke_test() -> dict[str, object]:
     static_rows = static_page_company_rows(company_rows)
     rules = load_scoring_rules(settings.scoring_rules_path)
     seen_date = today_iso()
-
     jobs, results = run_static_page_companies(
         static_rows,
         scoring_rules=rules,
@@ -457,7 +368,6 @@ def run_static_pages_smoke_test() -> dict[str, object]:
     source_failures = [result for result in results if result.status == "failed"]
     low_confidence_count = sum(result.low_confidence_count for result in results)
     upsert_summary = upsert_jobs(sheet_client, jobs, seen_date=seen_date)
-
     for result in results:
         sheet_client.append_run(result.to_run_record())
     sheet_client.append_run(
@@ -470,7 +380,6 @@ def run_static_pages_smoke_test() -> dict[str, object]:
             summary=upsert_summary.to_dict(),
         )
     )
-
     if not results:
         status = "no_static_page_sources"
     elif source_failures:
@@ -479,7 +388,6 @@ def run_static_pages_smoke_test() -> dict[str, object]:
         status = "no_jobs_found"
     else:
         status = "success"
-
     return {
         "run_mode": "sprint_10_static_page_support",
         "status": status,
@@ -533,7 +441,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--gmail-alerts-smoke-test",
         action="store_true",
-        help="Read labeled Gmail job alert emails, extract jobs, upsert Jobs and Job_Sources, then append a Sprint 9 run row",
+        help="Run the Sprint 23 ledger-backed Gmail ingestion command",
     )
     parser.add_argument(
         "--static-pages-smoke-test",
@@ -546,35 +454,27 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     settings = load_settings()
-
     if args.static_pages_smoke_test:
         print(json.dumps(run_static_pages_smoke_test(), indent=2))
         return
-
     if args.gmail_alerts_smoke_test:
         print(json.dumps(run_gmail_alerts_smoke_test(), indent=2))
         return
-
     if args.job_upsert_smoke_test:
         print(json.dumps(run_job_upsert_smoke_test(), indent=2))
         return
-
     if args.lever_smoke_test:
         print(json.dumps(run_lever_smoke_test(), indent=2))
         return
-
     if args.greenhouse_smoke_test:
         print(json.dumps(run_greenhouse_smoke_test(), indent=2))
         return
-
     if args.sheets_smoke_test:
         print(json.dumps(run_sprint2_smoke_test(settings), indent=2))
         return
-
     if args.dry_run or settings.dry_run:
         print(json.dumps(run_dry_smoke_test(), indent=2))
         return
-
     print(json.dumps(run_sprint2_smoke_test(settings), indent=2))
 
 

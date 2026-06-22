@@ -6,7 +6,7 @@ The tracker is intentionally not a generic finance job scraper. It monitors role
 
 ## Current status
 
-Sprints 1 through 22 are implemented in code.
+Sprints 1 through 23 are implemented in code.
 
 The current system supports:
 
@@ -26,12 +26,15 @@ The current system supports:
 14. A Google Apps Script weekly email digest
 15. LinkedIn multi-job digest card parsing with stable posting IDs
 16. Sparse Gmail high-signal title review routing without score inflation
+17. Paginated, ledger-backed Gmail ingestion with per-message retries and idempotent rejection handling
 
 Sprint 20 redesigns the Dashboard so it is an action-oriented executive summary instead of a fragile formula page. It also adds a bound Apps Script weekly digest email that can be scheduled for Monday around 8:00 AM Central.
 
 Sprint 21 parses LinkedIn digest emails as individual job cards. Each accepted card retains its own title, company, location, canonical posting URL, and stable `linkedin-<job_id>` source ID. LinkedIn utility links are ignored, and malformed cards are rejected individually without discarding valid cards from the same email.
 
 Sprint 22 flags sparse Gmail records with strategically relevant management-level titles for human review. It preserves evidence-based scores, adds a dedicated Digest and Dashboard section, updates the weekly email, and provides a command to re-score existing open Gmail jobs.
+
+Sprint 23 adds the `Gmail_Messages` ledger, paginated Gmail listing, retryable message processing, force reprocessing, idempotent `Rejected_Jobs` writes, backlog metrics, and a Central-date workflow completion lock. The two UTC schedules remain, but only the first successful run for a Central calendar date records completion.
 
 ## Repo structure
 
@@ -47,8 +50,11 @@ job-market-tracker/
     operations_runbook.md
     sprint_20_weekly_email_dashboard.md
     sprint_22_sparse_gmail_review.md
+    sprint_23_gmail_ingestion.md
   src/
+    daily_run_gate.py
     dashboard.py
+    gmail_ingestion.py
     rescore_jobs.py
     scoring.py
     sources/
@@ -59,8 +65,10 @@ job-market-tracker/
     fixtures/
       linkedin_topgolf.eml
       linkedin_toyota.eml
+    test_daily_run_gate.py
     test_dashboard.py
     test_gmail_alerts.py
+    test_gmail_ingestion.py
     test_linkedin_digest.py
     test_rescore_jobs.py
     test_scoring.py
@@ -83,6 +91,7 @@ Target_Companies
 Jobs
 Job_Sources
 Rejected_Jobs
+Gmail_Messages
 Snapshots
 Runs
 Digest
@@ -90,6 +99,8 @@ Dashboard
 ```
 
 `Rejected_Jobs` captures records blocked by final quality gates. It is not a staging tab for good jobs.
+
+`Gmail_Messages` is the message processing ledger. It records each Gmail message ID, processing status, attempt count, parsed and accepted counts, errors, and processing timestamps.
 
 ## Local setup
 
@@ -119,9 +130,10 @@ Run these before trusting an unattended daily workflow run:
 
 ```powershell
 pytest
+python -m src.gmail_ingestion --ensure-ledger
 python -m src.schema --validate
 python -m src.source_audit
-python -m src.main --gmail-alerts-smoke-test
+python -m src.gmail_ingestion --run
 python -m src.main --static-pages-smoke-test
 python -m src.dashboard
 ```
@@ -130,6 +142,12 @@ Use this command only when the workbook headers or timezone need repair:
 
 ```powershell
 python -m src.schema --repair-headers
+```
+
+Use force reprocessing only for controlled debugging or a deliberate replay:
+
+```powershell
+python -m src.gmail_ingestion --run --force-reprocess
 ```
 
 ## LinkedIn Gmail digest parsing
@@ -150,7 +168,7 @@ linkedin-<job_id>
 
 This keeps the same posting stable when it appears in multiple alert emails. Search pages, Premium links, alert-management links, unsubscribe links, help pages, and LinkedIn navigation links do not create job records.
 
-Sanitized regression fixtures are stored under `tests/fixtures/`. No production Gmail backfill should be run before Sprint 23.
+Sanitized regression fixtures are stored under `tests/fixtures/`.
 
 ## Sparse Gmail review routing
 
@@ -170,6 +188,23 @@ python -m src.rescore_jobs
 ```
 
 See `docs/sprint_22_sparse_gmail_review.md` for criteria and operating details.
+
+## Gmail processing ledger
+
+Successful and no-job messages are skipped on later runs. Retryable failures are attempted again. Permanent failures remain recorded and are skipped unless force reprocessing is used.
+
+Supported statuses:
+
+```text
+success
+no_jobs
+retryable_failure
+permanent_failure
+```
+
+A message is marked complete only after its accepted jobs, rejected records, and ledger row have been written. Rejected rows are keyed by `rejected_id`, so retries do not append duplicate quarantine rows.
+
+See `docs/sprint_23_gmail_ingestion.md` for backlog and recovery procedures.
 
 ## Weekly email digest
 
@@ -191,7 +226,8 @@ python -m src.main --sheets-smoke-test
 python -m src.main --greenhouse-smoke-test
 python -m src.main --lever-smoke-test
 python -m src.main --job-upsert-smoke-test
-python -m src.main --gmail-alerts-smoke-test
+python -m src.gmail_ingestion --ensure-ledger
+python -m src.gmail_ingestion --run
 python -m src.main --static-pages-smoke-test
 python -m src.rescore_jobs
 python -m src.source_audit
@@ -204,7 +240,9 @@ python -m src.workflow_validation
 
 The daily workflow is `.github/workflows/daily-run.yml`.
 
-It supports manual runs with `workflow_dispatch` and scheduled runs around 06:30 AM Central. The workflow checks the Central schedule window so duplicate UTC cron entries do not both run during daylight saving changes.
+It supports manual runs with `workflow_dispatch` and two scheduled UTC invocations around 06:30 AM Central. Scheduled runs use a successful `daily_workflow_completion` record in `Runs` as the Central-date lock. A delayed first invocation still runs. The second invocation skips only after the first invocation completes successfully. Manual dispatch always bypasses the date lock.
+
+Manual dispatch also exposes a `force_reprocess` input for controlled Gmail replay.
 
 Pull requests are validated by `.github/workflows/pull-request-tests.yml`, which compiles Python sources and runs the full pytest suite.
 
@@ -234,3 +272,4 @@ Pull requests are validated by `.github/workflows/pull-request-tests.yml`, which
 | Sprint 20 | Complete | Plain-English Dashboard and Apps Script weekly email digest |
 | Sprint 21 | Complete | LinkedIn multi-job digest card parsing and stable posting IDs |
 | Sprint 22 | Complete | Sparse Gmail high-signal title review routing and re-score command |
+| Sprint 23 | Complete | Gmail ledger, pagination, retries, idempotent rejection writes, backlog metrics, and daily completion lock |
