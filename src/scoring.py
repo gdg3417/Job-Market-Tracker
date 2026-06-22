@@ -9,15 +9,27 @@ import yaml
 from src.models import JobPosting
 
 ScoreMatch = tuple[int, list[str]]
+DEFAULT_SPARSE_GMAIL_REVIEW_REASON = "sparse_gmail_high_signal_title"
+DEFAULT_GENERIC_GMAIL_DESCRIPTION_PREFIXES = ["Extracted from Gmail job alert"]
+DEFAULT_INCOMPLETE_WORK_MODEL_VALUES = {"", "unknown", "unspecified", "not specified", "n/a", "na", "none"}
 
 
 def load_scoring_rules(path: str | Path) -> dict[str, Any]:
-    with Path(path).open("r", encoding="utf-8") as file:
+    rules_path = Path(path)
+    with rules_path.open("r", encoding="utf-8") as file:
         rules = yaml.safe_load(file) or {}
     rules.setdefault("category_weights", {})
     rules.setdefault("alert_thresholds", {})
     rules.setdefault("positive_keywords", {})
     rules.setdefault("negative_keywords", {})
+    rules.setdefault("sparse_gmail_review", {})
+    sparse_rules_path = rules_path.with_name("sparse_gmail_review.yml")
+    if sparse_rules_path.exists():
+        with sparse_rules_path.open("r", encoding="utf-8") as file:
+            sparse_config = yaml.safe_load(file) or {}
+        sparse_values = sparse_config.get("sparse_gmail_review", sparse_config)
+        if isinstance(sparse_values, dict):
+            rules["sparse_gmail_review"].update(sparse_values)
     return rules
 
 
@@ -66,6 +78,64 @@ def _matching_keywords(text: str, keywords: list[str]) -> list[str]:
             seen.add(normalized)
             matches.append(key)
     return matches
+
+
+def _gmail_description_is_generic(description: str, review_rules: dict[str, Any]) -> bool:
+    normalized = re.sub(r"\s+", " ", str(description or "")).strip().lower()
+    if not normalized:
+        return True
+
+    prefixes = list(review_rules.get("generic_description_prefixes") or DEFAULT_GENERIC_GMAIL_DESCRIPTION_PREFIXES)
+    matched_prefix = False
+    remainder = normalized
+    for prefix in prefixes:
+        prefix_text = re.sub(r"\s+", " ", str(prefix or "")).strip().lower().rstrip(".")
+        if prefix_text and prefix_text in remainder:
+            matched_prefix = True
+            remainder = remainder.replace(prefix_text, " ")
+    if not matched_prefix:
+        return False
+
+    remainder = re.sub(
+        r"\b(?:confidence|origin|extraction|linkedin_job_id|job_id)\s*=\s*[^;,.\s]+[;,.]?",
+        " ",
+        remainder,
+        flags=re.IGNORECASE,
+    )
+    remainder = re.sub(r"[^a-z0-9]+", " ", remainder).strip()
+    return not remainder
+
+
+def _work_model_is_incomplete(job: JobPosting, review_rules: dict[str, Any]) -> bool:
+    values = {
+        str(value).strip().lower()
+        for value in (review_rules.get("incomplete_work_model_values") or DEFAULT_INCOMPLETE_WORK_MODEL_VALUES)
+    }
+    return str(job.remote_status or "").strip().lower() in values or str(job.work_model or "").strip().lower() in values
+
+
+def is_sparse_gmail_record(job: JobPosting, rules: dict[str, Any] | None = None) -> bool:
+    review_rules = (rules or {}).get("sparse_gmail_review", {}) or {}
+    if str(job.source_primary or "").strip().lower() != "gmail_alert":
+        return False
+    if not _gmail_description_is_generic(job.description_text, review_rules):
+        return False
+    if job.salary_min is not None or job.salary_max is not None or job.total_comp_estimate is not None:
+        return False
+    return _work_model_is_incomplete(job, review_rules)
+
+
+def sparse_gmail_review_reason(job: JobPosting, rules: dict[str, Any]) -> str:
+    review_rules = rules.get("sparse_gmail_review", {}) or {}
+    if not is_sparse_gmail_record(job, rules):
+        return ""
+
+    title_text = str(job.title or "").strip().lower()
+    priority_matches = _matching_keywords(title_text, list(review_rules.get("priority_title_phrases") or []))
+    seniority_matches = _matching_keywords(title_text, list(review_rules.get("seniority_phrases") or []))
+    if not priority_matches or not seniority_matches:
+        return ""
+    return str(review_rules.get("review_reason") or DEFAULT_SPARSE_GMAIL_REVIEW_REASON)
 
 
 def _weighted_keyword_score(text: str, keywords: list[str], max_points: int, target_matches: int) -> ScoreMatch:
@@ -275,6 +345,10 @@ def score_job(job: JobPosting, rules: dict[str, Any], company_context: dict[str,
         explanation_parts.append(f"penalty={penalty} ({', '.join(penalty_matches[:5])})")
     if hard_exclude:
         explanation_parts.append("hard_exclude=true")
+    else:
+        review_reason = sparse_gmail_review_reason(job, rules)
+        if review_reason:
+            explanation_parts.extend(["manual_review=true", f"review_reason={review_reason}"])
 
     job.fit_score = fit_score
     job.p_and_l_path_score = p_and_l_score
