@@ -12,7 +12,15 @@ Supported statuses are `success`, `no_jobs`, `retryable_failure`, and `permanent
 
 Gmail listing follows page tokens. `GMAIL_MAX_RESULTS` controls the number of pending messages fully processed per run. The default is 50 and the supported maximum is 500.
 
+Jobs and Job_Sources are loaded once per process and updated through reusable in-memory upsert state. Processing a multi-message backlog does not perform two full worksheet reads for every email.
+
 Rejected records use `rejected_id` as the idempotency key, so retries do not append the same rejected row again.
+
+The older command remains available only as a compatibility alias and uses the same Sprint 23 runner:
+
+```powershell
+python -m src.main --gmail-alerts-smoke-test
+```
 
 ## Preflight
 
@@ -74,7 +82,11 @@ Use replay only for debugging or deliberate reprocessing. Job dedupe and rejecte
 
 The workflow retains two UTC schedules. Scheduled execution checks `Runs` for a successful `daily_workflow_completion` record for the current Central date.
 
-The first invocation runs when no completion exists. The second skips after a successful first run, but retries when the first run failed. Manual workflow dispatch always runs. Completion is recorded only after all required workflow steps succeed.
+Scheduled invocations before 06:00 AM Central are ignored. This prevents the 11:30 UTC schedule from running at 05:30 AM during Central Standard Time while allowing either scheduled invocation to run when GitHub starts it late.
+
+The first eligible invocation runs when no completion exists. The second skips after a successful first run, but retries when the first run failed. Manual workflow dispatch always runs. Completion is recorded only after all required workflow steps succeed.
+
+Any Gmail message failure fails the Gmail workflow step, including a partial failure. Successful messages retain their completed ledger status, retryable failures remain pending, and the later scheduled invocation can retry only the unsuccessful messages.
 
 ## Recovery
 
