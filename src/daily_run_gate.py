@@ -14,6 +14,7 @@ from src.sheets import SheetClient
 CENTRAL_TIMEZONE = ZoneInfo("America/Chicago")
 DAILY_COMPLETION_RUN_TYPE = "daily_workflow_completion"
 SCHEDULE_EARLIEST_CENTRAL_HOUR = 6
+SCHEDULE_EARLIEST_CENTRAL_MINUTE = 30
 
 
 def central_datetime(now: datetime | None = None) -> datetime:
@@ -45,10 +46,7 @@ def _record_central_date(record: dict[str, Any]) -> date | None:
     return None
 
 
-def has_successful_daily_completion(
-    records: Iterable[dict[str, Any]],
-    target_date: date,
-) -> bool:
+def has_successful_daily_completion(records: Iterable[dict[str, Any]], target_date: date) -> bool:
     return any(
         str(record.get("run_type") or "").strip() == DAILY_COMPLETION_RUN_TYPE
         and str(record.get("status") or "").strip().lower() == "success"
@@ -67,7 +65,13 @@ def daily_run_gate_decision(
     target_date = local_now.date()
     manual_dispatch = event_name != "schedule"
     completed = has_successful_daily_completion(run_records, target_date)
-    scheduled_too_early = not manual_dispatch and local_now.hour < SCHEDULE_EARLIEST_CENTRAL_HOUR
+    scheduled_too_early = not manual_dispatch and (
+        local_now.hour,
+        local_now.minute,
+    ) < (
+        SCHEDULE_EARLIEST_CENTRAL_HOUR,
+        SCHEDULE_EARLIEST_CENTRAL_MINUTE,
+    )
 
     if manual_dispatch:
         should_run = True
@@ -89,7 +93,7 @@ def daily_run_gate_decision(
         "central_time": local_now.strftime("%H:%M:%S"),
         "successful_completion_exists": completed,
         "scheduled_too_early": scheduled_too_early,
-        "earliest_central_hour": SCHEDULE_EARLIEST_CENTRAL_HOUR,
+        "earliest_central_time": "06:30:00",
     }
 
 
@@ -123,8 +127,7 @@ def build_daily_completion_record(*, gate_result: str = "workflow_completed") ->
 
 def check_daily_run_gate(*, event_name: str) -> dict[str, Any]:
     sheet_client = SheetClient.from_settings(load_settings())
-    run_records = sheet_client.read_records("Runs")
-    return daily_run_gate_decision(event_name=event_name, run_records=run_records)
+    return daily_run_gate_decision(event_name=event_name, run_records=sheet_client.read_records("Runs"))
 
 
 def mark_daily_run_success(*, gate_result: str = "workflow_completed") -> dict[str, Any]:
@@ -138,17 +141,18 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Gate the daily workflow by Central calendar date")
     parser.add_argument("--check", action="store_true", help="Check whether the daily workflow should run")
     parser.add_argument("--mark-success", action="store_true", help="Append the successful daily completion record")
-    parser.add_argument("--event-name", default=os.getenv("GITHUB_EVENT_NAME", "workflow_dispatch"), help="GitHub event name, usually schedule or workflow_dispatch")
-    parser.add_argument("--gate-result", default="workflow_completed", help="Gate result to include in the completion record")
+    parser.add_argument("--event-name", default=os.getenv("GITHUB_EVENT_NAME", "workflow_dispatch"))
+    parser.add_argument("--gate-result", default="workflow_completed")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    if args.mark_success:
-        result = mark_daily_run_success(gate_result=args.gate_result)
-    else:
-        result = check_daily_run_gate(event_name=args.event_name)
+    result = (
+        mark_daily_run_success(gate_result=args.gate_result)
+        if args.mark_success
+        else check_daily_run_gate(event_name=args.event_name)
+    )
     print(json.dumps(result, indent=2))
 
 
