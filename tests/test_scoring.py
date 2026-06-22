@@ -2,9 +2,12 @@ from pathlib import Path
 
 from src.normalize import normalize_raw_job
 from src.scoring import load_scoring_rules, score_job
+from src.sources.eml import read_eml
+from src.sources.gmail_alerts import parse_job_alert_email, parsed_alerts_to_jobs
 
 
 RULES_PATH = Path(__file__).resolve().parents[1] / "config" / "scoring_rules.yml"
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 def test_strong_commercial_strategy_job_scores_immediate_review():
@@ -214,6 +217,92 @@ def test_location_scoring_uses_commute_when_available():
     assert score_job(short_commute_job, rules).location_score > score_job(long_commute_job, rules).location_score
 
 
+def _sparse_gmail_job(title: str, company: str = "Acme", location: str = "Dallas, TX"):
+    return normalize_raw_job(
+        {
+            "company": company,
+            "title": title,
+            "location": location,
+            "source_primary": "gmail_alert",
+            "description": "Extracted from Gmail job alert. confidence=high. origin=linkedin; extraction=linkedin_digest_card; linkedin_job_id=1234567890",
+        },
+        source_primary="gmail_alert",
+    )
+
+
+def test_sparse_topgolf_and_toyota_titles_are_marked_for_manual_review_without_score_inflation():
+    rules = load_scoring_rules(RULES_PATH)
+    examples = [
+        ("Sr Manager, Strategic Planning", "Topgolf", "Dallas, TX"),
+        ("National Manager, Product", "Toyota North America", "Plano, TX"),
+    ]
+    for title, company, location in examples:
+        gmail_job = _sparse_gmail_job(title, company, location)
+        baseline_job = normalize_raw_job(
+            {
+                "company": company,
+                "title": title,
+                "location": location,
+                "description": gmail_job.description_text,
+            },
+            source_primary="manual",
+        )
+        scored_gmail = score_job(gmail_job, rules)
+        scored_baseline = score_job(baseline_job, rules)
+        assert scored_gmail.total_score == scored_baseline.total_score
+        assert scored_gmail.alert_tier == scored_baseline.alert_tier
+        assert "manual_review=true" in scored_gmail.score_explanation
+        assert "review_reason=sparse_gmail_high_signal_title" in scored_gmail.score_explanation
+        assert "manual_review=true" not in scored_baseline.score_explanation
+
+
+def test_complete_gmail_posting_is_scored_normally_and_not_marked_sparse():
+    rules = load_scoring_rules(RULES_PATH)
+    job = normalize_raw_job(
+        {
+            "company": "Acme Industrial",
+            "title": "Director, Commercial Strategy",
+            "location": "Plano, TX Hybrid",
+            "source_primary": "gmail_alert",
+            "salary": "$180,000 - $220,000",
+            "description": "Own revenue growth, pricing, margin expansion, operating cadence, and executive reviews for a business unit. Hybrid three days in office.",
+        },
+        source_primary="gmail_alert",
+    )
+    scored = score_job(job, rules)
+    assert "manual_review=true" not in scored.score_explanation
+    assert "review_reason=sparse_gmail_high_signal_title" not in scored.score_explanation
+
+
+def test_entry_level_strategy_title_is_not_promoted_for_review():
+    rules = load_scoring_rules(RULES_PATH)
+    scored = score_job(_sparse_gmail_job("Corporate Strategy Analyst"), rules)
+    assert "manual_review=true" not in scored.score_explanation
+
+
+def test_hard_excluded_sparse_role_remains_excluded():
+    rules = load_scoring_rules(RULES_PATH)
+    scored = score_job(_sparse_gmail_job("Manager, Strategic Planning and Billing Specialist"), rules)
+    assert scored.total_score == 0
+    assert scored.alert_tier == "exclude"
+    assert "hard_exclude=true" in scored.score_explanation
+    assert "manual_review=true" not in scored.score_explanation
+
+
+def test_linkedin_fixture_roles_receive_sparse_gmail_review_treatment():
+    rules = load_scoring_rules(RULES_PATH)
+    fixture_expectations = [
+        ("linkedin_topgolf.eml", "Sr Manager, Strategic Planning", "Topgolf"),
+        ("linkedin_toyota.eml", "National Manager, Product", "Toyota North America"),
+    ]
+    for fixture_name, title, company in fixture_expectations:
+        email = read_eml(FIXTURES / fixture_name)
+        jobs = parsed_alerts_to_jobs(parse_job_alert_email(email), scoring_rules=rules)
+        target = next(job for job in jobs if job.title == title and job.company == company)
+        assert "manual_review=true" in target.score_explanation
+        assert "review_reason=sparse_gmail_high_signal_title" in target.score_explanation
+
+
 def test_rules_file_has_required_score_categories():
     rules = load_scoring_rules(RULES_PATH)
     weights = rules["category_weights"]
@@ -229,3 +318,6 @@ def test_rules_file_has_required_score_categories():
         "industry_match_score",
     ]:
         assert field_name in weights
+    review_rules = rules["sparse_gmail_review"]
+    assert "Strategic Planning" in review_rules["priority_title_phrases"]
+    assert "National Manager" in review_rules["seniority_phrases"]

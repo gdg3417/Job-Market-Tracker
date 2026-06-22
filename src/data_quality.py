@@ -10,6 +10,7 @@ from src.models import JobPosting, utc_now_iso
 from src.normalize import clean_text, normalize_url
 
 REJECTED_JOBS_WORKSHEET = "Rejected_Jobs"
+SPARSE_GMAIL_REVIEW_REASON = "sparse_gmail_high_signal_title"
 
 JOB_BOARD_HOSTS = (
     "builtin.com",
@@ -302,6 +303,16 @@ def _manual_review_marker(job: JobPosting) -> bool:
     return "manual_review=true" in text
 
 
+def _is_allowed_sparse_gmail_review(job: JobPosting, title: str, source: str, url_reason: str) -> bool:
+    explanation = str(job.score_explanation or "").lower()
+    return (
+        source == "gmail_alert"
+        and f"review_reason={SPARSE_GMAIL_REVIEW_REASON}" in explanation
+        and url_reason == ""
+        and title_has_role_signal(title)
+    )
+
+
 def validate_job_quality(job: JobPosting) -> list[str]:
     reasons: list[str] = []
     title = clean_text(job.title)
@@ -330,7 +341,7 @@ def validate_job_quality(job: JobPosting) -> list[str]:
     if url_reason:
         reasons.append(url_reason)
 
-    if _manual_review_marker(job):
+    if _manual_review_marker(job) and not _is_allowed_sparse_gmail_review(job, title, source, url_reason):
         if source != "static_page" or not is_trusted_company_career_posting(job.canonical_url) or not title_has_role_signal(title):
             reasons.append("manual_review_job_not_trusted_static_direct_posting")
 
