@@ -40,7 +40,7 @@ def test_digest_headers_include_review_fields():
     assert "score_explanation" in DIGEST_HEADERS
 
 
-def test_digest_rows_include_focused_sprint_20_sections_without_duplicates():
+def test_digest_rows_include_focused_sections_without_duplicates():
     jobs = [
         make_job(job_key="immediate", total_score=90, alert_tier="immediate_review"),
         make_job(job_key="strong", title="Senior Manager, Revenue Strategy", total_score=80, alert_tier="strong_fit"),
@@ -59,7 +59,7 @@ def test_digest_rows_include_focused_sprint_20_sections_without_duplicates():
     assert len(job_titles) == len(set(job_titles))
 
 
-def test_digest_caps_rows_per_section_at_sprint_20_limits():
+def test_digest_caps_rows_per_section_at_existing_limits():
     jobs = [make_job(job_key=f"immediate-{index}", title=f"Director Commercial Strategy {index}") for index in range(12)]
     rows = build_digest_rows(jobs, as_of="2026-06-17")
     assert sum(1 for row in rows if row[0] == "Immediate review") == 10
@@ -100,12 +100,91 @@ def test_digest_excludes_closed_old_jobs_from_open_sections():
     assert rows == []
 
 
+def test_sparse_manual_review_job_appears_below_sixty_points_in_new_section():
+    job = make_job(
+        job_key="sparse-gmail",
+        company="Topgolf",
+        title="Sr Manager, Strategic Planning",
+        total_score=21,
+        alert_tier="ignore",
+        salary_min=None,
+        salary_max=None,
+        total_comp_estimate=None,
+        remote_status="unknown",
+        work_model="unknown",
+        p_and_l_path_score=0,
+        growth_ownership_score=0,
+        executive_exposure_score=0,
+        operating_cadence_score=0,
+        score_explanation="total=21; tier=ignore; manual_review=true; review_reason=sparse_gmail_high_signal_title",
+    )
+    rows = build_digest_rows([job], as_of="2026-06-17")
+    assert len(rows) == 1
+    assert rows[0][0] == "High-signal titles needing review"
+    assert rows[0][1] == "Topgolf"
+    assert rows[0][2] == "Sr Manager, Strategic Planning"
+    assert rows[0][9] == 21
+
+
+def test_new_review_section_is_after_strong_fit_and_before_salary_research():
+    jobs = [
+        make_job(job_key="strong", title="Director, Revenue Strategy", total_score=80, alert_tier="strong_fit"),
+        make_job(
+            job_key="review",
+            title="National Manager, Product",
+            total_score=20,
+            alert_tier="ignore",
+            salary_min=None,
+            salary_max=None,
+            total_comp_estimate=None,
+            score_explanation="manual_review=true; review_reason=sparse_gmail_high_signal_title",
+        ),
+        make_job(job_key="salary", title="Manager, Business Operations", salary_min=None, salary_max=None, total_comp_estimate=None, total_score=68, alert_tier="track_only"),
+    ]
+    sections = [row[0] for row in build_digest_rows(jobs, as_of="2026-06-17")]
+    assert sections.index("Strong fit") < sections.index("High-signal titles needing review")
+    assert sections.index("High-signal titles needing review") < sections.index("Needs salary research")
+
+
+def test_review_section_ignores_stale_or_excluded_records():
+    stale = make_job(
+        job_key="stale",
+        first_seen_date="2026-05-01",
+        total_score=20,
+        alert_tier="ignore",
+        score_explanation="manual_review=true; review_reason=sparse_gmail_high_signal_title",
+    )
+    excluded = make_job(
+        job_key="excluded",
+        total_score=0,
+        alert_tier="exclude",
+        score_explanation="hard_exclude=true; manual_review=true; review_reason=sparse_gmail_high_signal_title",
+    )
+    assert build_digest_rows([stale, excluded], as_of="2026-06-17") == []
+
+
+def test_review_section_is_capped_at_fifteen_roles():
+    jobs = [
+        make_job(
+            job_key=f"review-{index}",
+            title=f"Manager, Strategic Planning {index}",
+            total_score=20,
+            alert_tier="ignore",
+            score_explanation="manual_review=true; review_reason=sparse_gmail_high_signal_title",
+        )
+        for index in range(18)
+    ]
+    rows = build_digest_rows(jobs, as_of="2026-06-17")
+    assert sum(1 for row in rows if row[0] == "High-signal titles needing review") == 15
+
+
 def test_build_digest_values_includes_title_metadata_headers_and_rows():
     job = make_job()
     values = build_digest_values([job], as_of="2026-06-17")
     assert values[0] == ["Job Market Tracker Weekly Digest"]
     assert values[4] == DIGEST_HEADERS
     assert len(values) > 5
+    assert "High-signal titles needing review" in values[2][1]
 
 
 def test_dashboard_values_are_plain_executive_summary_not_formulas():
@@ -126,6 +205,7 @@ def test_dashboard_values_are_plain_executive_summary_not_formulas():
         "Action queue",
         "Immediate review",
         "Strong fit",
+        "High-signal titles needing review",
         "Target company watchlist",
         "Needs salary research",
         "Remote or short commute",
@@ -141,6 +221,19 @@ def test_dashboard_values_are_plain_executive_summary_not_formulas():
     assert "=QUERY" not in flattened
     assert "#REF!" not in flattened
     assert "#VALUE!" not in flattened
+
+
+def test_dashboard_calls_out_high_signal_gmail_review_queue():
+    job = make_job(
+        total_score=20,
+        alert_tier="ignore",
+        score_explanation="manual_review=true; review_reason=sparse_gmail_high_signal_title",
+    )
+    digest_rows = build_digest_rows([job], as_of="2026-06-17")
+    values = build_dashboard_values([job], digest_rows=digest_rows, rejected_job_rows=[])
+    flattened = "\n".join(str(cell) for row in values for cell in row)
+    assert "Review high-signal Gmail roles" in flattened
+    assert "High-signal titles needing review" in flattened
 
 
 def test_dashboard_says_no_roles_to_review_when_empty():
