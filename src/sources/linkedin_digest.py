@@ -150,9 +150,7 @@ def _looks_like_location(value: str) -> bool:
     lower = text.lower()
     if re.search(r"\b[A-Z][A-Za-z .'-]+,\s*[A-Z]{2}\b", text):
         return True
-    if any(term in lower for term in ("remote", "hybrid", "on-site", "onsite")):
-        return True
-    return False
+    return any(term in lower for term in ("remote", "hybrid", "on-site", "onsite"))
 
 
 def _clean_location(value: str) -> str:
@@ -290,17 +288,20 @@ def is_linkedin_digest_email(
     identity = f"{subject} {sender} {combined}".lower()
     if "linkedin" not in identity and "jobalerts-noreply@linkedin.com" not in identity:
         return False
-    ids = direct_linkedin_job_ids(body_text) or direct_linkedin_job_ids(body_html)
-    return bool(ids) and (
-        len(ids) > 1
-        or "email_job_alert_digest" in identity
-        or "new jobs" in identity
-        or "match your preferences" in identity
-    )
+
+    ids: list[str] = []
+    seen: set[str] = set()
+    for job_id in direct_linkedin_job_ids(body_text) + direct_linkedin_job_ids(body_html):
+        if job_id not in seen:
+            seen.add(job_id)
+            ids.append(job_id)
+
+    # The dedicated parser is only for multi-job digests. Single-link alerts
+    # must continue through the generic parser, which can use the subject line.
+    return len(ids) > 1
 
 
-def parse_linkedin_digest(body_text: str, body_html: str = "") -> list[LinkedInDigestCard]:
-    source = body_text if direct_linkedin_job_ids(body_text) else body_html
+def _parse_linkedin_digest_source(source: str) -> list[LinkedInDigestCard]:
     text = _decoded(source)
     links = _extract_links(source)
     if not links:
@@ -347,19 +348,47 @@ def parse_linkedin_digest(body_text: str, body_html: str = "") -> list[LinkedInD
             if combined_reason:
                 rejection_reason = combined_reason
 
-        canonical_url = canonical_linkedin_job_url(job_id)
-        evidence = " | ".join(_unique_lines([evidence_lines])[:10])
         cards.append(
             LinkedInDigestCard(
                 job_id=job_id,
                 title=title,
                 company=company,
                 location=location,
-                url=canonical_url,
+                url=canonical_linkedin_job_url(job_id),
                 is_rejected=bool(rejection_reason),
                 rejection_reason=rejection_reason,
-                evidence=evidence,
+                evidence=" | ".join(_unique_lines([evidence_lines])[:10]),
             )
         )
 
     return cards
+
+
+def _card_quality(card: LinkedInDigestCard) -> tuple[int, int, int]:
+    return (
+        0 if card.is_rejected else 1,
+        sum(bool(value) for value in (card.title, card.company, card.location)),
+        len(card.evidence),
+    )
+
+
+def parse_linkedin_digest(body_text: str, body_html: str = "") -> list[LinkedInDigestCard]:
+    text_cards = _parse_linkedin_digest_source(body_text) if direct_linkedin_job_ids(body_text) else []
+    html_cards = _parse_linkedin_digest_source(body_html) if direct_linkedin_job_ids(body_html) else []
+
+    if not text_cards:
+        return html_cards
+    if not html_cards:
+        return text_cards
+
+    order: list[str] = []
+    best_by_id: dict[str, LinkedInDigestCard] = {}
+    for card in text_cards + html_cards:
+        if card.job_id not in best_by_id:
+            order.append(card.job_id)
+            best_by_id[card.job_id] = card
+            continue
+        if _card_quality(card) > _card_quality(best_by_id[card.job_id]):
+            best_by_id[card.job_id] = card
+
+    return [best_by_id[job_id] for job_id in order]
