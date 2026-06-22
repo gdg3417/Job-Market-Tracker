@@ -147,3 +147,63 @@ def test_html_is_used_when_plain_text_has_no_direct_jobs():
     assert len(alerts) == 2
     assert [alert.source_job_id for alert in alerts] == ["linkedin-5000000001", "linkedin-5000000002"]
     assert [alert.title for alert in alerts] == ["Director, Commercial Strategy", "Senior Manager, Revenue Strategy"]
+
+
+def test_single_link_linkedin_alert_uses_generic_subject_parser():
+    email = GmailAlertEmail(
+        message_id="single-link-alert",
+        subject="Director, Business Operations at Acme",
+        sender="LinkedIn Job Alerts <jobalerts-noreply@linkedin.com>",
+        received_at="Mon, 22 Jun 2026 10:44:27 +0000",
+        body_text="""
+        New jobs match your preferences
+        https://www.linkedin.com/jobs/view/6000000001/?trackingId=single
+        """,
+    )
+
+    alerts = parse_job_alert_email(email)
+
+    assert len(alerts) == 1
+    alert = alerts[0]
+    assert alert.is_rejected is False
+    assert should_upsert_alert(alert) is True
+    assert alert.title == "Director, Business Operations"
+    assert alert.company == "Acme"
+    assert "extraction=subject_pattern" in alert.extraction_notes
+    assert alert.source_job_id.startswith("gmail-")
+    assert alert.source_job_id != "linkedin-6000000001"
+
+
+def test_sparse_text_falls_back_to_complete_html_digest_cards():
+    email = GmailAlertEmail(
+        message_id="sparse-text-html-digest",
+        subject="LinkedIn job digest",
+        sender="LinkedIn Job Alerts <jobalerts-noreply@linkedin.com>",
+        received_at="Mon, 22 Jun 2026 10:44:27 +0000",
+        body_text="""
+        New jobs match your preferences
+        https://www.linkedin.com/jobs/view/6100000001/?trackingId=sparse
+        """,
+        body_html="""
+        <html><body>
+          <a href="https://www.linkedin.com/comm/jobs/view/6100000001/?trackingId=one">
+            <div>Director, Commercial Strategy</div>
+            <div>Example Co · Plano, TX (Hybrid)</div>
+          </a>
+          <a href="https://www.linkedin.com/comm/jobs/view/6100000002/?trackingId=two">
+            <div>Senior Manager, Revenue Strategy</div>
+            <div>Second Co · Dallas, TX (On-site)</div>
+          </a>
+        </body></html>
+        """,
+    )
+
+    alerts = parse_job_alert_email(email)
+
+    assert len(alerts) == 2
+    by_id = {alert.source_job_id: alert for alert in alerts}
+    assert set(by_id) == {"linkedin-6100000001", "linkedin-6100000002"}
+    assert by_id["linkedin-6100000001"].is_rejected is False
+    assert by_id["linkedin-6100000001"].title == "Director, Commercial Strategy"
+    assert by_id["linkedin-6100000002"].is_rejected is False
+    assert by_id["linkedin-6100000002"].title == "Senior Manager, Revenue Strategy"
