@@ -13,13 +13,18 @@ from src.sheets import SheetClient
 
 CENTRAL_TIMEZONE = ZoneInfo("America/Chicago")
 DAILY_COMPLETION_RUN_TYPE = "daily_workflow_completion"
+SCHEDULE_EARLIEST_CENTRAL_HOUR = 6
 
 
-def central_date(now: datetime | None = None) -> date:
+def central_datetime(now: datetime | None = None) -> datetime:
     current = now or datetime.now(timezone.utc)
     if current.tzinfo is None:
         current = current.replace(tzinfo=timezone.utc)
-    return current.astimezone(CENTRAL_TIMEZONE).date()
+    return current.astimezone(CENTRAL_TIMEZONE)
+
+
+def central_date(now: datetime | None = None) -> date:
+    return central_datetime(now).date()
 
 
 def _record_central_date(record: dict[str, Any]) -> date | None:
@@ -58,21 +63,33 @@ def daily_run_gate_decision(
     run_records: Iterable[dict[str, Any]],
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    target_date = central_date(now)
+    local_now = central_datetime(now)
+    target_date = local_now.date()
     manual_dispatch = event_name != "schedule"
     completed = has_successful_daily_completion(run_records, target_date)
-    should_run = manual_dispatch or not completed
+    scheduled_too_early = not manual_dispatch and local_now.hour < SCHEDULE_EARLIEST_CENTRAL_HOUR
+
     if manual_dispatch:
+        should_run = True
         result = "manual_dispatch_allowed"
+    elif scheduled_too_early:
+        should_run = False
+        result = "skipped_before_earliest_central_time"
     elif completed:
+        should_run = False
         result = "skipped_already_completed"
     else:
+        should_run = True
         result = "scheduled_run_required"
+
     return {
         "should_run": should_run,
         "gate_result": result,
         "central_date": target_date.isoformat(),
+        "central_time": local_now.strftime("%H:%M:%S"),
         "successful_completion_exists": completed,
+        "scheduled_too_early": scheduled_too_early,
+        "earliest_central_hour": SCHEDULE_EARLIEST_CENTRAL_HOUR,
     }
 
 
@@ -98,13 +115,7 @@ def build_daily_completion_record(*, gate_result: str = "workflow_completed") ->
         "companies_read": 0,
         "searches_read": 0,
         "error_message": "",
-        "notes": json.dumps(
-            {
-                "central_date": central_date().isoformat(),
-                "gate_result": gate_result,
-            },
-            sort_keys=True,
-        ),
+        "notes": json.dumps({"central_date": central_date().isoformat(), "gate_result": gate_result}, sort_keys=True),
         "created_at": now,
         "updated_at": now,
     }
@@ -113,37 +124,22 @@ def build_daily_completion_record(*, gate_result: str = "workflow_completed") ->
 def check_daily_run_gate(*, event_name: str) -> dict[str, Any]:
     sheet_client = SheetClient.from_settings(load_settings())
     run_records = sheet_client.read_records("Runs")
-    return daily_run_gate_decision(
-        event_name=event_name,
-        run_records=run_records,
-    )
+    return daily_run_gate_decision(event_name=event_name, run_records=run_records)
 
 
 def mark_daily_run_success(*, gate_result: str = "workflow_completed") -> dict[str, Any]:
     sheet_client = SheetClient.from_settings(load_settings())
     record = build_daily_completion_record(gate_result=gate_result)
     sheet_client.append_run(record)
-    return {
-        "status": "success",
-        "run_id": record["run_id"],
-        "central_date": central_date().isoformat(),
-    }
+    return {"status": "success", "run_id": record["run_id"], "central_date": central_date().isoformat()}
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Gate the daily workflow by Central calendar date")
     parser.add_argument("--check", action="store_true", help="Check whether the daily workflow should run")
     parser.add_argument("--mark-success", action="store_true", help="Append the successful daily completion record")
-    parser.add_argument(
-        "--event-name",
-        default=os.getenv("GITHUB_EVENT_NAME", "workflow_dispatch"),
-        help="GitHub event name, usually schedule or workflow_dispatch",
-    )
-    parser.add_argument(
-        "--gate-result",
-        default="workflow_completed",
-        help="Gate result to include in the completion record",
-    )
+    parser.add_argument("--event-name", default=os.getenv("GITHUB_EVENT_NAME", "workflow_dispatch"), help="GitHub event name, usually schedule or workflow_dispatch")
+    parser.add_argument("--gate-result", default="workflow_completed", help="Gate result to include in the completion record")
     return parser.parse_args()
 
 
