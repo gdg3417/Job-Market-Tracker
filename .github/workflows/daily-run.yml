@@ -116,15 +116,22 @@ jobs:
           python - <<'PY'
           import json
           import os
+          import re
           from pathlib import Path
 
-          data = json.loads((Path(os.environ["RUNNER_TEMP"]) / "daily_gate.json").read_text(encoding="utf-8"))
+          path = Path(os.environ["RUNNER_TEMP"]) / "daily_gate.json"
+          text = path.read_text(encoding="utf-8").strip()
+          match = re.search(r"\{.*\}\s*$", text, re.S)
+          data = json.loads(match.group(0) if match else text)
           with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as handle:
               handle.write(f"should_run={'true' if data.get('should_run') else 'false'}\n")
               handle.write(f"gate_result={data.get('gate_result', 'unknown')}\n")
               handle.write(f"central_date={data.get('central_date', '')}\n")
           if not data.get("should_run"):
-              print("Scheduled invocation skipped because this Central calendar date already has a successful completion record.")
+              if data.get("gate_result") == "skipped_before_earliest_central_time":
+                  print("Scheduled invocation skipped because it is before 06:00 AM Central.")
+              else:
+                  print("Scheduled invocation skipped because this Central calendar date already has a successful completion record.")
           PY
 
       - name: Run tests
@@ -204,10 +211,18 @@ jobs:
           match = re.search(r"\{.*\}\s*$", text, re.S)
           data = json.loads(match.group(0) if match else text)
           backlog = int(data.get("backlog_remaining") or 0)
+          failed = int(data.get("failed_messages") or 0)
           if backlog:
               print(f"::warning::Gmail backlog remains after this run: {backlog} message(s).")
+          if failed:
+              print(f"::error::Gmail processing failed for {failed} message(s); daily completion will not be recorded.")
+              raise SystemExit(1)
           PY
-          exit $ingestion_status
+          validation_status=$?
+          if [ "$ingestion_status" -ne 0 ]; then
+            exit "$ingestion_status"
+          fi
+          exit "$validation_status"
 
       - name: Skip Gmail ingestion
         if: steps.daily_gate.outputs.should_run == 'true' && steps.credentials.outputs.gmail_ready != 'true'
