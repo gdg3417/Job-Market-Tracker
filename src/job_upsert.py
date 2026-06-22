@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Iterable
 
 from src.data_quality import append_rejected_jobs, filter_jobs_for_upsert
@@ -13,6 +14,13 @@ from src.dedupe import (
     merge_source_record,
 )
 from src.models import JobPosting, today_iso
+
+
+@dataclass(slots=True)
+class JobUpsertState:
+    existing_jobs: list[JobPosting]
+    row_by_job_key: dict[str, int]
+    existing_source_rows: list[tuple[int, dict[str, Any]]]
 
 
 def _read_records_with_row_numbers(sheet_client: Any, worksheet_name: str) -> list[tuple[int, dict[str, Any]]]:
@@ -47,6 +55,29 @@ def _load_existing_jobs(sheet_client: Any) -> tuple[list[JobPosting], dict[str, 
         existing_jobs.append(job)
         row_by_job_key[job.job_key] = row_number
     return existing_jobs, row_by_job_key
+
+
+def load_job_upsert_state(sheet_client: Any) -> JobUpsertState:
+    existing_jobs, row_by_job_key = _load_existing_jobs(sheet_client)
+    existing_source_rows = _read_records_with_row_numbers(sheet_client, "Job_Sources")
+    return JobUpsertState(
+        existing_jobs=existing_jobs,
+        row_by_job_key=row_by_job_key,
+        existing_source_rows=existing_source_rows,
+    )
+
+
+def _job_upsert_state(sheet_client: Any) -> JobUpsertState:
+    cached = getattr(sheet_client, "_job_upsert_state", None)
+    if isinstance(cached, JobUpsertState):
+        return cached
+
+    state = load_job_upsert_state(sheet_client)
+    try:
+        setattr(sheet_client, "_job_upsert_state", state)
+    except (AttributeError, TypeError):
+        pass
+    return state
 
 
 def _replace_existing_job(existing_jobs: list[JobPosting], replacement: JobPosting) -> None:
@@ -98,6 +129,7 @@ def upsert_jobs(
     *,
     seen_date: str | None = None,
     threshold: int = 92,
+    state: JobUpsertState | None = None,
 ) -> UpsertSummary:
     current_date = seen_date or today_iso()
     summary = UpsertSummary()
@@ -109,8 +141,10 @@ def upsert_jobs(
     if not accepted_jobs:
         return summary
 
-    existing_jobs, row_by_job_key = _load_existing_jobs(sheet_client)
-    existing_source_rows = _read_records_with_row_numbers(sheet_client, "Job_Sources")
+    working_state = state or _job_upsert_state(sheet_client)
+    existing_jobs = working_state.existing_jobs
+    row_by_job_key = working_state.row_by_job_key
+    existing_source_rows = working_state.existing_source_rows
 
     for incoming_job in accepted_jobs:
         incoming_job = ensure_job_key(incoming_job)
