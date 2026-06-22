@@ -128,7 +128,7 @@ def _plain_lines(value: str) -> list[str]:
     text = re.sub(r"<[^>]+>", " ", text)
     lines: list[str] = []
     for raw_line in text.splitlines():
-        line = clean_text(raw_line).strip(" []()|•\t")
+        line = clean_text(raw_line).strip(" []|•\t")
         if not line:
             continue
         lower = line.lower()
