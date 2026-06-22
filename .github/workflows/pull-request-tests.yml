@@ -1,6 +1,9 @@
 name: Pull Request Tests
 
 on:
+  push:
+    branches:
+      - sprint-21-linkedin-digest-parser
   pull_request:
     branches:
       - main
