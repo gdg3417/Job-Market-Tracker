@@ -149,7 +149,7 @@ Job Tracker
 
 ## LinkedIn digest parsing
 
-LinkedIn digest emails must be parsed from the plain-text MIME part when it contains direct posting links. HTML is the fallback only when the plain-text part does not include the postings.
+LinkedIn digest emails are parsed from both available MIME alternatives. When the same LinkedIn job ID appears in both, the parser retains the more complete valid card. Plain text or HTML can be used independently when only one contains direct postings.
 
 A valid card should contain:
 
@@ -267,7 +267,7 @@ If static page rejected rows spike, audit `Config_Companies` first. The likely c
 
 If Gmail rejected rows exceed accepted jobs, inspect recent alert email structure and `Rejected_Jobs` before relaxing parser rules.
 
-If multiple LinkedIn posting URLs receive the same title or company, confirm the digest path was detected and inspect the plain-text card boundaries. Do not fix this by falling back to the email subject.
+If multiple LinkedIn posting URLs receive the same title or company, confirm the digest path was detected and inspect both MIME alternatives and their card boundaries. Do not fix this by falling back to the email subject.
 
 If a LinkedIn posting is duplicated across alert emails, confirm its source ID uses only the LinkedIn job ID.
 
