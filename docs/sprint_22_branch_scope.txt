@@ -1,1 +1,0 @@
-Branch scope: sparse Gmail review routing only. Gmail reliability and backlog processing remain Sprint 23 work.
