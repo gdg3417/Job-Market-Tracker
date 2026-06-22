@@ -13,6 +13,7 @@ from src.sheets import SheetClient, with_quota_backoff
 
 OPEN_STATUSES = {"open", "reopened"}
 WEEKLY_LOOKBACK_DAYS = 7
+SPARSE_GMAIL_REVIEW_REASON = "sparse_gmail_high_signal_title"
 DIGEST_HEADERS = "digest_section company title location remote_status work_model commute_estimate_minutes role_family role_level total_score alert_tier salary_min salary_max total_comp_estimate days_open first_seen_date last_seen_date canonical_url score_explanation".split()
 PNL_PATH_TERMS = [
     "p&l",
@@ -44,6 +45,7 @@ TARGET_PRIORITY_TERMS = {"tier 1", "tier 2", "target", "watchlist", "high"}
 DIGEST_SECTION_LIMITS = {
     "Immediate review": 10,
     "Strong fit": 10,
+    "High-signal titles needing review": 15,
     "Target company watchlist": 10,
     "Needs salary research": 10,
     "Remote or short commute": 10,
@@ -52,7 +54,14 @@ DIGEST_SECTION_LIMITS = {
     "Closed or likely closed this week": 10,
     "Rejected source audit": 5,
 }
-TOP_ROLE_SECTIONS = ["Immediate review", "Strong fit", "Target company watchlist", "P&L pathway", "Needs salary research"]
+TOP_ROLE_SECTIONS = [
+    "Immediate review",
+    "Strong fit",
+    "High-signal titles needing review",
+    "Target company watchlist",
+    "P&L pathway",
+    "Needs salary research",
+]
 
 
 @dataclass(slots=True)
@@ -62,6 +71,7 @@ class DashboardDigestResult:
     digest_rows: int
     immediate_review_rows: int
     strong_fit_rows: int
+    high_signal_review_rows: int
     target_company_watchlist_rows: int
     needs_salary_research_rows: int
     remote_or_short_commute_rows: int
@@ -77,6 +87,7 @@ class DashboardDigestResult:
             "digest_rows": self.digest_rows,
             "immediate_review_rows": self.immediate_review_rows,
             "strong_fit_rows": self.strong_fit_rows,
+            "high_signal_review_rows": self.high_signal_review_rows,
             "target_company_watchlist_rows": self.target_company_watchlist_rows,
             "needs_salary_research_rows": self.needs_salary_research_rows,
             "remote_or_short_commute_rows": self.remote_or_short_commute_rows,
@@ -139,6 +150,18 @@ def _is_remote_or_short_commute(job: JobPosting) -> bool:
     is_hybrid = "hybrid" in remote_text
     short_commute = job.commute_estimate_minutes is not None and job.commute_estimate_minutes <= 30
     return _is_open(job) and (is_remote or is_hybrid or short_commute)
+
+
+def _is_sparse_gmail_review_job(job: JobPosting, *, as_of: str) -> bool:
+    explanation = str(job.score_explanation or "").lower()
+    return (
+        _is_open(job)
+        and _is_recent(job.first_seen_date, as_of=as_of)
+        and "manual_review=true" in explanation
+        and f"review_reason={SPARSE_GMAIL_REVIEW_REASON}" in explanation
+        and "hard_exclude=true" not in explanation
+        and job.alert_tier != "exclude"
+    )
 
 
 def _target_company_keys(*row_groups: list[dict[str, Any]] | None) -> set[str]:
@@ -277,6 +300,11 @@ def build_digest_rows(
     sections: list[tuple[str, list[JobPosting], int]] = [
         ("Immediate review", [job for job in jobs if _is_open(job) and (job.alert_tier == "immediate_review" or job.total_score >= 85)], DIGEST_SECTION_LIMITS["Immediate review"]),
         ("Strong fit", [job for job in jobs if _is_open(job) and 75 <= job.total_score < 85], DIGEST_SECTION_LIMITS["Strong fit"]),
+        (
+            "High-signal titles needing review",
+            [job for job in jobs if _is_sparse_gmail_review_job(job, as_of=as_of_date)],
+            DIGEST_SECTION_LIMITS["High-signal titles needing review"],
+        ),
         ("Target company watchlist", [job for job in jobs if _is_target_company_job(job, target_keys)], DIGEST_SECTION_LIMITS["Target company watchlist"]),
         ("Needs salary research", [job for job in jobs if _is_open(job) and job.total_score >= 60 and not _has_salary(job)], DIGEST_SECTION_LIMITS["Needs salary research"]),
         ("Remote or short commute", [job for job in jobs if _is_remote_or_short_commute(job) and job.total_score >= 60], DIGEST_SECTION_LIMITS["Remote or short commute"]),
@@ -303,7 +331,11 @@ def build_digest_rows(
     for section, selected_jobs, limit in sections:
         _append_job_section(rows, seen, section, selected_jobs, limit)
     rejected_rows = [row for row in rejected_job_rows or [] if _looks_like_source_audit_rejection(row)]
-    for rejected_row in sorted(rejected_rows, key=lambda row: _row_value(row, "created_at", "updated_at", "received_date", "subject"), reverse=True)[: DIGEST_SECTION_LIMITS["Rejected source audit"]]:
+    for rejected_row in sorted(
+        rejected_rows,
+        key=lambda row: _row_value(row, "created_at", "updated_at", "received_date", "subject"),
+        reverse=True,
+    )[: DIGEST_SECTION_LIMITS["Rejected source audit"]]:
         rows.append(_rejected_to_digest_row(rejected_row))
     return rows
 
@@ -348,7 +380,11 @@ def _format_comp_from_digest(row: dict[str, Any]) -> str:
 
 
 def _rejection_reason_counts(rejected_job_rows: list[dict[str, Any]] | None) -> Counter[str]:
-    reasons = [_row_value(row, "rejection_reason") or "Unknown" for row in rejected_job_rows or [] if _looks_like_source_audit_rejection(row)]
+    reasons = [
+        _row_value(row, "rejection_reason") or "Unknown"
+        for row in rejected_job_rows or []
+        if _looks_like_source_audit_rejection(row)
+    ]
     return Counter(reasons)
 
 
@@ -384,7 +420,10 @@ def _is_static_source(row: dict[str, Any]) -> bool:
 def _source_health_counts(config_company_rows: list[dict[str, Any]] | None) -> dict[str, int]:
     rows = config_company_rows or []
     static_rows = [row for row in rows if _is_static_source(row)]
-    return {"static_sources_active": sum(1 for row in static_rows if not _is_disabled_source(row)), "static_sources_disabled": sum(1 for row in static_rows if _is_disabled_source(row))}
+    return {
+        "static_sources_active": sum(1 for row in static_rows if not _is_disabled_source(row)),
+        "static_sources_disabled": sum(1 for row in static_rows if _is_disabled_source(row)),
+    }
 
 
 def _parse_run_notes(row: dict[str, Any]) -> dict[str, Any]:
@@ -431,11 +470,13 @@ def _run_metric(rows: list[dict[str, Any]] | None, keyword: str, fallback_field:
 
 
 def _dashboard_answer(counts: dict[str, int]) -> str:
-    actionable_count = counts["immediate"] + counts["strong"] + counts["target"] + counts["salary"] + counts["pnl"]
+    actionable_count = counts["immediate"] + counts["strong"] + counts["review"] + counts["target"] + counts["salary"] + counts["pnl"]
     if counts["immediate"] > 0:
         return "Review roles now"
     if counts["strong"] > 0:
         return "Review strong fits this week"
+    if counts["review"] > 0:
+        return "Review high-signal Gmail roles"
     if counts["target"] > 0:
         return "Review target company roles"
     if counts["rejected"] >= 10 and actionable_count == 0:
@@ -448,6 +489,7 @@ def _metric_rows(counts: dict[str, int]) -> list[list[Any]]:
         ["Metric", "Count", "Meaning", "Action"],
         ["Immediate review", counts["immediate"], "Best opportunities", "Review same day"],
         ["Strong fit", counts["strong"], "Good fit, not urgent", "Review weekly"],
+        ["High-signal titles needing review", counts["review"], "Sparse Gmail roles with strategically relevant senior titles", "Open posting and review evidence"],
         ["Target company watchlist", counts["target"], "Companies you care about", "Review weekly"],
         ["Needs salary research", counts["salary"], "Could be good, comp unknown", "Research comp"],
         ["P&L pathway", counts["pnl"], "Roles with general management or operating ownership signals", "Review for long-term path fit"],
@@ -465,16 +507,18 @@ def _top_role_rows(digest_rows: list[list[Any]], limit: int = 20) -> list[list[A
         if not row or row[0] not in TOP_ROLE_SECTIONS:
             continue
         record = _digest_record(row)
-        rows.append([
-            record.get("digest_section", ""),
-            record.get("company", ""),
-            record.get("title", ""),
-            record.get("location", ""),
-            record.get("total_score", ""),
-            _format_comp_from_digest(record),
-            record.get("canonical_url", ""),
-            record.get("score_explanation", ""),
-        ])
+        rows.append(
+            [
+                record.get("digest_section", ""),
+                record.get("company", ""),
+                record.get("title", ""),
+                record.get("location", ""),
+                record.get("total_score", ""),
+                _format_comp_from_digest(record),
+                record.get("canonical_url", ""),
+                record.get("score_explanation", ""),
+            ]
+        )
         added += 1
         if added >= limit:
             break
@@ -486,15 +530,21 @@ def _top_role_rows(digest_rows: list[list[Any]], limit: int = 20) -> list[list[A
 def _source_cleanup_rows(rejected_job_rows: list[dict[str, Any]] | None, limit: int = 15) -> list[list[Any]]:
     rows = [["Source", "Rejected title", "Rejected company", "Reason", "Recommended action"]]
     rejected_rows = [row for row in rejected_job_rows or [] if _looks_like_source_audit_rejection(row)]
-    for row in sorted(rejected_rows, key=lambda item: _row_value(item, "created_at", "updated_at", "received_date", "subject"), reverse=True)[:limit]:
+    for row in sorted(
+        rejected_rows,
+        key=lambda item: _row_value(item, "created_at", "updated_at", "received_date", "subject"),
+        reverse=True,
+    )[:limit]:
         reason = _row_value(row, "rejection_reason") or "Unknown"
-        rows.append([
-            _row_value(row, "source"),
-            _row_value(row, "title", "subject"),
-            _row_value(row, "company", "sender"),
-            reason,
-            _recommended_source_action(reason),
-        ])
+        rows.append(
+            [
+                _row_value(row, "source"),
+                _row_value(row, "title", "subject"),
+                _row_value(row, "company", "sender"),
+                reason,
+                _recommended_source_action(reason),
+            ]
+        )
     if len(rows) == 1:
         rows.append(["No source cleanup rows", "", "", "", ""])
     return rows
@@ -516,6 +566,7 @@ def build_dashboard_values(
     counts = {
         "immediate": _count_digest_rows(digest_rows, "Immediate review"),
         "strong": _count_digest_rows(digest_rows, "Strong fit"),
+        "review": _count_digest_rows(digest_rows, "High-signal titles needing review"),
         "target": _count_digest_rows(digest_rows, "Target company watchlist"),
         "salary": _count_digest_rows(digest_rows, "Needs salary research"),
         "remote": _count_digest_rows(digest_rows, "Remote or short commute"),
@@ -566,11 +617,17 @@ def build_digest_values(
     rejected_job_rows: list[dict[str, Any]] | None = None,
 ) -> list[list[Any]]:
     generated_at = utc_now_iso()
-    rows = build_digest_rows(jobs, as_of=as_of, target_company_rows=target_company_rows, config_company_rows=config_company_rows, rejected_job_rows=rejected_job_rows)
+    rows = build_digest_rows(
+        jobs,
+        as_of=as_of,
+        target_company_rows=target_company_rows,
+        config_company_rows=config_company_rows,
+        rejected_job_rows=rejected_job_rows,
+    )
     return [
         ["Job Market Tracker Weekly Digest"],
         ["Generated at", generated_at],
-        ["Review order", "Immediate review, strong fit, target company watchlist, needs salary research, remote or short commute, P&L pathway, new this week, closed this week, rejected source audit"],
+        ["Review order", "Immediate review, strong fit, high-signal titles needing review, target company watchlist, needs salary research, remote or short commute, P&L pathway, new this week, closed this week, rejected source audit"],
         [],
         DIGEST_HEADERS,
         *rows,
@@ -582,13 +639,38 @@ def write_values(sheet_client: SheetClient, worksheet_name: str, values: list[li
     with_quota_backoff(lambda: worksheet.clear(), operation_name=f"clear worksheet {worksheet_name}")
     if not values:
         return
-    with_quota_backoff(lambda: worksheet.update(range_name="A1", values=values, value_input_option="USER_ENTERED"), operation_name=f"write worksheet {worksheet_name}")
+    with_quota_backoff(
+        lambda: worksheet.update(range_name="A1", values=values, value_input_option="USER_ENTERED"),
+        operation_name=f"write worksheet {worksheet_name}",
+    )
 
 
 def build_dashboard_run_record(result: DashboardDigestResult) -> dict[str, Any]:
     now = utc_now_iso()
     run_timestamp = now.replace(":", "").replace("-", "").replace("+0000", "Z").replace("+00:00", "Z")
-    return {"run_id": f"sprint20_dashboard_digest_{run_timestamp}", "run_type": "sprint_20_dashboard_digest", "source_type": "google_sheets", "source_name": "Dashboard and Digest", "status": "success", "started_at": now, "finished_at": now, "duration_seconds": 0, "records_found": result.jobs_read, "records_inserted": result.digest_rows, "records_updated": result.dashboard_rows_written + result.digest_rows_written, "records_failed": 0, "rows_read": result.jobs_read, "config_companies_rows": 0, "config_searches_rows": 0, "companies_read": 0, "searches_read": 0, "error_message": "", "notes": json.dumps(result.to_dict(), sort_keys=True), "created_at": now, "updated_at": now}
+    return {
+        "run_id": f"sprint22_dashboard_digest_{run_timestamp}",
+        "run_type": "sprint_22_dashboard_digest",
+        "source_type": "google_sheets",
+        "source_name": "Dashboard and Digest",
+        "status": "success",
+        "started_at": now,
+        "finished_at": now,
+        "duration_seconds": 0,
+        "records_found": result.jobs_read,
+        "records_inserted": result.digest_rows,
+        "records_updated": result.dashboard_rows_written + result.digest_rows_written,
+        "records_failed": 0,
+        "rows_read": result.jobs_read,
+        "config_companies_rows": 0,
+        "config_searches_rows": 0,
+        "companies_read": 0,
+        "searches_read": 0,
+        "error_message": "",
+        "notes": json.dumps(result.to_dict(), sort_keys=True),
+        "created_at": now,
+        "updated_at": now,
+    }
 
 
 def build_sprint11_run_record(result: DashboardDigestResult) -> dict[str, Any]:
@@ -614,9 +696,22 @@ def apply_dashboard_and_digest(sheet_client: SheetClient, *, as_of: str | None =
     config_company_rows = _read_optional_records(sheet_client, "Config_Companies")
     rejected_job_rows = _read_optional_records(sheet_client, "Rejected_Jobs")
     runs_rows = _read_optional_records(sheet_client, "Runs")
-    digest_values = build_digest_values(jobs, as_of=as_of, target_company_rows=target_company_rows, config_company_rows=config_company_rows, rejected_job_rows=rejected_job_rows)
+    digest_values = build_digest_values(
+        jobs,
+        as_of=as_of,
+        target_company_rows=target_company_rows,
+        config_company_rows=config_company_rows,
+        rejected_job_rows=rejected_job_rows,
+    )
     digest_rows_only = digest_values[5:]
-    dashboard_values = build_dashboard_values(jobs, digest_rows=digest_rows_only, target_company_rows=target_company_rows, config_company_rows=config_company_rows, rejected_job_rows=rejected_job_rows, runs_rows=runs_rows)
+    dashboard_values = build_dashboard_values(
+        jobs,
+        digest_rows=digest_rows_only,
+        target_company_rows=target_company_rows,
+        config_company_rows=config_company_rows,
+        rejected_job_rows=rejected_job_rows,
+        runs_rows=runs_rows,
+    )
     digest_rows = max(0, len(digest_values) - 5)
     write_values(sheet_client, "Dashboard", dashboard_values)
     write_values(sheet_client, "Digest", digest_values)
@@ -626,6 +721,7 @@ def apply_dashboard_and_digest(sheet_client: SheetClient, *, as_of: str | None =
         digest_rows=digest_rows,
         immediate_review_rows=_count_digest_section(digest_values, "Immediate review"),
         strong_fit_rows=_count_digest_section(digest_values, "Strong fit"),
+        high_signal_review_rows=_count_digest_section(digest_values, "High-signal titles needing review"),
         target_company_watchlist_rows=_count_digest_section(digest_values, "Target company watchlist"),
         needs_salary_research_rows=_count_digest_section(digest_values, "Needs salary research"),
         remote_or_short_commute_rows=_count_digest_section(digest_values, "Remote or short commute"),
@@ -643,7 +739,7 @@ def run_dashboard_digest_refresh() -> dict[str, Any]:
     settings = load_settings()
     sheet_client = SheetClient.from_settings(settings)
     result = apply_dashboard_and_digest(sheet_client)
-    return {"run_mode": "sprint_20_dashboard_digest", "status": "success", **result.to_dict()}
+    return {"run_mode": "sprint_22_dashboard_digest", "status": "success", **result.to_dict()}
 
 
 def parse_args() -> argparse.Namespace:
@@ -657,7 +753,7 @@ def main() -> None:
     settings = load_settings()
     sheet_client = SheetClient.from_settings(settings)
     result = apply_dashboard_and_digest(sheet_client, append_run=not args.no_run_log)
-    print(json.dumps({"run_mode": "sprint_20_dashboard_digest", "status": "success", **result.to_dict()}, indent=2))
+    print(json.dumps({"run_mode": "sprint_22_dashboard_digest", "status": "success", **result.to_dict()}, indent=2))
 
 
 if __name__ == "__main__":
