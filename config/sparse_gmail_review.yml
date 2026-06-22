@@ -1,0 +1,37 @@
+sparse_gmail_review:
+  review_reason: sparse_gmail_high_signal_title
+  generic_description_prefixes:
+    - Extracted from Gmail job alert
+  incomplete_work_model_values:
+    - ""
+    - unknown
+    - unspecified
+    - not specified
+    - n/a
+    - na
+    - none
+  priority_title_phrases:
+    - Strategic Planning
+    - Corporate Strategy
+    - Commercial Strategy
+    - Revenue Strategy
+    - Business Operations
+    - Strategy and Operations
+    - Business Insights
+    - Product Line
+    - Product Strategy
+    - Category Management
+    - Chief of Staff
+    - General Manager
+    - National Manager
+  seniority_phrases:
+    - Manager
+    - Senior Manager
+    - Sr Manager
+    - Sr. Manager
+    - Director
+    - Head
+    - Vice President
+    - VP
+    - National Manager
+    - General Manager
