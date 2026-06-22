@@ -91,7 +91,7 @@ def test_sparse_gmail_review_still_requires_direct_posting_url():
     job.score_explanation = "total=20; tier=ignore; manual_review=true; review_reason=sparse_gmail_high_signal_title"
 
     reasons = validate_job_quality(job)
-    assert "generic_job_board_or_career_navigation_page" in reasons
+    assert "search_category_landing_or_navigation_path" in reasons
     assert "manual_review_job_not_trusted_static_direct_posting" in reasons
 
 
