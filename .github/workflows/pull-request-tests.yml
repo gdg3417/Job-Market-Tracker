@@ -32,4 +32,12 @@ jobs:
         run: python -m compileall -q src tests
 
       - name: Run tests
-        run: pytest
+        run: pytest --junitxml=pytest-results.xml
+
+      - name: Upload pytest results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-results
+          path: pytest-results.xml
+          if-no-files-found: error
