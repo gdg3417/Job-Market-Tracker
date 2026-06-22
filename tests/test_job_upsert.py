@@ -14,8 +14,10 @@ class FakeSheetClient:
         self.rejected: list[dict[str, Any]] = []
         self.updated_jobs: list[tuple[int, dict[str, Any]]] = []
         self.updated_sources: list[tuple[int, dict[str, Any]]] = []
+        self.read_counts: dict[str, int] = {}
 
     def read_records_with_row_numbers(self, worksheet_name: str) -> list[tuple[int, dict[str, Any]]]:
+        self.read_counts[worksheet_name] = self.read_counts.get(worksheet_name, 0) + 1
         if worksheet_name == "Jobs":
             return [(index + 2, record) for index, record in enumerate(self.jobs)]
         if worksheet_name == "Job_Sources":
@@ -184,3 +186,31 @@ def test_upsert_rejects_bad_job_before_jobs_or_sources_write():
     assert len(client.rejected) == 1
     assert client.rejected[0]["title"] == "New jobs match your preferences."
     assert "generic_alert_or_search_title" in client.rejected[0]["rejection_reason"]
+
+
+def test_repeated_upserts_reuse_jobs_and_sources_reads():
+    client = FakeSheetClient()
+
+    first = upsert_jobs(
+        client,
+        [make_job(source_job_id="job-1")],
+        seen_date="2026-06-16",
+    )
+    second = upsert_jobs(
+        client,
+        [
+            make_job(
+                source_job_id="job-2",
+                url="https://example.com/jobs/director-pricing-strategy-67890",
+                title="Director, Pricing Strategy",
+            )
+        ],
+        seen_date="2026-06-16",
+    )
+
+    assert first.jobs_created == 1
+    assert second.jobs_created == 1
+    assert client.read_counts["Jobs"] == 1
+    assert client.read_counts["Job_Sources"] == 1
+    assert len(client.jobs) == 2
+    assert len(client.sources) == 2
