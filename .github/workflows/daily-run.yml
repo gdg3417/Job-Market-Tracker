@@ -129,7 +129,7 @@ jobs:
               handle.write(f"central_date={data.get('central_date', '')}\n")
           if not data.get("should_run"):
               if data.get("gate_result") == "skipped_before_earliest_central_time":
-                  print("Scheduled invocation skipped because it is before 06:00 AM Central.")
+                  print("Scheduled invocation skipped because it is before 06:30 AM Central.")
               else:
                   print("Scheduled invocation skipped because this Central calendar date already has a successful completion record.")
           PY
@@ -190,6 +190,7 @@ jobs:
           PY
 
       - name: Run Gmail ingestion
+        id: gmail_ingestion
         if: steps.daily_gate.outputs.should_run == 'true' && steps.credentials.outputs.gmail_ready == 'true'
         shell: bash
         run: |
@@ -212,11 +213,14 @@ jobs:
           data = json.loads(match.group(0) if match else text)
           backlog = int(data.get("backlog_remaining") or 0)
           failed = int(data.get("failed_messages") or 0)
+          status = str(data.get("status") or "unknown")
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as handle:
+              handle.write(f"failed_messages={failed}\n")
+              handle.write(f"ingestion_status={status}\n")
           if backlog:
               print(f"::warning::Gmail backlog remains after this run: {backlog} message(s).")
           if failed:
-              print(f"::error::Gmail processing failed for {failed} message(s); daily completion will not be recorded.")
-              raise SystemExit(1)
+              print(f"::warning::Gmail processing failed for {failed} message(s); the daily completion record will be withheld so a later invocation can retry them.")
           PY
           validation_status=$?
           if [ "$ingestion_status" -ne 0 ]; then
@@ -248,7 +252,10 @@ jobs:
           python -m src.dashboard | tee "$RUNNER_TEMP/dashboard.json"
 
       - name: Mark successful daily completion
-        if: steps.daily_gate.outputs.should_run == 'true'
+        if: >-
+          steps.daily_gate.outputs.should_run == 'true' &&
+          (steps.credentials.outputs.gmail_ready != 'true' ||
+          steps.gmail_ingestion.outputs.failed_messages == '0')
         shell: bash
         run: |
           python -m src.daily_run_gate --mark-success --gate-result "${{ steps.daily_gate.outputs.gate_result }}" | tee "$RUNNER_TEMP/daily_completion.json"
@@ -313,4 +320,6 @@ jobs:
                   handle.write(f"| {metric} | {value} |\n")
               if gmail.get("status") == "skipped":
                   handle.write("\nGmail ingestion skipped because optional Gmail secrets are not configured.\n")
+              elif int(gmail.get("failed_messages") or 0):
+                  handle.write("\nDaily completion was withheld because retryable Gmail failures remain.\n")
           PY
