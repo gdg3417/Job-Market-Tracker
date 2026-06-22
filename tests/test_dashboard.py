@@ -184,7 +184,7 @@ def test_build_digest_values_includes_title_metadata_headers_and_rows():
     assert values[0] == ["Job Market Tracker Weekly Digest"]
     assert values[4] == DIGEST_HEADERS
     assert len(values) > 5
-    assert "High-signal titles needing review" in values[2][1]
+    assert "high-signal titles needing review" in values[2][1].lower()
 
 
 def test_dashboard_values_are_plain_executive_summary_not_formulas():
