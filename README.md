@@ -6,7 +6,7 @@ The tracker is intentionally not a generic finance job scraper. It monitors role
 
 ## Current status
 
-Sprints 1 through 21 are implemented in code.
+Sprints 1 through 22 are implemented in code.
 
 The current system supports:
 
@@ -25,10 +25,13 @@ The current system supports:
 13. A plain-English executive Dashboard
 14. A Google Apps Script weekly email digest
 15. LinkedIn multi-job digest card parsing with stable posting IDs
+16. Sparse Gmail high-signal title review routing without score inflation
 
 Sprint 20 redesigns the Dashboard so it is an action-oriented executive summary instead of a fragile formula page. It also adds a bound Apps Script weekly digest email that can be scheduled for Monday around 8:00 AM Central.
 
 Sprint 21 parses LinkedIn digest emails as individual job cards. Each accepted card retains its own title, company, location, canonical posting URL, and stable `linkedin-<job_id>` source ID. LinkedIn utility links are ignored, and malformed cards are rejected individually without discarding valid cards from the same email.
+
+Sprint 22 flags sparse Gmail records with strategically relevant management-level titles for human review. It preserves evidence-based scores, adds a dedicated Digest and Dashboard section, updates the weekly email, and provides a command to re-score existing open Gmail jobs.
 
 ## Repo structure
 
@@ -38,12 +41,16 @@ job-market-tracker/
     weekly_digest_email.gs
   config/
     scoring_rules.yml
+    sparse_gmail_review.yml
     target_profile.yml
   docs/
     operations_runbook.md
     sprint_20_weekly_email_dashboard.md
+    sprint_22_sparse_gmail_review.md
   src/
     dashboard.py
+    rescore_jobs.py
+    scoring.py
     sources/
       eml.py
       gmail_alerts.py
@@ -55,6 +62,9 @@ job-market-tracker/
     test_dashboard.py
     test_gmail_alerts.py
     test_linkedin_digest.py
+    test_rescore_jobs.py
+    test_scoring.py
+    test_weekly_digest_email.py
 ```
 
 Other source, test, config, and workflow files remain in their existing locations.
@@ -140,7 +150,26 @@ linkedin-<job_id>
 
 This keeps the same posting stable when it appears in multiple alert emails. Search pages, Premium links, alert-management links, unsubscribe links, help pages, and LinkedIn navigation links do not create job records.
 
-Sanitized regression fixtures are stored under `tests/fixtures/`. No production Gmail backfill should be run as part of Sprint 21.
+Sanitized regression fixtures are stored under `tests/fixtures/`. No production Gmail backfill should be run before Sprint 23.
+
+## Sparse Gmail review routing
+
+Sprint 22 identifies Gmail records whose descriptions contain only extraction metadata and whose compensation and work model are unknown. A configurable high-signal management title receives these score explanation markers:
+
+```text
+manual_review=true
+review_reason=sparse_gmail_high_signal_title
+```
+
+The numerical score and alert tier are not increased. Recent qualifying roles appear in `High-signal titles needing review` even when the score is below 60.
+
+Re-score existing open Gmail records and refresh Dashboard and Digest with:
+
+```powershell
+python -m src.rescore_jobs
+```
+
+See `docs/sprint_22_sparse_gmail_review.md` for criteria and operating details.
 
 ## Weekly email digest
 
@@ -152,7 +181,7 @@ Setup is documented in:
 docs/sprint_20_weekly_email_dashboard.md
 ```
 
-The weekly email reads the `Digest` tab, sends through Apps Script, and can be scheduled for Monday around 8:00 AM Central. It should not be run from the daily GitHub Actions workflow.
+The weekly email reads the `Digest` tab, sends through Apps Script, and can be scheduled for Monday around 8:00 AM Central. It should not be run from the daily GitHub Actions workflow. Sprint 22 adds the high-signal Gmail review queue to the email.
 
 ## Main commands
 
@@ -164,6 +193,7 @@ python -m src.main --lever-smoke-test
 python -m src.main --job-upsert-smoke-test
 python -m src.main --gmail-alerts-smoke-test
 python -m src.main --static-pages-smoke-test
+python -m src.rescore_jobs
 python -m src.source_audit
 python -m src.source_audit --apply-recommendations
 python -m src.dashboard
@@ -203,3 +233,4 @@ Pull requests are validated by `.github/workflows/pull-request-tests.yml`, which
 | Sprint 19 | Complete | Scoring tuning and focused Digest sections for weekly review usefulness |
 | Sprint 20 | Complete | Plain-English Dashboard and Apps Script weekly email digest |
 | Sprint 21 | Complete | LinkedIn multi-job digest card parsing and stable posting IDs |
+| Sprint 22 | Complete | Sparse Gmail high-signal title review routing and re-score command |
