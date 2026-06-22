@@ -65,3 +65,45 @@ def test_manual_review_rows_require_trusted_static_direct_posting():
     assert validate_job_quality(accepted) == []
     reasons = validate_job_quality(rejected)
     assert "manual_review_job_not_trusted_static_direct_posting" in reasons
+
+
+def test_sparse_gmail_review_with_direct_linkedin_posting_passes_quality_gate():
+    job = make_job(
+        title="Sr Manager, Strategic Planning",
+        company="Topgolf",
+        url="https://www.linkedin.com/jobs/view/4417965465",
+        source="gmail_alert",
+        description="Extracted from Gmail job alert.",
+    )
+    job.score_explanation = "total=20; tier=ignore; manual_review=true; review_reason=sparse_gmail_high_signal_title"
+
+    assert validate_job_quality(job) == []
+
+
+def test_sparse_gmail_review_still_requires_direct_posting_url():
+    job = make_job(
+        title="Sr Manager, Strategic Planning",
+        company="Topgolf",
+        url="https://www.linkedin.com/jobs/search",
+        source="gmail_alert",
+        description="Extracted from Gmail job alert.",
+    )
+    job.score_explanation = "total=20; tier=ignore; manual_review=true; review_reason=sparse_gmail_high_signal_title"
+
+    reasons = validate_job_quality(job)
+    assert "generic_job_board_or_career_navigation_page" in reasons
+    assert "manual_review_job_not_trusted_static_direct_posting" in reasons
+
+
+def test_unrecognized_gmail_manual_review_reason_stays_rejected():
+    job = make_job(
+        title="Sr Manager, Strategic Planning",
+        company="Topgolf",
+        url="https://www.linkedin.com/jobs/view/4417965465",
+        source="gmail_alert",
+        description="Extracted from Gmail job alert.",
+    )
+    job.score_explanation = "manual_review=true; review_reason=other"
+
+    reasons = validate_job_quality(job)
+    assert "manual_review_job_not_trusted_static_direct_posting" in reasons
