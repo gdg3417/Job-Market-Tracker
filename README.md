@@ -6,7 +6,7 @@ The tracker is intentionally not a generic finance job scraper. It monitors role
 
 ## Current status
 
-Sprints 1 through 20 are implemented in code.
+Sprints 1 through 21 are implemented in code.
 
 The current system supports:
 
@@ -24,8 +24,11 @@ The current system supports:
 12. Focused scoring for passive job monitoring
 13. A plain-English executive Dashboard
 14. A Google Apps Script weekly email digest
+15. LinkedIn multi-job digest card parsing with stable posting IDs
 
 Sprint 20 redesigns the Dashboard so it is an action-oriented executive summary instead of a fragile formula page. It also adds a bound Apps Script weekly digest email that can be scheduled for Monday around 8:00 AM Central.
+
+Sprint 21 parses LinkedIn digest emails as individual job cards. Each accepted card retains its own title, company, location, canonical posting URL, and stable `linkedin-<job_id>` source ID. LinkedIn utility links are ignored, and malformed cards are rejected individually without discarding valid cards from the same email.
 
 ## Repo structure
 
@@ -41,8 +44,17 @@ job-market-tracker/
     sprint_20_weekly_email_dashboard.md
   src/
     dashboard.py
+    sources/
+      eml.py
+      gmail_alerts.py
+      linkedin_digest.py
   tests/
+    fixtures/
+      linkedin_topgolf.eml
+      linkedin_toyota.eml
     test_dashboard.py
+    test_gmail_alerts.py
+    test_linkedin_digest.py
 ```
 
 Other source, test, config, and workflow files remain in their existing locations.
@@ -110,6 +122,26 @@ Use this command only when the workbook headers or timezone need repair:
 python -m src.schema --repair-headers
 ```
 
+## LinkedIn Gmail digest parsing
+
+LinkedIn job alert digests are parsed from the plain-text MIME body when it contains direct posting links. The HTML body is used only when the plain-text alternative does not contain direct postings.
+
+Each direct LinkedIn posting is normalized to:
+
+```text
+https://www.linkedin.com/jobs/view/<job_id>
+```
+
+The provider source ID is:
+
+```text
+linkedin-<job_id>
+```
+
+This keeps the same posting stable when it appears in multiple alert emails. Search pages, Premium links, alert-management links, unsubscribe links, help pages, and LinkedIn navigation links do not create job records.
+
+Sanitized regression fixtures are stored under `tests/fixtures/`. No production Gmail backfill should be run as part of Sprint 21.
+
 ## Weekly email digest
 
 Sprint 20 adds `apps_script/weekly_digest_email.gs` for a bound Google Apps Script weekly digest.
@@ -144,6 +176,8 @@ The daily workflow is `.github/workflows/daily-run.yml`.
 
 It supports manual runs with `workflow_dispatch` and scheduled runs around 06:30 AM Central. The workflow checks the Central schedule window so duplicate UTC cron entries do not both run during daylight saving changes.
 
+Pull requests are validated by `.github/workflows/pull-request-tests.yml`, which compiles Python sources and runs the full pytest suite.
+
 ## Sprint implementation status
 
 | Sprint | Status | Main addition |
@@ -168,3 +202,4 @@ It supports manual runs with `workflow_dispatch` and scheduled runs around 06:30
 | Sprint 18 | Complete | Source configuration audit, source quality fields, and ingestion mode recommendations |
 | Sprint 19 | Complete | Scoring tuning and focused Digest sections for weekly review usefulness |
 | Sprint 20 | Complete | Plain-English Dashboard and Apps Script weekly email digest |
+| Sprint 21 | Complete | LinkedIn multi-job digest card parsing and stable posting IDs |
