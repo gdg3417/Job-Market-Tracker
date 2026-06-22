@@ -1,6 +1,6 @@
 # Operations runbook
 
-This runbook documents the current Job Market Tracker operating flow after Sprint 20.
+This runbook documents the current Job Market Tracker operating flow after Sprint 21.
 
 ## Local setup
 
@@ -34,9 +34,10 @@ Expected results:
 2. `python -m src.schema --validate` returns JSON with `ok: true`.
 3. Static page ingestion does not recreate generic search rows.
 4. Gmail ingestion does not recreate known alert metadata rows.
-5. Dashboard and Digest write successfully.
-6. The Dashboard top section gives a clear answer.
-7. The Dashboard has no `#REF!` or `#VALUE!`.
+5. LinkedIn digest cards retain the correct title, company, location, and canonical direct URL.
+6. Dashboard and Digest write successfully.
+7. The Dashboard top section gives a clear answer.
+8. The Dashboard has no `#REF!` or `#VALUE!`.
 
 ## Manual GitHub Actions run
 
@@ -146,6 +147,61 @@ Job Tracker
 5. If it says `Source cleanup needed`, inspect Source cleanup queue and `Rejected_Jobs`.
 6. If it says `No action needed this week`, no job review is required.
 
+## LinkedIn digest parsing
+
+LinkedIn digest emails must be parsed from the plain-text MIME part when it contains direct posting links. HTML is the fallback only when the plain-text part does not include the postings.
+
+A valid card should contain:
+
+```text
+Job title
+Company
+Location, when present
+Direct LinkedIn posting URL
+```
+
+Accepted LinkedIn URLs are canonicalized to:
+
+```text
+https://www.linkedin.com/jobs/view/<job_id>
+```
+
+The source ID must be:
+
+```text
+linkedin-<job_id>
+```
+
+This source ID must not include the Gmail message ID or the URL position in the email.
+
+Do not create job records from:
+
+```text
+See all jobs
+LinkedIn search pages
+Premium offers
+Manage alerts
+Unsubscribe
+Help pages
+Feed or navigation links
+Messaging links
+My Network links
+Notification links
+```
+
+A malformed card should create an individual rejected alert when a direct posting ID is present. It must not cause the other valid cards in the same email to be discarded.
+
+LinkedIn job alert confirmation emails remain quarantined as `linkedin_job_alert_confirmation`.
+
+Sprint 21 validation fixtures:
+
+```text
+tests/fixtures/linkedin_topgolf.eml
+tests/fixtures/linkedin_toyota.eml
+```
+
+Do not run a Gmail production backfill during Sprint 21. Backlog release remains part of the later Gmail reliability sprint.
+
 ## Data quality cleanup
 
 Use `Rejected_Jobs` as the first cleanup view.
@@ -210,6 +266,10 @@ If schema validation fails, stop and repair the workbook before ingestion.
 If static page rejected rows spike, audit `Config_Companies` first. The likely cause is a job board, search URL, category page, or JavaScript-heavy career site being treated as a static source.
 
 If Gmail rejected rows exceed accepted jobs, inspect recent alert email structure and `Rejected_Jobs` before relaxing parser rules.
+
+If multiple LinkedIn posting URLs receive the same title or company, confirm the digest path was detected and inspect the plain-text card boundaries. Do not fix this by falling back to the email subject.
+
+If a LinkedIn posting is duplicated across alert emails, confirm its source ID uses only the LinkedIn job ID.
 
 If Dashboard refresh fails, rerun `python -m src.dashboard` after resolving the error because Digest and Dashboard output may be stale.
 
