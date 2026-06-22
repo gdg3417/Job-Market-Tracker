@@ -80,7 +80,7 @@ class FakeSheetClient:
         self.tables[worksheet_name][row_number - 2] = dict(record)
 
 
-def test_gmail_listing_paginates_and_respects_total_limit():
+def test_gmail_listing_paginates_and_processes_past_completed_messages():
     service = FakeGmailService()
 
     batch = list_labeled_gmail_message_refs(
@@ -90,12 +90,27 @@ def test_gmail_listing_paginates_and_respects_total_limit():
         completed_ids={"m1"},
     )
 
-    assert [item["id"] for item in batch.message_refs] == ["m1", "m2", "m3"]
+    assert [item["id"] for item in batch.message_refs] == ["m2", "m3", "m4"]
+    assert batch.pending_message_ids == ["m2", "m3", "m4"]
+    assert batch.messages_listed == 4
     assert batch.pages_fetched == 2
     assert batch.result_size_estimate == 4
     assert batch.messages_already_processed == 1
-    assert service.list_calls[0]["maxResults"] == 3
-    assert service.list_calls[1]["maxResults"] == 1
+    assert service.list_calls[0]["maxResults"] == 500
+    assert service.list_calls[1]["pageToken"] == "page-2"
+
+
+def test_gmail_listing_caps_full_message_processing_after_listing_backlog():
+    service = FakeGmailService()
+
+    batch = list_labeled_gmail_message_refs(
+        service,
+        label_name="Job Tracker",
+        max_results=2,
+    )
+
+    assert [item["id"] for item in batch.message_refs] == ["m1", "m2"]
+    assert batch.pending_message_ids == ["m1", "m2", "m3", "m4"]
 
 
 def test_completed_messages_skip_success_and_no_jobs_but_retry_failures():
