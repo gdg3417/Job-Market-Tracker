@@ -5,6 +5,7 @@ from src.daily_run_gate import daily_run_gate_decision
 
 SUMMER_630_CENTRAL = datetime(2026, 6, 22, 11, 30, tzinfo=timezone.utc)
 WINTER_530_CENTRAL = datetime(2026, 1, 12, 11, 30, tzinfo=timezone.utc)
+WINTER_629_CENTRAL = datetime(2026, 1, 12, 12, 29, tzinfo=timezone.utc)
 WINTER_630_CENTRAL = datetime(2026, 1, 12, 12, 30, tzinfo=timezone.utc)
 WINTER_730_CENTRAL = datetime(2026, 1, 12, 13, 30, tzinfo=timezone.utc)
 
@@ -31,6 +32,15 @@ def test_winter_530_central_invocation_skips_as_too_early():
     assert result["gate_result"] == "skipped_before_earliest_central_time"
     assert result["central_time"] == "05:30:00"
     assert result["scheduled_too_early"] is True
+
+
+def test_scheduled_invocation_one_minute_before_630_skips():
+    result = daily_run_gate_decision(event_name="schedule", run_records=[], now=WINTER_629_CENTRAL)
+
+    assert result["should_run"] is False
+    assert result["gate_result"] == "skipped_before_earliest_central_time"
+    assert result["central_time"] == "06:29:00"
+    assert result["earliest_central_time"] == "06:30:00"
 
 
 def test_winter_630_central_invocation_runs():
