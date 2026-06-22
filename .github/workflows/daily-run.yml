@@ -2,6 +2,12 @@ name: Job Tracker Daily Run
 
 on:
   workflow_dispatch:
+    inputs:
+      force_reprocess:
+        description: Reprocess Gmail messages already marked complete
+        required: false
+        default: false
+        type: boolean
   schedule:
     - cron: "30 11 * * *"
     - cron: "30 12 * * *"
@@ -28,47 +34,21 @@ jobs:
       STATIC_REJECT_WARN_THRESHOLD: "25"
       STATIC_REJECT_FAIL_THRESHOLD: "75"
     steps:
-      - name: Check Central schedule window
-        id: schedule_gate
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" != "schedule" ]; then
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          central_hour="$(TZ=America/Chicago date +'%H')"
-          central_minute="$(TZ=America/Chicago date +'%M')"
-          if [ "$central_hour" = "06" ] && [ "$central_minute" -ge 30 ] && [ "$central_minute" -le 45 ]; then
-            echo "should_run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "should_run=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping scheduled invocation because Central local time is not within the 06:30 AM to 06:45 AM run window."
-          fi
-
       - name: Checkout
-        if: steps.schedule_gate.outputs.should_run == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Python
-        if: steps.schedule_gate.outputs.should_run == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
 
       - name: Install dependencies
-        if: steps.schedule_gate.outputs.should_run == 'true'
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run tests
-        if: steps.schedule_gate.outputs.should_run == 'true'
-        run: pytest
-
       - name: Validate required secrets
-        if: steps.schedule_gate.outputs.should_run == 'true'
         shell: bash
         run: |
           if [ -z "${GOOGLE_SHEET_ID}" ]; then
@@ -82,7 +62,6 @@ jobs:
 
       - name: Write temporary credential files
         id: credentials
-        if: steps.schedule_gate.outputs.should_run == 'true'
         shell: bash
         run: |
           python - <<'PY'
@@ -128,22 +107,51 @@ jobs:
               handle.write(f"gmail_ready={'true' if gmail_client_ready and gmail_token_ready else 'false'}\n")
           PY
 
+      - name: Check daily completion lock
+        id: daily_gate
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m src.daily_run_gate --check --event-name "${{ github.event_name }}" | tee "$RUNNER_TEMP/daily_gate.json"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          data = json.loads((Path(os.environ["RUNNER_TEMP"]) / "daily_gate.json").read_text(encoding="utf-8"))
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as handle:
+              handle.write(f"should_run={'true' if data.get('should_run') else 'false'}\n")
+              handle.write(f"gate_result={data.get('gate_result', 'unknown')}\n")
+              handle.write(f"central_date={data.get('central_date', '')}\n")
+          if not data.get("should_run"):
+              print("Scheduled invocation skipped because this Central calendar date already has a successful completion record.")
+          PY
+
+      - name: Run tests
+        if: steps.daily_gate.outputs.should_run == 'true'
+        run: pytest
+
+      - name: Ensure Gmail message ledger
+        if: steps.daily_gate.outputs.should_run == 'true'
+        shell: bash
+        run: python -m src.gmail_ingestion --ensure-ledger
+
       - name: Validate workbook schema
-        if: steps.schedule_gate.outputs.should_run == 'true'
+        if: steps.daily_gate.outputs.should_run == 'true'
         shell: bash
         run: |
           set -o pipefail
           python -m src.schema --validate | tee "$RUNNER_TEMP/schema_validation.json"
 
       - name: Record workflow validation
-        if: steps.schedule_gate.outputs.should_run == 'true'
+        if: steps.daily_gate.outputs.should_run == 'true'
         shell: bash
         run: |
           set -o pipefail
           python -m src.workflow_validation | tee "$RUNNER_TEMP/workflow_validation.json"
 
       - name: Run static career pages
-        if: steps.schedule_gate.outputs.should_run == 'true'
+        if: steps.daily_gate.outputs.should_run == 'true'
         shell: bash
         run: |
           set -o pipefail
@@ -175,57 +183,67 @@ jobs:
           PY
 
       - name: Run Gmail ingestion
-        if: steps.schedule_gate.outputs.should_run == 'true' && steps.credentials.outputs.gmail_ready == 'true'
+        if: steps.daily_gate.outputs.should_run == 'true' && steps.credentials.outputs.gmail_ready == 'true'
         shell: bash
         run: |
-          set -o pipefail
-          python -m src.main --gmail-alerts-smoke-test | tee "$RUNNER_TEMP/gmail_alerts.json"
+          set +e
+          force_arg=""
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.force_reprocess }}" = "true" ]; then
+            force_arg="--force-reprocess"
+          fi
+          python -m src.gmail_ingestion --run $force_arg | tee "$RUNNER_TEMP/gmail_alerts.json"
+          ingestion_status=${PIPESTATUS[0]}
           python - <<'PY'
           import json
           import os
           import re
           from pathlib import Path
 
-          def load_json(path: Path) -> dict:
-              text = path.read_text(encoding="utf-8").strip()
-              match = re.search(r"\{.*\}\s*$", text, re.S)
-              return json.loads(match.group(0) if match else text)
-
-          data = load_json(Path(os.environ["RUNNER_TEMP"]) / "gmail_alerts.json")
-          accepted = int(data.get("jobs_found") or 0)
-          rejected = int(data.get("rejected_alerts") or 0) + int(data.get("final_gate_rejected_jobs") or 0)
-          if rejected > accepted:
-              print(f"::warning::Gmail produced {rejected} rejected alert records and {accepted} accepted jobs.")
+          path = Path(os.environ["RUNNER_TEMP"]) / "gmail_alerts.json"
+          text = path.read_text(encoding="utf-8").strip()
+          match = re.search(r"\{.*\}\s*$", text, re.S)
+          data = json.loads(match.group(0) if match else text)
+          backlog = int(data.get("backlog_remaining") or 0)
+          if backlog:
+              print(f"::warning::Gmail backlog remains after this run: {backlog} message(s).")
           PY
+          exit $ingestion_status
 
       - name: Skip Gmail ingestion
-        if: steps.schedule_gate.outputs.should_run == 'true' && steps.credentials.outputs.gmail_ready != 'true'
+        if: steps.daily_gate.outputs.should_run == 'true' && steps.credentials.outputs.gmail_ready != 'true'
         shell: bash
         run: |
           cat > "$RUNNER_TEMP/gmail_alerts.json" <<'JSON'
-          {"status":"skipped","emails_read":0,"jobs_found":0,"rejected_alerts":0,"final_gate_rejected_jobs":0}
+          {"status":"skipped","messages_fetched":0,"pages_fetched":0,"messages_already_processed":0,"new_messages_processed":0,"failed_messages":0,"backlog_remaining":0,"jobs_accepted":0,"alerts_rejected":0}
           JSON
           echo "Skipping optional Gmail alert ingestion because Gmail secrets are not configured."
 
       - name: Run Greenhouse, Lever, and lifecycle
-        if: steps.schedule_gate.outputs.should_run == 'true'
+        if: steps.daily_gate.outputs.should_run == 'true'
         shell: bash
         run: |
           set -o pipefail
           python -m src.main --job-upsert-smoke-test | tee "$RUNNER_TEMP/job_upsert.json"
 
       - name: Refresh Dashboard and Digest
-        if: steps.schedule_gate.outputs.should_run == 'true'
+        if: steps.daily_gate.outputs.should_run == 'true'
         shell: bash
         run: |
           set -o pipefail
           python -m src.dashboard | tee "$RUNNER_TEMP/dashboard.json"
 
+      - name: Mark successful daily completion
+        if: steps.daily_gate.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          python -m src.daily_run_gate --mark-success --gate-result "${{ steps.daily_gate.outputs.gate_result }}" | tee "$RUNNER_TEMP/daily_completion.json"
+
       - name: Write GitHub Step Summary
-        if: steps.schedule_gate.outputs.should_run == 'true' && always()
+        if: always()
         shell: bash
         env:
           FINAL_STATUS: ${{ job.status }}
+          DAILY_GATE_RESULT: ${{ steps.daily_gate.outputs.gate_result }}
         run: |
           python - <<'PY'
           import json
@@ -254,15 +272,18 @@ jobs:
           static_accepted = int(static_upsert.get("jobs_created") or 0) + int(static_upsert.get("duplicates_matched") or 0)
           static_rejected = int(static_upsert.get("jobs_rejected") or max(0, static_records_seen - static_accepted))
 
-          gmail_jobs_accepted = int(gmail.get("jobs_found") or 0)
-          gmail_alerts_rejected = int(gmail.get("rejected_alerts") or 0) + int(gmail.get("final_gate_rejected_jobs") or 0)
-
           rows = [
+              ("Daily run gate result", os.environ.get("DAILY_GATE_RESULT") or "not_checked"),
               ("Static jobs found", static.get("jobs_found", 0)),
               ("Static jobs rejected", static_rejected),
-              ("Gmail emails read", gmail.get("emails_read", 0)),
-              ("Gmail jobs accepted", gmail_jobs_accepted),
-              ("Gmail alerts rejected", gmail_alerts_rejected),
+              ("Gmail messages fetched", gmail.get("messages_fetched", 0)),
+              ("Gmail pages fetched", gmail.get("pages_fetched", 0)),
+              ("Gmail messages newly processed", gmail.get("new_messages_processed", 0)),
+              ("Gmail messages skipped as already processed", gmail.get("messages_already_processed", 0)),
+              ("Gmail messages failed", gmail.get("failed_messages", 0)),
+              ("Gmail backlog remaining", gmail.get("backlog_remaining", 0)),
+              ("Gmail jobs accepted", gmail.get("jobs_accepted", 0)),
+              ("Gmail alerts rejected", gmail.get("alerts_rejected", 0)),
               ("Dashboard rows written", dashboard.get("dashboard_rows_written", 0)),
               ("Digest rows written", dashboard.get("digest_rows_written", 0)),
               ("Final status", os.environ.get("FINAL_STATUS", "unknown")),
