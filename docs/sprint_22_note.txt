@@ -1,1 +1,0 @@
-Sprint 22 implementation branch. No production Gmail backfill before Sprint 23.
