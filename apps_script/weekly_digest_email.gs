@@ -4,6 +4,7 @@ const DASHBOARD_SHEET_NAME = 'Dashboard';
 const SECTION_LIMITS = {
   'Immediate review': 10,
   'Strong fit': 10,
+  'High-signal titles needing review': 15,
   'Target company watchlist': 10,
   'Needs salary research': 10,
   'Remote or short commute': 10,
@@ -14,6 +15,7 @@ const SECTION_LIMITS = {
 const ACTION_SECTIONS = [
   'Immediate review',
   'Strong fit',
+  'High-signal titles needing review',
   'Target company watchlist',
   'Needs salary research',
   'Remote or short commute',
@@ -67,7 +69,7 @@ function sendWeeklyDigest_(options) {
   const rows = readDigestRows_(digestSheet);
   const grouped = groupRowsBySection_(rows);
   const counts = buildCounts_(grouped);
-  const actionableCount = counts['Immediate review'] + counts['Strong fit'] + counts['Target company watchlist'];
+  const actionableCount = counts['Immediate review'] + counts['Strong fit'] + counts['High-signal titles needing review'] + counts['Target company watchlist'];
   const subject = buildSubject_(actionableCount, options && options.testMode);
   const generated = Utilities.formatDate(new Date(), JOB_TRACKER_TIMEZONE, 'yyyy-MM-dd hh:mm a z');
   const links = {
@@ -178,10 +180,11 @@ function buildTextBody_(generated, counts, grouped, links, actionableCount) {
   if (actionableCount > 0) {
     lines.push(actionableCount + ' roles need review.');
     lines.push(counts['Strong fit'] + ' strong fits.');
+    lines.push(counts['High-signal titles needing review'] + ' sparse high-signal roles need review.');
     lines.push(counts['Target company watchlist'] + ' target company watchlist roles.');
     lines.push(counts['Needs salary research'] + ' roles need salary research.');
   } else {
-    lines.push('No immediate review, strong fit, target company, P&L pathway, or salary research roles were found this week.');
+    lines.push('No immediate review, strong fit, high-signal review, target company, P&L pathway, or salary research roles were found this week.');
   }
   lines.push('');
   ACTION_SECTIONS.forEach((section) => {
@@ -219,9 +222,9 @@ function buildHtmlBody_(generated, counts, grouped, links, actionableCount) {
   html.push('<p><b>Generated:</b> ' + escapeHtml_(generated) + '</p>');
   html.push('<h3>Summary</h3>');
   if (actionableCount > 0) {
-    html.push('<p>' + actionableCount + ' roles need review.<br>' + counts['Strong fit'] + ' strong fits.<br>' + counts['Target company watchlist'] + ' target company watchlist roles.<br>' + counts['Needs salary research'] + ' roles need salary research.</p>');
+    html.push('<p>' + actionableCount + ' roles need review.<br>' + counts['Strong fit'] + ' strong fits.<br>' + counts['High-signal titles needing review'] + ' sparse high-signal roles need review.<br>' + counts['Target company watchlist'] + ' target company watchlist roles.<br>' + counts['Needs salary research'] + ' roles need salary research.</p>');
   } else {
-    html.push('<p>No immediate review, strong fit, target company, P&amp;L pathway, or salary research roles were found this week.</p>');
+    html.push('<p>No immediate review, strong fit, high-signal review, target company, P&amp;L pathway, or salary research roles were found this week.</p>');
   }
   ACTION_SECTIONS.forEach((section) => {
     html.push('<h3>' + escapeHtml_(section) + '</h3>');
