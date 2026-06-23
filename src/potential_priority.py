@@ -21,6 +21,12 @@ ACTIVE_ENRICHMENT_STATUSES = {
     "closed",
 }
 INCOMPLETE_EVIDENCE_VALUES = {"", "unknown", "unspecified", "not specified", "n/a", "na", "none"}
+COMPANY_CONTEXT_EVIDENCE_FIELDS = {
+    "industry_bucket",
+    "ownership_type",
+    "company_size_bucket",
+    "parent_company",
+}
 
 
 def load_potential_priority_rules(path: str | Path) -> dict[str, Any]:
@@ -99,15 +105,29 @@ def _target_company_points(company_context: dict[str, Any] | None, rules: dict[s
         return 0, ""
     target_rules = rules.get("target_company", {}) or {}
     points = _safe_int(target_rules.get("points"), 5)
-    context_text = _normalize(company_context)
+    priority_text = _normalize(
+        company_context.get("priority_tier")
+        or company_context.get("target_priority")
+        or company_context.get("watchlist_status")
+    )
     for term in target_rules.get("priority_terms") or []:
-        if _contains_phrase(context_text, str(term)):
+        if _contains_phrase(priority_text, str(term)):
             return points, str(term)
     if _safe_int(company_context.get("score_boost_points"), 0) > 0:
         return points, "score boost"
-    if str(company_context.get("target_company") or "").strip().lower() in {"1", "true", "yes", "y"}:
+    explicit_target = company_context.get("target_company", company_context.get("is_target_company", ""))
+    if str(explicit_target or "").strip().lower() in {"1", "true", "yes", "y"}:
         return points, "target company"
     return 0, ""
+
+
+def _has_meaningful_company_context(company_context: dict[str, Any] | None) -> bool:
+    if not company_context:
+        return False
+    for field_name in COMPANY_CONTEXT_EVIDENCE_FIELDS:
+        if _normalize(company_context.get(field_name)) not in INCOMPLETE_EVIDENCE_VALUES:
+            return True
+    return False
 
 
 def evaluate_potential_priority(
@@ -142,6 +162,14 @@ def evaluate_potential_priority(
         location_score = _safe_int(rules.get("location_default"), 3)
         location_signal = "known location"
     target_score, target_signal = _target_company_points(company_context, rules)
+
+    weights = rules.get("weights", {}) or {}
+    seniority_score = min(seniority_score, _safe_int(weights.get("relevant_seniority"), 20))
+    role_score = min(role_score, _safe_int(weights.get("relevant_role_family"), 25))
+    ownership_score = min(ownership_score, _safe_int(weights.get("strategic_ownership_signals"), 15))
+    company_score = min(company_score, _safe_int(weights.get("company_industry_fit"), 20))
+    location_score = min(location_score, _safe_int(weights.get("location_work_model"), 15))
+    target_score = min(target_score, _safe_int(weights.get("target_company_preference"), 5))
 
     score_scale = _safe_int(rules.get("score_scale"), 100)
     total = min(
@@ -201,7 +229,7 @@ def calculate_evidence_completeness(
         total += _safe_int(weights.get("qualifications"), 10)
         evidence.append("qualifications")
 
-    if company_context:
+    if _has_meaningful_company_context(company_context):
         total += _safe_int(weights.get("company_context"), 10)
         evidence.append("company context")
 
@@ -315,11 +343,14 @@ def apply_potential_priority(
     )
     current_status = str(job.enrichment_status or "").strip().lower()
     if eligible:
-        if current_status not in ACTIVE_ENRICHMENT_STATUSES:
+        if current_status == "closed" or current_status not in ACTIVE_ENRICHMENT_STATUSES:
             job.enrichment_status = "pending"
         job.enrichment_priority = priority
     else:
-        if current_status not in ACTIVE_ENRICHMENT_STATUSES or score_status in {"verified", "excluded"}:
+        if score_status in {"verified", "excluded"}:
+            if current_status != "enriched":
+                job.enrichment_status = "not_required"
+        elif current_status not in ACTIVE_ENRICHMENT_STATUSES:
             job.enrichment_status = "not_required"
         if job.enrichment_status == "not_required":
             job.enrichment_priority = ""
