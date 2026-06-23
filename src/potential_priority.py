@@ -138,7 +138,7 @@ def evaluate_potential_priority(
         company_score = _safe_int(rules.get("credible_company_default"), 5)
         company_signal = "credible company"
     location_score, location_signal = _best_signal(location_text, rules.get("location_signals"))
-    if location_score == 0 and str(job.location or "").strip():
+    if location_score == 0 and _normalize(job.location) not in INCOMPLETE_EVIDENCE_VALUES:
         location_score = _safe_int(rules.get("location_default"), 3)
         location_signal = "known location"
     target_score, target_signal = _target_company_points(company_context, rules)
@@ -213,7 +213,7 @@ def calculate_evidence_completeness(
         total += _safe_int(weights.get("compensation"), 10)
         evidence.append("compensation")
 
-    if str(job.location or "").strip():
+    if _normalize(job.location) not in INCOMPLETE_EVIDENCE_VALUES:
         total += _safe_int(weights.get("location"), 5)
         evidence.append("location")
 
@@ -245,10 +245,10 @@ def _score_status(
     evidence_rules = rules.get("evidence_rules", {}) or {}
     meaningful_description = not _is_generic_description(job.description_text, evidence_rules) and _description_word_count(
         job.description_text
-    ) >= _safe_int(evidence_rules.get("partial_description_min_words"), 8)
+    ) >= _safe_int(evidence_rules.get("meaningful_description_min_words"), 20)
     credible_identity = bool(str(job.title or "").strip() and str(job.company or "").strip() and _credible_url(job.canonical_url))
     credible_location = bool(
-        str(job.location or "").strip()
+        _normalize(job.location) not in INCOMPLETE_EVIDENCE_VALUES
         or _normalize(job.remote_status) not in INCOMPLETE_EVIDENCE_VALUES
         or _normalize(job.work_model) not in INCOMPLETE_EVIDENCE_VALUES
     )
