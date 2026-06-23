@@ -219,6 +219,42 @@ def test_duplicate_merge_preserves_verified_score_and_stronger_evidence():
     assert merged.enrichment_status == "enriched"
 
 
+def test_unscored_duplicate_does_not_downgrade_existing_priority():
+    existing = JobPosting(
+        job_key="job-high-potential",
+        company="Topgolf",
+        title="Sr Manager, Strategic Planning",
+        location="Dallas, TX",
+        canonical_url="https://example.com/jobs/high-potential",
+        total_score=21,
+        alert_tier="ignore",
+        potential_priority_score=78,
+        potential_priority="high",
+        potential_priority_reason="strategic senior role",
+        evidence_completeness_score=10,
+        score_status="provisional",
+        enrichment_status="pending",
+        enrichment_priority="high",
+    )
+    incoming = JobPosting(
+        job_key="job-high-potential",
+        company="Topgolf",
+        title="Sr Manager, Strategic Planning",
+        location="Dallas, TX",
+        canonical_url="https://example.com/jobs/high-potential",
+    )
+
+    merged = merge_job(existing, incoming, seen_date="2026-06-23")
+
+    assert merged.potential_priority_score == 78
+    assert merged.potential_priority == "high"
+    assert merged.potential_priority_reason == "strategic senior role"
+    assert merged.score_status == "provisional"
+    assert merged.evidence_completeness_score == 10
+    assert merged.enrichment_status == "pending"
+    assert merged.enrichment_priority == "high"
+
+
 def test_sprint26_jobs_fields_are_appended_after_legacy_columns():
     assert JOB_FIELDS[34:36] == ["created_at", "updated_at"]
     assert JOB_FIELDS[36:] == [
