@@ -19,6 +19,7 @@ HTML_LINK_PATTERN = re.compile(
 )
 BLOCK_END_PATTERN = re.compile(r"</(?:div|p|li|tr|td|h[1-6])>", flags=re.IGNORECASE)
 BREAK_PATTERN = re.compile(r"<br\s*/?>", flags=re.IGNORECASE)
+LOCATION_IN_TEXT_PATTERN = re.compile(r"\b(?P<location>[A-Z][A-Za-z .'-]+,\s*[A-Z]{2})\b")
 ROLE_SIGNAL_KEYWORDS = (
     "analyst",
     "analytics",
@@ -68,11 +69,18 @@ IGNORED_CARD_LINES = {
     "view jobs",
     "viewed",
 }
+ALERT_METADATA_PREFIXES = (
+    "your job alert for ",
+    "new jobs in ",
+    "new jobs match ",
+    "new jobs near ",
+)
 IGNORED_CARD_LINE_PREFIXES = (
     "actively rec",
     "be among the first",
     "posted ",
     "reposted ",
+    *ALERT_METADATA_PREFIXES,
 )
 WORK_MODEL_SUFFIX_PATTERN = re.compile(
     r"\s*\((?:on-site|onsite|hybrid|remote)\)\s*$",
@@ -121,6 +129,11 @@ def _decoded(value: str) -> str:
     return html.unescape(value or "")
 
 
+def _is_alert_metadata_line(value: str) -> bool:
+    lower = clean_text(value).lower()
+    return any(lower.startswith(prefix) for prefix in ALERT_METADATA_PREFIXES)
+
+
 def _plain_lines(value: str) -> list[str]:
     text = _decoded(value)
     text = BREAK_PATTERN.sub("\n", text)
@@ -148,7 +161,7 @@ def _title_has_role_signal(value: str) -> bool:
 def _looks_like_location(value: str) -> bool:
     text = clean_text(value)
     lower = text.lower()
-    if re.search(r"\b[A-Z][A-Za-z .'-]+,\s*[A-Z]{2}\b", text):
+    if LOCATION_IN_TEXT_PATTERN.search(text):
         return True
     return any(term in lower for term in ("remote", "hybrid", "on-site", "onsite"))
 
@@ -164,6 +177,18 @@ def _clean_location(value: str) -> str:
     return location.strip(" ·|,-")
 
 
+def _location_in_text(value: str) -> str:
+    text = clean_text(value)
+    match = LOCATION_IN_TEXT_PATTERN.search(text)
+    if match:
+        return _clean_location(match.group("location"))
+    lower = text.lower()
+    for work_model in ("remote", "hybrid", "on-site", "onsite"):
+        if re.fullmatch(rf".*\b{re.escape(work_model)}\b.*", lower):
+            return work_model.title() if work_model != "onsite" else "On-site"
+    return ""
+
+
 def _split_company_location(value: str) -> tuple[str, str]:
     text = clean_text(value)
     for separator in (" · ", "•", " | "):
@@ -176,6 +201,10 @@ def _split_company_location(value: str) -> tuple[str, str]:
 def _validate_fields(title: str, company: str) -> str:
     if not title or not company:
         return "missing_title_or_company"
+    if _is_alert_metadata_line(title):
+        return "title_looks_like_alert_metadata"
+    if _is_alert_metadata_line(company):
+        return "company_looks_like_alert_metadata"
     if not _title_has_role_signal(title):
         return "title_lacks_role_signal"
     if _looks_like_location(title):
@@ -203,6 +232,50 @@ def _parse_card_lines(lines: list[str]) -> tuple[str, str, str, str]:
         if not reason:
             return title, company, location, ""
         rejection_reason = reason
+    return "", "", "", rejection_reason
+
+
+def _company_label_candidates(label_groups: list[list[str]]) -> list[str]:
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for group in label_groups:
+        if len(group) != 1:
+            continue
+        candidate = clean_text(group[0])
+        key = candidate.lower()
+        if (
+            not candidate
+            or len(candidate) > 120
+            or _is_alert_metadata_line(candidate)
+            or _looks_like_location(candidate)
+            or key in seen
+        ):
+            continue
+        seen.add(key)
+        candidates.append(candidate)
+    return candidates
+
+
+def _parse_collapsed_card_lines(
+    lines: list[str],
+    company_candidates: list[str],
+) -> tuple[str, str, str, str]:
+    rejection_reason = "missing_title_or_company"
+    for company in company_candidates:
+        company_key = company.lower()
+        for candidate in lines:
+            text = clean_text(candidate)
+            lower = text.lower()
+            company_index = lower.find(company_key)
+            if company_index <= 0:
+                continue
+            title = clean_text(text[:company_index]).strip(" ·|-,:;")
+            remainder = clean_text(text[company_index + len(company) :]).strip(" ·|-,:;")
+            location = _location_in_text(remainder)
+            reason = _validate_fields(title, company)
+            if not reason:
+                return title, company, location, ""
+            rejection_reason = reason
     return "", "", "", rejection_reason
 
 
@@ -324,22 +397,33 @@ def _parse_linkedin_digest_source(source: str) -> list[LinkedInDigestCard]:
     cards: list[LinkedInDigestCard] = []
     for job_id in order:
         card_links = grouped[job_id]
-        candidate_groups = [_plain_lines(link.label) for link in card_links if link.label]
-        candidate_groups.extend(context_by_id[job_id])
+        label_groups = [_plain_lines(link.label) for link in card_links if link.label]
+        context_groups = context_by_id[job_id]
+        candidate_groups = label_groups + context_groups
 
         title = company = location = ""
         rejection_reason = "missing_title_or_company"
         evidence_lines: list[str] = []
 
-        for group in candidate_groups:
-            parsed_title, parsed_company, parsed_location, reason = _parse_card_lines(group)
-            evidence_lines.extend(group)
-            if parsed_title and parsed_company:
-                title, company, location = parsed_title, parsed_company, parsed_location
-                rejection_reason = ""
-                break
-            if reason:
-                rejection_reason = reason
+        collapsed_lines = _unique_lines(label_groups)
+        company_candidates = _company_label_candidates(label_groups)
+        if collapsed_lines and company_candidates:
+            title, company, location, rejection_reason = _parse_collapsed_card_lines(
+                collapsed_lines,
+                company_candidates,
+            )
+            evidence_lines.extend(collapsed_lines)
+
+        if not title or not company:
+            for group in candidate_groups:
+                parsed_title, parsed_company, parsed_location, reason = _parse_card_lines(group)
+                evidence_lines.extend(group)
+                if parsed_title and parsed_company:
+                    title, company, location = parsed_title, parsed_company, parsed_location
+                    rejection_reason = ""
+                    break
+                if reason:
+                    rejection_reason = reason
 
         if not title or not company:
             combined_lines = _unique_lines(candidate_groups)
