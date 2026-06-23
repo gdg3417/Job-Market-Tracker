@@ -331,6 +331,12 @@ def _context_lines(text: str, link: _DirectLink, previous_end: int) -> list[str]
     return _plain_lines(text[start:link.start])[-10:]
 
 
+def _has_view_job_prefix(text: str, link: _DirectLink) -> bool:
+    line_start = max(text.rfind("\n", 0, link.start), text.rfind("\r", 0, link.start)) + 1
+    prefix = clean_text(text[line_start:link.start]).lower()
+    return bool(re.search(r"\bview\s+job\s*:?\s*$", prefix))
+
+
 def _unique_lines(groups: list[list[str]]) -> list[str]:
     lines: list[str] = []
     seen: set[str] = set()
@@ -415,15 +421,12 @@ def _parse_linkedin_digest_source(source: str) -> list[LinkedInDigestCard]:
         segment_groups = [segment_by_id[job_id]] if segment_by_id[job_id] else []
         context_groups = context_by_id[job_id]
 
-        # Plain-text LinkedIn digests place title/company/location before a
-        # label-free "View job" URL. In that shape the context belongs to the
-        # current URL, while the following segment belongs to the next card.
-        # Markdown/HTML card links have visible labels and may place the card
-        # text after a company-logo link, so retain segment-first fallback there.
         if label_groups:
             candidate_groups = label_groups + segment_groups + context_groups
-        else:
+        elif any(_has_view_job_prefix(text, link) for link in card_links):
             candidate_groups = context_groups + segment_groups
+        else:
+            candidate_groups = segment_groups + context_groups
 
         title = company = location = ""
         rejection_reason = "missing_title_or_company"
