@@ -5,6 +5,7 @@ import json
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from src.company_context import company_context_for_name, load_company_context_map
 from src.dashboard import apply_dashboard_and_digest
 from src.models import JobPosting, utc_now_iso
 from src.scoring import load_scoring_rules, score_job
@@ -90,13 +91,18 @@ def rescore_open_gmail_jobs(
     append_run: bool = True,
 ) -> RescoreJobsResult:
     rows = sheet_client.read_jobs_with_row_numbers()
+    company_contexts = load_company_context_map(sheet_client)
     result = RescoreJobsResult(jobs_read=len(rows))
 
     for row_number, job in rows:
         if not _is_open_gmail_job(job):
             continue
         result.gmail_open_jobs += 1
-        scored = score_job(job, scoring_rules)
+        scored = score_job(
+            job,
+            scoring_rules,
+            company_context=company_context_for_name(job.company, company_contexts),
+        )
         sheet_client.update_job(row_number, scored)
         result.jobs_updated += 1
         _increment_state_counts(result, scored)
