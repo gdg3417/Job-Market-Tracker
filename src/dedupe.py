@@ -42,11 +42,10 @@ SCORE_FIELDS = {
     "score_explanation",
 }
 
-PRIORITY_FIELDS = {
+POTENTIAL_FIELDS = {
     "potential_priority_score",
     "potential_priority",
     "potential_priority_reason",
-    "evidence_completeness_score",
 }
 
 JOB_OVERWRITE_FIELDS = [
@@ -64,7 +63,7 @@ JOB_OVERWRITE_FIELDS = [
     "role_family",
     "role_level",
     *sorted(SCORE_FIELDS),
-    *sorted(PRIORITY_FIELDS),
+    *sorted(POTENTIAL_FIELDS),
 ]
 
 SOURCE_PRIMARY_FIELDS = ["source_primary", "source_type", "source", "ats_platform"]
@@ -331,21 +330,23 @@ def is_duplicate(
 
 
 def _merge_priority_and_evidence(merged: JobPosting, incoming: JobPosting) -> None:
-    for field_name in PRIORITY_FIELDS:
+    for field_name in POTENTIAL_FIELDS:
         incoming_value = getattr(incoming, field_name)
         if _has_value(incoming_value):
             setattr(merged, field_name, incoming_value)
 
+    existing_evidence = merged.evidence_completeness_score
+    incoming_evidence = incoming.evidence_completeness_score
     existing_rank = SCORE_STATUS_RANK.get(merged.score_status, 0)
     incoming_rank = SCORE_STATUS_RANK.get(incoming.score_status, 0)
-    if incoming_rank >= existing_rank:
+    if incoming_rank > existing_rank or (incoming_rank == existing_rank and incoming_evidence >= existing_evidence):
         merged.score_status = incoming.score_status
-        merged.evidence_completeness_score = incoming.evidence_completeness_score
+        merged.evidence_completeness_score = incoming_evidence
         if incoming.score_status in {"verified", "excluded"}:
             merged.verified_total_score = incoming.verified_total_score
             merged.verified_alert_tier = incoming.verified_alert_tier
-    elif incoming.evidence_completeness_score > merged.evidence_completeness_score:
-        merged.evidence_completeness_score = incoming.evidence_completeness_score
+    elif incoming_evidence > existing_evidence:
+        merged.evidence_completeness_score = incoming_evidence
 
     existing_enrichment_rank = ENRICHMENT_STATUS_RANK.get(merged.enrichment_status, 0)
     incoming_enrichment_rank = ENRICHMENT_STATUS_RANK.get(incoming.enrichment_status, 0)
@@ -371,7 +372,7 @@ def merge_job(existing: JobPosting, incoming: JobPosting, seen_date: str | None 
     incoming_is_scored = incoming.total_score > 0 or incoming.alert_tier != "unscored"
     protect_verified_score = existing.score_status == "verified" and incoming.score_status != "verified"
     for field_name in JOB_OVERWRITE_FIELDS:
-        if field_name in PRIORITY_FIELDS:
+        if field_name in POTENTIAL_FIELDS:
             continue
         if field_name in SCORE_FIELDS and (not incoming_is_scored or protect_verified_score):
             continue
