@@ -2,7 +2,7 @@
 
 ## Goal
 
-Recover valid LinkedIn lead postings when the digest collapses the title, company, and location into one linked label, and prevent alert headings from being interpreted as job records.
+Recover valid LinkedIn lead postings when digest markup collapses or omits a parseable direct job-card link, and prevent alert headings from being interpreted as job records.
 
 ## Production defect
 
@@ -17,15 +17,17 @@ The June 21 Toyota digest was recorded as successfully processed, but LinkedIn j
 
 - Ignore LinkedIn alert metadata lines such as `Your job alert for...` and `New jobs in...` during card parsing.
 - Reject alert metadata if it reaches field validation.
-- Use the company-logo label as an identity anchor when a job-card label is collapsed into one line.
-- Recover the title before the company label and the location after it.
-- Preserve the existing multiline-card and HTML fallback behavior.
-- Add a production-shaped Toyota regression that also passes the final data-quality gate.
+- Normalize parseable Markdown and HTML links to their visible labels before line parsing.
+- Bound each job-card text segment between the first direct link for that job and the first direct link for the next job.
+- Recover title, company, and location from that bounded segment when the direct job-card link itself is malformed or absent.
+- Continue using company-logo labels as identity anchors for collapsed one-line cards.
+- Preserve existing multiline-card, HTML fallback, canonical URL, and deduplication behavior.
+- Cover both the production-shaped malformed lead card and a valid neighboring card in regression tests.
 
 ## Post-merge production validation
 
 1. Run `Job Tracker Daily Run` manually on `main` with `force_reprocess=true`.
-2. Confirm Gmail message `19eeb7f9ad20df2f` has `attempt_count=2` and no failure.
+2. Confirm Gmail message `19eeb7f9ad20df2f` has an increased `attempt_count` and no failure.
 3. Confirm Toyota job ID `4430066274` exists in `Jobs` and `Job_Sources` with the expected fields and canonical URL.
 4. Confirm Toyota appears under `High-signal titles needing review` in the Digest.
 5. Run the workflow again with `force_reprocess=false`.
