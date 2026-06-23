@@ -1,0 +1,148 @@
+score_scale: 100
+thresholds:
+  high: 70
+  medium: 50
+weights:
+  relevant_seniority: 20
+  relevant_role_family: 25
+  strategic_ownership_signals: 15
+  company_industry_fit: 20
+  location_work_model: 15
+  target_company_preference: 5
+seniority_signals:
+  vice president: 20
+  svp: 20
+  vp: 20
+  head of: 20
+  director: 20
+  senior manager: 18
+  sr manager: 18
+  sr. manager: 18
+  national manager: 17
+  manager: 14
+  principal: 9
+  lead: 8
+  senior: 5
+  analyst: 0
+  associate: 0
+  coordinator: 0
+role_family_signals:
+  commercial strategy: 25
+  revenue strategy: 25
+  strategic planning: 25
+  corporate strategy: 25
+  enterprise strategy: 25
+  business strategy: 25
+  strategy and operations: 25
+  strategy operations: 25
+  pricing strategy: 25
+  product strategy: 24
+  product line: 24
+  category management: 24
+  portfolio management: 23
+  business operations: 23
+  business insights: 22
+  commercial operations: 22
+  sales operations: 21
+  product: 22
+  chief of staff: 25
+  finance transformation: 18
+strategic_ownership_signals:
+  p&l: 15
+  profit and loss: 15
+  general manager: 15
+  business unit: 15
+  national manager: 15
+  strategic planning: 15
+  pricing: 15
+  revenue: 15
+  growth: 15
+  product line: 15
+  category: 15
+  portfolio: 14
+  go-to-market: 14
+  commercial: 13
+  strategy: 12
+company_name_signals:
+  fossil: 20
+  rolex: 20
+  toyota: 15
+  topgolf: 8
+company_context_signals:
+  watch: 20
+  luxury goods: 20
+  manufacturing: 20
+  industrial products: 20
+  pe-backed: 20
+  private equity: 20
+  portfolio company: 20
+  consumer products: 17
+  public company: 15
+  private company: 15
+  distribution: 15
+credible_company_default: 5
+location_signals:
+  remote: 15
+  richardson: 15
+  plano: 15
+  dallas: 12
+  addison: 12
+  garland: 12
+  mckinney: 10
+  carrollton: 10
+  fort worth: 5
+location_default: 3
+target_company:
+  points: 5
+  priority_terms:
+    - tier 1
+    - tier 2
+    - target
+    - watchlist
+    - high
+enrichment:
+  include_medium_when_capacity: false
+  complete_evidence_threshold: 70
+  partial_evidence_threshold: 40
+evidence_weights:
+  full_description: 30
+  responsibilities: 15
+  qualifications: 10
+  company_context: 10
+  work_model: 10
+  compensation: 10
+  location: 5
+  posting_date_status: 5
+  team_reporting_structure: 5
+evidence_rules:
+  meaningful_description_min_words: 20
+  partial_description_min_words: 8
+  generic_description_prefixes:
+    - Extracted from Gmail job alert
+  responsibility_terms:
+    - responsibilities
+    - responsible for
+    - you will
+    - own
+    - lead
+    - manage
+    - drive
+    - develop
+    - oversee
+  qualification_terms:
+    - qualifications
+    - requirements
+    - required experience
+    - preferred experience
+    - years of experience
+    - bachelor's
+    - degree
+  team_reporting_terms:
+    - direct reports
+    - people manager
+    - manage a team
+    - lead a team
+    - reports to
+    - reporting to
+    - team leadership
+    - build a team
