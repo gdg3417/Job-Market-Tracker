@@ -41,13 +41,22 @@ def test_runs_schema_contains_full_richer_run_record_shape():
     ]
 
 
-def test_digest_schema_uses_sprint_11_digest_header_row():
+def test_digest_schema_uses_header_row_five_and_appends_sprint26_fields():
     spec = CANONICAL_SCHEMA["Digest"]
 
     assert spec.header_row == 5
     assert spec.headers == DIGEST_HEADERS
     assert spec.headers[0] == "digest_section"
-    assert spec.headers[-1] == "score_explanation"
+    assert spec.headers[18] == "score_explanation"
+    assert spec.headers[-7:] == [
+        "potential_priority_score",
+        "potential_priority",
+        "evidence_completeness_score",
+        "score_status",
+        "verified_total_score",
+        "verified_alert_tier",
+        "enrichment_status",
+    ]
 
 
 def test_expected_timezone_is_central():
