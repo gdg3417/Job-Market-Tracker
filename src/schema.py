@@ -175,6 +175,26 @@ def _ensure_schema_worksheet(sheet_client: Any, worksheet_name: str, rows: int, 
     return sheet_client.get_worksheet(worksheet_name)
 
 
+def _ensure_grid_capacity(worksheet: Any, *, rows: int, cols: int, worksheet_name: str) -> None:
+    """Expand an existing worksheet before writing headers beyond its current grid."""
+    if not hasattr(worksheet, "resize"):
+        return
+
+    current_rows = int(getattr(worksheet, "row_count", rows) or rows)
+    current_cols = int(getattr(worksheet, "col_count", cols) or cols)
+    target_rows = max(current_rows, rows)
+    target_cols = max(current_cols, cols)
+    if target_rows == current_rows and target_cols == current_cols:
+        return
+
+    from src.sheets import with_quota_backoff
+
+    with_quota_backoff(
+        lambda: worksheet.resize(rows=target_rows, cols=target_cols),
+        operation_name=f"resize worksheet {worksheet_name}",
+    )
+
+
 def _clear_header_cache(sheet_client: Any) -> None:
     if hasattr(sheet_client, "_header_cache"):
         sheet_client._header_cache.clear()
@@ -185,11 +205,19 @@ def migrate_trailing_headers(sheet_client: Any) -> None:
     from src.sheets import with_quota_backoff
 
     for spec in CANONICAL_SCHEMA.values():
+        required_rows = max(1000, spec.header_row + 10)
+        required_cols = len(spec.headers)
         worksheet = _ensure_schema_worksheet(
             sheet_client,
             spec.worksheet_name,
-            rows=max(1000, spec.header_row + 10),
-            cols=len(spec.headers),
+            rows=required_rows,
+            cols=required_cols,
+        )
+        _ensure_grid_capacity(
+            worksheet,
+            rows=required_rows,
+            cols=required_cols,
+            worksheet_name=spec.worksheet_name,
         )
         current = _trim(worksheet.row_values(spec.header_row))
         if current == spec.headers:
@@ -235,9 +263,21 @@ def repair_headers(sheet_client: Any) -> None:
     from src.sheets import with_quota_backoff
 
     for spec in CANONICAL_SCHEMA.values():
-        worksheet = _ensure_schema_worksheet(sheet_client, spec.worksheet_name, rows=max(1000, spec.header_row + 10), cols=len(spec.headers))
+        required_rows = max(1000, spec.header_row + 10)
+        worksheet = _ensure_schema_worksheet(
+            sheet_client,
+            spec.worksheet_name,
+            rows=required_rows,
+            cols=len(spec.headers),
+        )
         current = _trim(worksheet.row_values(spec.header_row))
         width = max(len(current), len(spec.headers), 1)
+        _ensure_grid_capacity(
+            worksheet,
+            rows=required_rows,
+            cols=width,
+            worksheet_name=spec.worksheet_name,
+        )
         values = [*spec.headers, *[""] * (width - len(spec.headers))]
         cell_range = f"A{spec.header_row}:{_column_name(width)}{spec.header_row}"
         with_quota_backoff(
