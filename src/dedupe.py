@@ -335,17 +335,26 @@ def _merge_priority_and_evidence(
     *,
     incoming_is_scored: bool,
 ) -> None:
-    if incoming_is_scored:
+    existing_evidence = merged.evidence_completeness_score
+    incoming_evidence = incoming.evidence_completeness_score
+    existing_rank = SCORE_STATUS_RANK.get(merged.score_status, 0)
+    incoming_rank = SCORE_STATUS_RANK.get(incoming.score_status, 0)
+    incoming_replaces_evidence = incoming_rank > existing_rank or (
+        incoming_rank == existing_rank and incoming_evidence >= existing_evidence
+    )
+
+    can_replace_potential = incoming.score_status == "excluded" or (
+        merged.score_status != "excluded"
+        and incoming.potential_priority_score >= merged.potential_priority_score
+    )
+    if incoming_is_scored and can_replace_potential:
         for field_name in POTENTIAL_FIELDS:
             incoming_value = getattr(incoming, field_name)
             if _has_value(incoming_value):
                 setattr(merged, field_name, incoming_value)
 
-        existing_evidence = merged.evidence_completeness_score
-        incoming_evidence = incoming.evidence_completeness_score
-        existing_rank = SCORE_STATUS_RANK.get(merged.score_status, 0)
-        incoming_rank = SCORE_STATUS_RANK.get(incoming.score_status, 0)
-        if incoming_rank > existing_rank or (incoming_rank == existing_rank and incoming_evidence >= existing_evidence):
+    if incoming_is_scored:
+        if incoming_replaces_evidence:
             merged.score_status = incoming.score_status
             merged.evidence_completeness_score = incoming_evidence
             if incoming.score_status in {"verified", "excluded"}:
@@ -376,11 +385,22 @@ def merge_job(existing: JobPosting, incoming: JobPosting, seen_date: str | None 
     merged = JobPosting.from_dict(existing.to_dict())
 
     incoming_is_scored = incoming.total_score > 0 or incoming.alert_tier != "unscored"
-    protect_verified_score = existing.score_status == "verified" and incoming.score_status != "verified"
+    protect_existing_score = (
+        existing.score_status == "excluded" and incoming.score_status != "excluded"
+    ) or (
+        existing.score_status == "verified"
+        and (
+            incoming.score_status not in {"verified", "excluded"}
+            or (
+                incoming.score_status == "verified"
+                and incoming.evidence_completeness_score < existing.evidence_completeness_score
+            )
+        )
+    )
     for field_name in JOB_OVERWRITE_FIELDS:
         if field_name in POTENTIAL_FIELDS:
             continue
-        if field_name in SCORE_FIELDS and (not incoming_is_scored or protect_verified_score):
+        if field_name in SCORE_FIELDS and (not incoming_is_scored or protect_existing_score):
             continue
         incoming_value = getattr(incoming, field_name)
         if _has_value(incoming_value):
