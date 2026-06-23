@@ -14,7 +14,7 @@ RUNS_HEADERS = "run_id run_type source_type source_name status started_at finish
 CONFIG_SEARCHES_HEADERS = "search_id bucket role_family include_keywords exclude_keywords locations remote_allowed hybrid_allowed salary_min salary_max role_level p_and_l_path_relevance active notes".split()
 CONFIG_COMPANIES_HEADERS = "company_id company_name parent_company source_type source_slug source_url ats_platform location_focus industry_bucket company_size_bucket ownership_type priority_tier source_quality ingestion_mode active notes".split()
 SNAPSHOTS_HEADERS = "snapshot_id snapshot_date job_key company title status total_score alert_tier salary_min salary_max total_comp_estimate remote_status work_model commute_estimate_minutes role_family p_and_l_path_score growth_ownership_score notes".split()
-DIGEST_HEADERS = "digest_section company title location remote_status work_model commute_estimate_minutes role_family role_level total_score alert_tier salary_min salary_max total_comp_estimate days_open first_seen_date last_seen_date canonical_url score_explanation".split()
+DIGEST_HEADERS = "digest_section company title location remote_status work_model commute_estimate_minutes role_family role_level total_score alert_tier salary_min salary_max total_comp_estimate days_open first_seen_date last_seen_date canonical_url score_explanation potential_priority_score potential_priority evidence_completeness_score score_status verified_total_score verified_alert_tier enrichment_status".split()
 DASHBOARD_HEADERS = ["Job Market Tracker Dashboard"]
 SCORING_RULES_HEADERS = "rule_id category rule_name max_points positive_signals negative_signals scoring_logic active notes".split()
 TARGET_COMPANIES_HEADERS = "target_company_id company_name parent_company industry_bucket company_size_bucket ownership_type priority_tier location_focus commute_bucket p_and_l_path_rationale role_families_to_watch score_boost_points active notes".split()
@@ -175,13 +175,109 @@ def _ensure_schema_worksheet(sheet_client: Any, worksheet_name: str, rows: int, 
     return sheet_client.get_worksheet(worksheet_name)
 
 
+def _ensure_grid_capacity(worksheet: Any, *, rows: int, cols: int, worksheet_name: str) -> None:
+    """Expand an existing worksheet before writing headers beyond its current grid."""
+    if not hasattr(worksheet, "resize"):
+        return
+
+    current_rows = int(getattr(worksheet, "row_count", rows) or rows)
+    current_cols = int(getattr(worksheet, "col_count", cols) or cols)
+    target_rows = max(current_rows, rows)
+    target_cols = max(current_cols, cols)
+    if target_rows == current_rows and target_cols == current_cols:
+        return
+
+    from src.sheets import with_quota_backoff
+
+    with_quota_backoff(
+        lambda: worksheet.resize(rows=target_rows, cols=target_cols),
+        operation_name=f"resize worksheet {worksheet_name}",
+    )
+
+
+def _clear_header_cache(sheet_client: Any) -> None:
+    if hasattr(sheet_client, "_header_cache"):
+        sheet_client._header_cache.clear()
+
+
+def migrate_trailing_headers(sheet_client: Any) -> None:
+    """Append canonical trailing headers without moving or relabeling existing data columns."""
+    from src.sheets import with_quota_backoff
+
+    for spec in CANONICAL_SCHEMA.values():
+        required_rows = max(1000, spec.header_row + 10)
+        required_cols = len(spec.headers)
+        worksheet = _ensure_schema_worksheet(
+            sheet_client,
+            spec.worksheet_name,
+            rows=required_rows,
+            cols=required_cols,
+        )
+        _ensure_grid_capacity(
+            worksheet,
+            rows=required_rows,
+            cols=required_cols,
+            worksheet_name=spec.worksheet_name,
+        )
+        current = _trim(worksheet.row_values(spec.header_row))
+        if current == spec.headers:
+            continue
+        if not current:
+            start_index = 1
+            missing = list(spec.headers)
+        else:
+            current_normalized = [normalize_header_name(header) for header in current]
+            expected_prefix = [normalize_header_name(header) for header in spec.headers[: len(current)]]
+            if current_normalized != expected_prefix:
+                raise SchemaValidationError(
+                    f"Worksheet {spec.worksheet_name} cannot be migrated safely because existing headers are not a canonical prefix"
+                )
+            start_index = len(current) + 1
+            missing = spec.headers[len(current) :]
+        if not missing:
+            continue
+        end_index = start_index + len(missing) - 1
+        cell_range = f"{_column_name(start_index)}{spec.header_row}:{_column_name(end_index)}{spec.header_row}"
+        with_quota_backoff(
+            lambda worksheet=worksheet, cell_range=cell_range, missing=missing: worksheet.update(
+                range_name=cell_range,
+                values=[missing],
+                value_input_option="USER_ENTERED",
+            ),
+            operation_name=f"migrate trailing headers {spec.worksheet_name}",
+        )
+
+    metadata = _metadata(sheet_client)
+    timezone = str((metadata.get("properties") or {}).get("timeZone") or "")
+    if timezone != EXPECTED_TIMEZONE:
+        with_quota_backoff(
+            lambda: sheet_client.workbook.batch_update(
+                {"requests": [{"updateSpreadsheetProperties": {"properties": {"timeZone": EXPECTED_TIMEZONE}, "fields": "timeZone"}}]}
+            ),
+            operation_name="migrate workbook timezone",
+        )
+    _clear_header_cache(sheet_client)
+
+
 def repair_headers(sheet_client: Any) -> None:
     from src.sheets import with_quota_backoff
 
     for spec in CANONICAL_SCHEMA.values():
-        worksheet = _ensure_schema_worksheet(sheet_client, spec.worksheet_name, rows=max(1000, spec.header_row + 10), cols=len(spec.headers))
+        required_rows = max(1000, spec.header_row + 10)
+        worksheet = _ensure_schema_worksheet(
+            sheet_client,
+            spec.worksheet_name,
+            rows=required_rows,
+            cols=len(spec.headers),
+        )
         current = _trim(worksheet.row_values(spec.header_row))
         width = max(len(current), len(spec.headers), 1)
+        _ensure_grid_capacity(
+            worksheet,
+            rows=required_rows,
+            cols=width,
+            worksheet_name=spec.worksheet_name,
+        )
         values = [*spec.headers, *[""] * (width - len(spec.headers))]
         cell_range = f"A{spec.header_row}:{_column_name(width)}{spec.header_row}"
         with_quota_backoff(
@@ -198,8 +294,7 @@ def repair_headers(sheet_client: Any) -> None:
         ),
         operation_name="repair workbook timezone",
     )
-    if hasattr(sheet_client, "_header_cache"):
-        sheet_client._header_cache.clear()
+    _clear_header_cache(sheet_client)
 
 
 def _load_sheet_client() -> Any:
@@ -212,15 +307,18 @@ def _load_sheet_client() -> Any:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Validate or repair Job Market Tracker workbook schema")
     parser.add_argument("--validate", action="store_true", help="Validate workbook tab headers and timezone")
+    parser.add_argument("--migrate", action="store_true", help="Append missing canonical trailing headers without moving existing data")
     parser.add_argument("--repair-headers", action="store_true", help="Overwrite canonical header rows and set Central timezone")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    if not args.validate and not args.repair_headers:
+    if not args.validate and not args.migrate and not args.repair_headers:
         args.validate = True
     sheet_client = _load_sheet_client()
+    if args.migrate:
+        migrate_trailing_headers(sheet_client)
     if args.repair_headers:
         repair_headers(sheet_client)
     result = validate_workbook(sheet_client)

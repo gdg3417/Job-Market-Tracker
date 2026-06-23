@@ -143,12 +143,12 @@ jobs:
         shell: bash
         run: python -m src.gmail_ingestion --ensure-ledger
 
-      - name: Validate workbook schema
+      - name: Migrate and validate workbook schema
         if: steps.daily_gate.outputs.should_run == 'true'
         shell: bash
         run: |
           set -o pipefail
-          python -m src.schema --validate | tee "$RUNNER_TEMP/schema_validation.json"
+          python -m src.schema --migrate | tee "$RUNNER_TEMP/schema_validation.json"
 
       - name: Record workflow validation
         if: steps.daily_gate.outputs.should_run == 'true'

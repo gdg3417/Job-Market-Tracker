@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Iterable
 
+from src.company_context import load_company_context_map
 from src.data_quality import append_rejected_jobs, filter_jobs_for_upsert
 from src.dedupe import (
     UpsertSummary,
@@ -13,7 +15,11 @@ from src.dedupe import (
     merge_job,
     merge_source_record,
 )
+from src.gmail_context_scoring import score_gmail_jobs_with_company_context
 from src.models import JobPosting, today_iso
+from src.scoring import load_scoring_rules
+
+DEFAULT_SCORING_RULES_PATH = Path(__file__).resolve().parents[1] / "config" / "scoring_rules.yml"
 
 
 @dataclass(slots=True)
@@ -80,6 +86,54 @@ def _job_upsert_state(sheet_client: Any) -> JobUpsertState:
     return state
 
 
+def _gmail_company_contexts(sheet_client: Any) -> dict[str, dict[str, Any]]:
+    cached = getattr(sheet_client, "_gmail_company_contexts", None)
+    if isinstance(cached, dict):
+        return cached
+    contexts = load_company_context_map(sheet_client)
+    try:
+        setattr(sheet_client, "_gmail_company_contexts", contexts)
+    except (AttributeError, TypeError):
+        pass
+    return contexts
+
+
+def _gmail_scoring_rules(sheet_client: Any) -> dict[str, Any]:
+    cached = getattr(sheet_client, "_gmail_scoring_rules", None)
+    if isinstance(cached, dict):
+        return cached
+    rules = load_scoring_rules(DEFAULT_SCORING_RULES_PATH)
+    try:
+        setattr(sheet_client, "_gmail_scoring_rules", rules)
+    except (AttributeError, TypeError):
+        pass
+    return rules
+
+
+def _apply_workbook_company_context_to_gmail_jobs(
+    sheet_client: Any,
+    jobs: list[JobPosting],
+) -> list[JobPosting]:
+    gmail_indexes = [
+        index
+        for index, job in enumerate(jobs)
+        if str(job.source_primary or "").strip().lower() == "gmail_alert"
+    ]
+    if not gmail_indexes:
+        return jobs
+
+    contexts = _gmail_company_contexts(sheet_client)
+    if not contexts:
+        return jobs
+
+    rules = _gmail_scoring_rules(sheet_client)
+    gmail_jobs = [jobs[index] for index in gmail_indexes]
+    rescored = score_gmail_jobs_with_company_context(gmail_jobs, rules, contexts)
+    for index, job in zip(gmail_indexes, rescored, strict=True):
+        jobs[index] = job
+    return jobs
+
+
 def _replace_existing_job(existing_jobs: list[JobPosting], replacement: JobPosting) -> None:
     for index, job in enumerate(existing_jobs):
         if job.job_key == replacement.job_key:
@@ -133,7 +187,10 @@ def upsert_jobs(
 ) -> UpsertSummary:
     current_date = seen_date or today_iso()
     summary = UpsertSummary()
-    incoming_jobs_list = list(incoming_jobs)
+    incoming_jobs_list = _apply_workbook_company_context_to_gmail_jobs(
+        sheet_client,
+        list(incoming_jobs),
+    )
     summary.records_seen = len(incoming_jobs_list)
 
     accepted_jobs, rejected_jobs = filter_jobs_for_upsert(incoming_jobs_list)

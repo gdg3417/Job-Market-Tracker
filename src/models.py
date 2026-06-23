@@ -18,16 +18,37 @@ JOB_FIELDS = [
     "executive_exposure_score", "operating_cadence_score", "comp_score",
     "location_score", "industry_match_score", "total_score", "alert_tier",
     "score_explanation", "created_at", "updated_at",
+    "potential_priority_score", "potential_priority", "potential_priority_reason",
+    "evidence_completeness_score", "score_status", "verified_total_score",
+    "verified_alert_tier", "enrichment_status", "enrichment_priority",
+    "enrichment_last_attempted_at", "enrichment_completed_at",
+    "enrichment_source_url", "enrichment_match_confidence",
 ]
 
 VALID_JOB_STATUSES = {"open", "not_seen_once", "likely_closed", "confirmed_closed", "reopened"}
+VALID_POTENTIAL_PRIORITIES = {"high", "medium", "low", "excluded"}
+VALID_SCORE_STATUSES = {"provisional", "partially_verified", "verified", "excluded"}
+VALID_ENRICHMENT_STATUSES = {
+    "not_required",
+    "pending",
+    "in_progress",
+    "partial",
+    "enriched",
+    "ambiguous",
+    "not_found",
+    "retryable_failure",
+    "permanent_failure",
+    "closed",
+}
 OPTIONAL_INT_FIELDS = {
     "commute_estimate_minutes", "salary_min", "salary_max", "total_comp_estimate",
+    "verified_total_score", "enrichment_match_confidence",
 }
 INT_FIELDS = {
     "missed_count", "days_open", "fit_score", "p_and_l_path_score",
     "growth_ownership_score", "executive_exposure_score", "operating_cadence_score",
     "comp_score", "location_score", "industry_match_score", "total_score",
+    "potential_priority_score", "evidence_completeness_score",
 }
 
 
@@ -174,6 +195,19 @@ class JobPosting:
     score_explanation: str = ""
     created_at: str = field(default_factory=utc_now_iso)
     updated_at: str = field(default_factory=utc_now_iso)
+    potential_priority_score: int = 0
+    potential_priority: str = ""
+    potential_priority_reason: str = ""
+    evidence_completeness_score: int = 0
+    score_status: str = ""
+    verified_total_score: int | None = None
+    verified_alert_tier: str = ""
+    enrichment_status: str = ""
+    enrichment_priority: str = ""
+    enrichment_last_attempted_at: str = ""
+    enrichment_completed_at: str = ""
+    enrichment_source_url: str = ""
+    enrichment_match_confidence: int | None = None
 
     def __post_init__(self) -> None:
         for field_name in OPTIONAL_INT_FIELDS:
@@ -184,6 +218,33 @@ class JobPosting:
             self.status = "open"
         if not self.currency:
             self.currency = "USD"
+
+        explanation = str(self.score_explanation or "").lower()
+        if self.potential_priority not in VALID_POTENTIAL_PRIORITIES:
+            self.potential_priority = "excluded" if self.alert_tier == "exclude" else "low"
+        if self.score_status not in VALID_SCORE_STATUSES:
+            if self.alert_tier == "exclude" or "hard_exclude=true" in explanation:
+                self.score_status = "excluded"
+            elif "manual_review=true" in explanation:
+                self.score_status = "provisional"
+            elif self.alert_tier not in {"", "unscored"}:
+                self.score_status = "verified"
+            else:
+                self.score_status = "provisional"
+        if self.score_status == "verified":
+            if self.verified_total_score is None:
+                self.verified_total_score = self.total_score
+            if not self.verified_alert_tier:
+                self.verified_alert_tier = self.alert_tier
+        elif self.score_status == "excluded":
+            if self.verified_total_score is None:
+                self.verified_total_score = 0
+            if not self.verified_alert_tier:
+                self.verified_alert_tier = "exclude"
+        if self.enrichment_status not in VALID_ENRICHMENT_STATUSES:
+            self.enrichment_status = "not_required"
+        if self.enrichment_priority not in {"", "high", "medium", "low"}:
+            self.enrichment_priority = ""
         self.days_open = days_between(self.first_seen_date, self.closed_date or self.last_seen_date)
 
     @property

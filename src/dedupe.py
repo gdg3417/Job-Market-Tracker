@@ -42,6 +42,12 @@ SCORE_FIELDS = {
     "score_explanation",
 }
 
+POTENTIAL_FIELDS = {
+    "potential_priority_score",
+    "potential_priority",
+    "potential_priority_reason",
+}
+
 JOB_OVERWRITE_FIELDS = [
     "company",
     "title",
@@ -56,22 +62,26 @@ JOB_OVERWRITE_FIELDS = [
     "description_text",
     "role_family",
     "role_level",
-    "fit_score",
-    "p_and_l_path_score",
-    "growth_ownership_score",
-    "executive_exposure_score",
-    "operating_cadence_score",
-    "comp_score",
-    "location_score",
-    "industry_match_score",
-    "total_score",
-    "alert_tier",
-    "score_explanation",
+    *sorted(SCORE_FIELDS),
+    *sorted(POTENTIAL_FIELDS),
 ]
 
 SOURCE_PRIMARY_FIELDS = ["source_primary", "source_type", "source", "ats_platform"]
 SOURCE_JOB_ID_FIELDS = ["source_job_id", "job_id", "posting_id", "requisition_id"]
 SOURCE_URL_FIELDS = ["canonical_url", "source_url", "url", "hosted_url", "absolute_url"]
+SCORE_STATUS_RANK = {"provisional": 1, "partially_verified": 2, "verified": 3, "excluded": 4}
+ENRICHMENT_STATUS_RANK = {
+    "not_required": 0,
+    "pending": 1,
+    "in_progress": 2,
+    "not_found": 2,
+    "retryable_failure": 2,
+    "partial": 3,
+    "ambiguous": 3,
+    "enriched": 4,
+    "permanent_failure": 4,
+    "closed": 5,
+}
 
 
 @dataclass(slots=True)
@@ -102,7 +112,6 @@ def _row_get(row: dict[str, Any], *candidate_names: str) -> Any:
     for name in candidate_names:
         if name in row:
             return row.get(name)
-
     normalized_row = {_header_key(key): value for key, value in row.items()}
     for name in candidate_names:
         value = normalized_row.get(_header_key(name))
@@ -141,9 +150,10 @@ def source_signature(job: JobPosting) -> str:
 
 
 def source_signature_from_row(row: dict[str, Any]) -> str:
-    source_primary = _row_get(row, *SOURCE_PRIMARY_FIELDS)
-    source_job_id = _row_get(row, *SOURCE_JOB_ID_FIELDS)
-    return source_signature_from_parts(source_primary, source_job_id)
+    return source_signature_from_parts(
+        _row_get(row, *SOURCE_PRIMARY_FIELDS),
+        _row_get(row, *SOURCE_JOB_ID_FIELDS),
+    )
 
 
 def source_url_from_row(row: dict[str, Any]) -> str:
@@ -224,7 +234,6 @@ def merge_source_record(existing: dict[str, Any], incoming: dict[str, Any], seen
         incoming_value = incoming.get(field_name)
         if _has_value(incoming_value):
             merged[field_name] = incoming_value
-
     merged["first_seen_date"] = _row_get(existing, "first_seen_date", "first seen date") or incoming.get("first_seen_date", "")
     merged["created_at"] = _row_get(existing, "created_at", "created at") or incoming.get("created_at", "")
     merged["last_seen_date"] = seen_date or incoming.get("last_seen_date") or today_iso()
@@ -244,17 +253,14 @@ def find_source_row_match(
     for row_number, row in existing_sources:
         if source_key and _row_get(row, "source_key", "source key") == source_key:
             return SourceRowMatch(row_number=row_number, record=row)
-
     if new_signature:
         for row_number, row in existing_sources:
             if new_signature == source_signature_from_row(row):
                 return SourceRowMatch(row_number=row_number, record=row)
-
     if new_source and new_url:
         for row_number, row in existing_sources:
             if new_source == source_primary_from_row(row) and new_url == source_url_from_row(row):
                 return SourceRowMatch(row_number=row_number, record=row)
-
     return None
 
 
@@ -277,7 +283,6 @@ def find_duplicate(
                 matched_job = job_by_key.get(job_key_from_row(row))
                 if matched_job is not None:
                     return matched_job
-
         for existing in existing_job_list:
             if new_source_signature == source_signature(existing):
                 return existing
@@ -289,7 +294,6 @@ def find_duplicate(
                 matched_job = job_by_key.get(job_key_from_row(row))
                 if matched_job is not None:
                     return matched_job
-
         for existing in existing_job_list:
             if new_url == canonical_url_key(existing.canonical_url):
                 return existing
@@ -313,7 +317,6 @@ def find_duplicate(
             description_score = fuzz.token_set_ratio(new_description, normalize_key_part(existing.description_text))
             if title_company_score >= threshold and description_score >= description_threshold:
                 return existing
-
     return None
 
 
@@ -326,18 +329,84 @@ def is_duplicate(
     return find_duplicate(new_job, existing_jobs, existing_sources=existing_sources, threshold=threshold) is not None
 
 
+def _merge_priority_and_evidence(
+    merged: JobPosting,
+    incoming: JobPosting,
+    *,
+    incoming_is_scored: bool,
+) -> None:
+    existing_evidence = merged.evidence_completeness_score
+    incoming_evidence = incoming.evidence_completeness_score
+    existing_rank = SCORE_STATUS_RANK.get(merged.score_status, 0)
+    incoming_rank = SCORE_STATUS_RANK.get(incoming.score_status, 0)
+    incoming_replaces_evidence = incoming_rank > existing_rank or (
+        incoming_rank == existing_rank and incoming_evidence >= existing_evidence
+    )
+
+    can_replace_potential = incoming.score_status == "excluded" or (
+        merged.score_status != "excluded"
+        and incoming.potential_priority_score >= merged.potential_priority_score
+    )
+    if incoming_is_scored and can_replace_potential:
+        for field_name in POTENTIAL_FIELDS:
+            incoming_value = getattr(incoming, field_name)
+            if _has_value(incoming_value):
+                setattr(merged, field_name, incoming_value)
+
+    if incoming_is_scored:
+        if incoming_replaces_evidence:
+            merged.score_status = incoming.score_status
+            merged.evidence_completeness_score = incoming_evidence
+            if incoming.score_status in {"verified", "excluded"}:
+                merged.verified_total_score = incoming.verified_total_score
+                merged.verified_alert_tier = incoming.verified_alert_tier
+        elif incoming_evidence > existing_evidence:
+            merged.evidence_completeness_score = incoming_evidence
+
+    existing_enrichment_rank = ENRICHMENT_STATUS_RANK.get(merged.enrichment_status, 0)
+    incoming_enrichment_rank = ENRICHMENT_STATUS_RANK.get(incoming.enrichment_status, 0)
+    if incoming_enrichment_rank >= existing_enrichment_rank:
+        for field_name in [
+            "enrichment_status",
+            "enrichment_priority",
+            "enrichment_last_attempted_at",
+            "enrichment_completed_at",
+            "enrichment_source_url",
+            "enrichment_match_confidence",
+        ]:
+            incoming_value = getattr(incoming, field_name)
+            if _has_value(incoming_value) or field_name in {"enrichment_status", "enrichment_priority"}:
+                setattr(merged, field_name, incoming_value)
+
+
 def merge_job(existing: JobPosting, incoming: JobPosting, seen_date: str | None = None) -> JobPosting:
     ensure_job_key(existing)
     ensure_job_key(incoming)
     merged = JobPosting.from_dict(existing.to_dict())
 
     incoming_is_scored = incoming.total_score > 0 or incoming.alert_tier != "unscored"
+    protect_existing_score = (
+        existing.score_status == "excluded" and incoming.score_status != "excluded"
+    ) or (
+        existing.score_status == "verified"
+        and (
+            incoming.score_status not in {"verified", "excluded"}
+            or (
+                incoming.score_status == "verified"
+                and incoming.evidence_completeness_score < existing.evidence_completeness_score
+            )
+        )
+    )
     for field_name in JOB_OVERWRITE_FIELDS:
-        if field_name in SCORE_FIELDS and not incoming_is_scored:
+        if field_name in POTENTIAL_FIELDS:
+            continue
+        if field_name in SCORE_FIELDS and (not incoming_is_scored or protect_existing_score):
             continue
         incoming_value = getattr(incoming, field_name)
         if _has_value(incoming_value):
             setattr(merged, field_name, incoming_value)
+
+    _merge_priority_and_evidence(merged, incoming, incoming_is_scored=incoming_is_scored)
 
     for field_name in ["source_primary", "source_job_id", "canonical_url"]:
         if not _has_value(getattr(merged, field_name)) and _has_value(getattr(incoming, field_name)):
