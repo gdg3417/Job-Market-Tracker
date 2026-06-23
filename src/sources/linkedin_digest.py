@@ -136,6 +136,10 @@ def _is_alert_metadata_line(value: str) -> bool:
 
 def _plain_lines(value: str) -> list[str]:
     text = _decoded(value)
+    text = MARKDOWN_LINK_PATTERN.sub(lambda match: match.group("label"), text)
+    text = HTML_LINK_PATTERN.sub(lambda match: match.group("label"), text)
+    # Keep text that precedes a malformed Markdown URL while discarding the URL.
+    text = re.sub(r"\]\(https?://[^\r\n]*", "", text, flags=re.IGNORECASE)
     text = BREAK_PATTERN.sub("\n", text)
     text = BLOCK_END_PATTERN.sub("\n", text)
     text = re.sub(r"<[^>]+>", " ", text)
@@ -394,12 +398,23 @@ def _parse_linkedin_digest_source(source: str) -> list[LinkedInDigestCard]:
         context_by_id[link.job_id].append(_context_lines(text, link, previous_direct_end))
         previous_direct_end = max(previous_direct_end, link.end)
 
+    first_start_by_id = {
+        job_id: min(link.start for link in grouped[job_id])
+        for job_id in order
+    }
+    segment_by_id: dict[str, list[str]] = {}
+    for index, job_id in enumerate(order):
+        segment_start = first_start_by_id[job_id]
+        segment_end = first_start_by_id[order[index + 1]] if index + 1 < len(order) else len(text)
+        segment_by_id[job_id] = _plain_lines(text[segment_start:segment_end])[:20]
+
     cards: list[LinkedInDigestCard] = []
     for job_id in order:
         card_links = grouped[job_id]
         label_groups = [_plain_lines(link.label) for link in card_links if link.label]
+        segment_groups = [segment_by_id[job_id]] if segment_by_id[job_id] else []
         context_groups = context_by_id[job_id]
-        candidate_groups = label_groups + context_groups
+        candidate_groups = label_groups + segment_groups + context_groups
 
         title = company = location = ""
         rejection_reason = "missing_title_or_company"
