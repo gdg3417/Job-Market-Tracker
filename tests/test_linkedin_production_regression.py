@@ -60,6 +60,42 @@ def test_production_plain_text_view_job_blocks_keep_preceding_card_identity():
     assert all(rejection.job.canonical_url != by_id["4430066274"].url for rejection in rejected_jobs)
 
 
+def test_plain_text_urls_before_card_text_keep_following_segment_identity():
+    email = GmailAlertEmail(
+        message_id="url-before-card-text",
+        subject="LinkedIn jobs digest",
+        sender="LinkedIn Job Alerts <jobalerts-noreply@linkedin.com>",
+        received_at="Sun, 21 Jun 2026 18:44:26 +0000",
+        body_text="""
+        https://www.linkedin.com/comm/jobs/view/7000000101/?trackingId=first
+        Director, Product Strategy
+        Acme Corp
+        Dallas, TX
+
+        https://www.linkedin.com/comm/jobs/view/7000000102/?trackingId=second
+        Senior Manager, Revenue Strategy
+        Beta Co
+        Plano, TX
+        """,
+    )
+
+    by_id = {
+        alert.source_job_id.removeprefix("linkedin-"): alert
+        for alert in parse_job_alert_email(email)
+    }
+
+    assert (by_id["7000000101"].title, by_id["7000000101"].company, by_id["7000000101"].location) == (
+        "Director, Product Strategy",
+        "Acme Corp",
+        "Dallas, TX",
+    )
+    assert (by_id["7000000102"].title, by_id["7000000102"].company, by_id["7000000102"].location) == (
+        "Senior Manager, Revenue Strategy",
+        "Beta Co",
+        "Plano, TX",
+    )
+
+
 def test_production_shaped_toyota_lead_card_keeps_job_identity():
     email = GmailAlertEmail(
         message_id="19eeb7f9ad20df2f",
