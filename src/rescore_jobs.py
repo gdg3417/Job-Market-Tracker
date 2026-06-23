@@ -20,31 +20,49 @@ class RescoreJobsResult:
     jobs_read: int = 0
     gmail_open_jobs: int = 0
     jobs_updated: int = 0
-    manual_review_jobs: int = 0
+    provisional_jobs: int = 0
+    partially_verified_jobs: int = 0
+    verified_jobs: int = 0
+    excluded_jobs: int = 0
+    high_potential_jobs: int = 0
+    enrichment_pending_jobs: int = 0
     dashboard_refreshed: bool = False
 
+    @property
+    def manual_review_jobs(self) -> int:
+        return self.high_potential_jobs
+
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        values = asdict(self)
+        values["manual_review_jobs"] = self.manual_review_jobs
+        return values
 
 
 def _is_open_gmail_job(job: JobPosting) -> bool:
     return job.source_primary.strip().lower() == GMAIL_SOURCE and job.status in OPEN_STATUSES
 
 
-def _needs_manual_review(job: JobPosting) -> bool:
-    explanation = job.score_explanation.lower()
-    return (
-        "manual_review=true" in explanation
-        and "review_reason=sparse_gmail_high_signal_title" in explanation
-    )
+def _increment_state_counts(result: RescoreJobsResult, job: JobPosting) -> None:
+    if job.score_status == "provisional":
+        result.provisional_jobs += 1
+    elif job.score_status == "partially_verified":
+        result.partially_verified_jobs += 1
+    elif job.score_status == "verified":
+        result.verified_jobs += 1
+    elif job.score_status == "excluded":
+        result.excluded_jobs += 1
+    if job.potential_priority == "high":
+        result.high_potential_jobs += 1
+    if job.enrichment_status == "pending":
+        result.enrichment_pending_jobs += 1
 
 
 def build_rescore_run_record(result: RescoreJobsResult) -> dict[str, Any]:
     now = utc_now_iso()
     run_timestamp = now.replace(":", "").replace("-", "").replace("+0000", "Z").replace("+00:00", "Z")
     return {
-        "run_id": f"sprint22_gmail_rescore_{run_timestamp}",
-        "run_type": "sprint_22_sparse_gmail_rescore",
+        "run_id": f"sprint26_gmail_rescore_{run_timestamp}",
+        "run_type": "sprint_26_potential_priority_rescore",
         "source_type": GMAIL_SOURCE,
         "source_name": "Open Gmail jobs",
         "status": "success",
@@ -84,8 +102,7 @@ def rescore_open_gmail_jobs(
         scored = score_job(job, scoring_rules)
         sheet_client.update_job(row_number, scored)
         result.jobs_updated += 1
-        if _needs_manual_review(scored):
-            result.manual_review_jobs += 1
+        _increment_state_counts(result, scored)
 
     if refresh_dashboard:
         apply_dashboard_and_digest(sheet_client, append_run=False)
@@ -99,7 +116,7 @@ def rescore_open_gmail_jobs(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Re-score existing open Gmail jobs and refresh Dashboard and Digest"
+        description="Re-score existing open Gmail jobs into Sprint 26 potential-priority and evidence states"
     )
     parser.add_argument(
         "--no-refresh",
@@ -109,7 +126,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--no-run-log",
         action="store_true",
-        help="Do not append a Sprint 22 record to Runs",
+        help="Do not append a Sprint 26 record to Runs",
     )
     return parser.parse_args()
 
@@ -125,7 +142,7 @@ def main() -> None:
         refresh_dashboard=not args.no_refresh,
         append_run=not args.no_run_log,
     )
-    print(json.dumps({"run_mode": "sprint_22_sparse_gmail_rescore", "status": "success", **result.to_dict()}, indent=2))
+    print(json.dumps({"run_mode": "sprint_26_potential_priority_rescore", "status": "success", **result.to_dict()}, indent=2))
 
 
 if __name__ == "__main__":
