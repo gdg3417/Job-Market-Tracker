@@ -329,24 +329,30 @@ def is_duplicate(
     return find_duplicate(new_job, existing_jobs, existing_sources=existing_sources, threshold=threshold) is not None
 
 
-def _merge_priority_and_evidence(merged: JobPosting, incoming: JobPosting) -> None:
-    for field_name in POTENTIAL_FIELDS:
-        incoming_value = getattr(incoming, field_name)
-        if _has_value(incoming_value):
-            setattr(merged, field_name, incoming_value)
+def _merge_priority_and_evidence(
+    merged: JobPosting,
+    incoming: JobPosting,
+    *,
+    incoming_is_scored: bool,
+) -> None:
+    if incoming_is_scored:
+        for field_name in POTENTIAL_FIELDS:
+            incoming_value = getattr(incoming, field_name)
+            if _has_value(incoming_value):
+                setattr(merged, field_name, incoming_value)
 
-    existing_evidence = merged.evidence_completeness_score
-    incoming_evidence = incoming.evidence_completeness_score
-    existing_rank = SCORE_STATUS_RANK.get(merged.score_status, 0)
-    incoming_rank = SCORE_STATUS_RANK.get(incoming.score_status, 0)
-    if incoming_rank > existing_rank or (incoming_rank == existing_rank and incoming_evidence >= existing_evidence):
-        merged.score_status = incoming.score_status
-        merged.evidence_completeness_score = incoming_evidence
-        if incoming.score_status in {"verified", "excluded"}:
-            merged.verified_total_score = incoming.verified_total_score
-            merged.verified_alert_tier = incoming.verified_alert_tier
-    elif incoming_evidence > existing_evidence:
-        merged.evidence_completeness_score = incoming_evidence
+        existing_evidence = merged.evidence_completeness_score
+        incoming_evidence = incoming.evidence_completeness_score
+        existing_rank = SCORE_STATUS_RANK.get(merged.score_status, 0)
+        incoming_rank = SCORE_STATUS_RANK.get(incoming.score_status, 0)
+        if incoming_rank > existing_rank or (incoming_rank == existing_rank and incoming_evidence >= existing_evidence):
+            merged.score_status = incoming.score_status
+            merged.evidence_completeness_score = incoming_evidence
+            if incoming.score_status in {"verified", "excluded"}:
+                merged.verified_total_score = incoming.verified_total_score
+                merged.verified_alert_tier = incoming.verified_alert_tier
+        elif incoming_evidence > existing_evidence:
+            merged.evidence_completeness_score = incoming_evidence
 
     existing_enrichment_rank = ENRICHMENT_STATUS_RANK.get(merged.enrichment_status, 0)
     incoming_enrichment_rank = ENRICHMENT_STATUS_RANK.get(incoming.enrichment_status, 0)
@@ -380,7 +386,7 @@ def merge_job(existing: JobPosting, incoming: JobPosting, seen_date: str | None 
         if _has_value(incoming_value):
             setattr(merged, field_name, incoming_value)
 
-    _merge_priority_and_evidence(merged, incoming)
+    _merge_priority_and_evidence(merged, incoming, incoming_is_scored=incoming_is_scored)
 
     for field_name in ["source_primary", "source_job_id", "canonical_url"]:
         if not _has_value(getattr(merged, field_name)) and _has_value(getattr(incoming, field_name)):
