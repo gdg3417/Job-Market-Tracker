@@ -20,6 +20,7 @@ ACTIVE_ENRICHMENT_STATUSES = {
     "permanent_failure",
     "closed",
 }
+INCOMPLETE_EVIDENCE_VALUES = {"", "unknown", "unspecified", "not specified", "n/a", "na", "none"}
 
 
 def load_potential_priority_rules(path: str | Path) -> dict[str, Any]:
@@ -204,8 +205,7 @@ def calculate_evidence_completeness(
         total += _safe_int(weights.get("company_context"), 10)
         evidence.append("company context")
 
-    incomplete_values = {"", "unknown", "unspecified", "not specified", "n/a", "na", "none"}
-    if _normalize(job.remote_status) not in incomplete_values and _normalize(job.work_model) not in incomplete_values:
+    if _normalize(job.remote_status) not in INCOMPLETE_EVIDENCE_VALUES and _normalize(job.work_model) not in INCOMPLETE_EVIDENCE_VALUES:
         total += _safe_int(weights.get("work_model"), 10)
         evidence.append("work model")
 
@@ -247,7 +247,12 @@ def _score_status(
         job.description_text
     ) >= _safe_int(evidence_rules.get("partial_description_min_words"), 8)
     credible_identity = bool(str(job.title or "").strip() and str(job.company or "").strip() and _credible_url(job.canonical_url))
-    if evidence_score >= complete_threshold and meaningful_description and credible_identity:
+    credible_location = bool(
+        str(job.location or "").strip()
+        or _normalize(job.remote_status) not in INCOMPLETE_EVIDENCE_VALUES
+        or _normalize(job.work_model) not in INCOMPLETE_EVIDENCE_VALUES
+    )
+    if evidence_score >= complete_threshold and meaningful_description and credible_identity and credible_location:
         return "verified"
     if evidence_score >= partial_threshold:
         return "partially_verified"
