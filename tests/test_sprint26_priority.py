@@ -255,6 +255,100 @@ def test_unscored_duplicate_does_not_downgrade_existing_priority():
     assert merged.enrichment_priority == "high"
 
 
+def test_weaker_verified_duplicate_does_not_replace_stronger_verified_score():
+    existing = JobPosting(
+        job_key="job-strong-verified",
+        company="Acme Industrial",
+        title="Director, Revenue Strategy",
+        location="Plano, TX",
+        canonical_url="https://example.com/jobs/strong-verified",
+        total_score=88,
+        alert_tier="immediate_review",
+        score_explanation="total=88; tier=immediate_review",
+        potential_priority_score=90,
+        potential_priority="high",
+        evidence_completeness_score=90,
+        score_status="verified",
+        verified_total_score=88,
+        verified_alert_tier="immediate_review",
+        enrichment_status="enriched",
+    )
+    incoming = JobPosting(
+        job_key="job-strong-verified",
+        company="Acme Industrial",
+        title="Director, Revenue Strategy",
+        location="Plano, TX",
+        canonical_url="https://example.com/jobs/strong-verified",
+        total_score=76,
+        alert_tier="strong_fit",
+        score_explanation="total=76; tier=strong_fit",
+        potential_priority_score=82,
+        potential_priority="high",
+        evidence_completeness_score=70,
+        score_status="verified",
+        verified_total_score=76,
+        verified_alert_tier="strong_fit",
+        enrichment_status="enriched",
+    )
+
+    merged = merge_job(existing, incoming, seen_date="2026-06-23")
+
+    assert merged.total_score == 88
+    assert merged.alert_tier == "immediate_review"
+    assert merged.score_explanation == "total=88; tier=immediate_review"
+    assert merged.evidence_completeness_score == 90
+    assert merged.verified_total_score == 88
+    assert merged.verified_alert_tier == "immediate_review"
+    assert merged.potential_priority_score == 90
+
+
+def test_excluded_duplicate_replaces_verified_score_consistently():
+    existing = JobPosting(
+        job_key="job-now-excluded",
+        company="Acme Industrial",
+        title="Director, Revenue Strategy",
+        location="Plano, TX",
+        canonical_url="https://example.com/jobs/now-excluded",
+        total_score=88,
+        alert_tier="immediate_review",
+        score_explanation="total=88; tier=immediate_review",
+        potential_priority_score=90,
+        potential_priority="high",
+        evidence_completeness_score=90,
+        score_status="verified",
+        verified_total_score=88,
+        verified_alert_tier="immediate_review",
+    )
+    incoming = JobPosting(
+        job_key="job-now-excluded",
+        company="Acme Industrial",
+        title="Director, Revenue Strategy",
+        location="Plano, TX",
+        canonical_url="https://example.com/jobs/now-excluded",
+        total_score=0,
+        alert_tier="exclude",
+        score_explanation="total=0; tier=exclude; hard_exclude=true",
+        potential_priority_score=0,
+        potential_priority="excluded",
+        potential_priority_reason="hard exclusion",
+        evidence_completeness_score=90,
+        score_status="excluded",
+        verified_total_score=0,
+        verified_alert_tier="exclude",
+        enrichment_status="not_required",
+    )
+
+    merged = merge_job(existing, incoming, seen_date="2026-06-23")
+
+    assert merged.total_score == 0
+    assert merged.alert_tier == "exclude"
+    assert merged.score_status == "excluded"
+    assert merged.verified_total_score == 0
+    assert merged.verified_alert_tier == "exclude"
+    assert merged.potential_priority == "excluded"
+    assert merged.potential_priority_score == 0
+
+
 def test_sprint26_jobs_fields_are_appended_after_legacy_columns():
     assert JOB_FIELDS[34:36] == ["created_at", "updated_at"]
     assert JOB_FIELDS[36:] == [
