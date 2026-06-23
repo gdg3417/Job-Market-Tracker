@@ -20,6 +20,7 @@ class RescoreJobsResult:
     jobs_read: int = 0
     gmail_open_jobs: int = 0
     jobs_updated: int = 0
+    manual_review_jobs: int = 0
     provisional_jobs: int = 0
     partially_verified_jobs: int = 0
     verified_jobs: int = 0
@@ -28,14 +29,8 @@ class RescoreJobsResult:
     enrichment_pending_jobs: int = 0
     dashboard_refreshed: bool = False
 
-    @property
-    def manual_review_jobs(self) -> int:
-        return self.high_potential_jobs
-
     def to_dict(self) -> dict[str, Any]:
-        values = asdict(self)
-        values["manual_review_jobs"] = self.manual_review_jobs
-        return values
+        return asdict(self)
 
 
 def _is_open_gmail_job(job: JobPosting) -> bool:
@@ -43,6 +38,8 @@ def _is_open_gmail_job(job: JobPosting) -> bool:
 
 
 def _increment_state_counts(result: RescoreJobsResult, job: JobPosting) -> None:
+    if "manual_review=true" in str(job.score_explanation or "").lower():
+        result.manual_review_jobs += 1
     if job.score_status == "provisional":
         result.provisional_jobs += 1
     elif job.score_status == "partially_verified":
@@ -62,7 +59,7 @@ def build_rescore_run_record(result: RescoreJobsResult) -> dict[str, Any]:
     run_timestamp = now.replace(":", "").replace("-", "").replace("+0000", "Z").replace("+00:00", "Z")
     return {
         "run_id": f"sprint26_gmail_rescore_{run_timestamp}",
-        "run_type": "sprint_26_potential_priority_rescore",
+        "run_type": "sprint_22_sparse_gmail_rescore",
         "source_type": GMAIL_SOURCE,
         "source_name": "Open Gmail jobs",
         "status": "success",
