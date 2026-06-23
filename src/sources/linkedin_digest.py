@@ -414,7 +414,16 @@ def _parse_linkedin_digest_source(source: str) -> list[LinkedInDigestCard]:
         label_groups = [_plain_lines(link.label) for link in card_links if link.label]
         segment_groups = [segment_by_id[job_id]] if segment_by_id[job_id] else []
         context_groups = context_by_id[job_id]
-        candidate_groups = label_groups + segment_groups + context_groups
+
+        # Plain-text LinkedIn digests place title/company/location before a
+        # label-free "View job" URL. In that shape the context belongs to the
+        # current URL, while the following segment belongs to the next card.
+        # Markdown/HTML card links have visible labels and may place the card
+        # text after a company-logo link, so retain segment-first fallback there.
+        if label_groups:
+            candidate_groups = label_groups + segment_groups + context_groups
+        else:
+            candidate_groups = context_groups + segment_groups
 
         title = company = location = ""
         rejection_reason = "missing_title_or_company"
