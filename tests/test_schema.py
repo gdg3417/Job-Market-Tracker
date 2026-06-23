@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+import src.schema as schema_module
 from src.schema import (
     CANONICAL_SCHEMA,
     DIGEST_HEADERS,
@@ -10,8 +11,50 @@ from src.schema import (
     HeaderSpec,
     SchemaValidationError,
     compare_headers,
+    migrate_trailing_headers,
     validate_record_headers_for_write,
 )
+
+
+class _FakeWorksheet:
+    def __init__(self) -> None:
+        self.row_count = 1000
+        self.col_count = 2
+        self.headers = ["a", "b"]
+        self.resize_calls: list[tuple[int, int]] = []
+        self.update_calls: list[tuple[str, list[list[str]], str]] = []
+
+    def resize(self, *, rows: int, cols: int) -> None:
+        self.resize_calls.append((rows, cols))
+        self.row_count = rows
+        self.col_count = cols
+
+    def row_values(self, row_number: int) -> list[str]:
+        assert row_number == 1
+        return list(self.headers)
+
+    def update(self, *, range_name: str, values: list[list[str]], value_input_option: str) -> None:
+        self.update_calls.append((range_name, values, value_input_option))
+        self.headers.extend(values[0])
+
+
+class _FakeWorkbook:
+    def fetch_sheet_metadata(self) -> dict:
+        return {"properties": {"timeZone": EXPECTED_TIMEZONE}}
+
+    def batch_update(self, request: dict) -> None:
+        raise AssertionError(f"Unexpected batch update: {request}")
+
+
+class _FakeSheetClient:
+    def __init__(self, worksheet: _FakeWorksheet) -> None:
+        self.worksheet = worksheet
+        self.workbook = _FakeWorkbook()
+        self._header_cache = {"Example": ["a", "b"]}
+
+    def ensure_worksheet(self, worksheet_name: str, *, rows: int, cols: int) -> _FakeWorksheet:
+        assert worksheet_name == "Example"
+        return self.worksheet
 
 
 def test_runs_schema_contains_full_richer_run_record_shape():
@@ -88,3 +131,20 @@ def test_validate_record_headers_for_write_rejects_unknown_record_keys():
 
 def test_validate_record_headers_for_write_accepts_partial_record_when_headers_are_canonical():
     validate_record_headers_for_write("Runs", RUNS_HEADERS, {"run_id": "abc", "status": "success"})
+
+
+def test_migrate_trailing_headers_expands_grid_before_writing(monkeypatch: pytest.MonkeyPatch):
+    worksheet = _FakeWorksheet()
+    sheet_client = _FakeSheetClient(worksheet)
+    monkeypatch.setattr(
+        schema_module,
+        "CANONICAL_SCHEMA",
+        {"Example": HeaderSpec("Example", ["a", "b", "c"])},
+    )
+
+    migrate_trailing_headers(sheet_client)
+
+    assert worksheet.resize_calls == [(1000, 3)]
+    assert worksheet.update_calls == [("C1:C1", [["c"]], "USER_ENTERED")]
+    assert worksheet.headers == ["a", "b", "c"]
+    assert sheet_client._header_cache == {}
