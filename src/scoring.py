@@ -7,6 +7,7 @@ from typing import Any
 import yaml
 
 from src.models import JobPosting
+from src.potential_priority import apply_potential_priority, load_potential_priority_rules
 
 ScoreMatch = tuple[int, list[str]]
 DEFAULT_SPARSE_GMAIL_REVIEW_REASON = "sparse_gmail_high_signal_title"
@@ -30,6 +31,10 @@ def load_scoring_rules(path: str | Path) -> dict[str, Any]:
         sparse_values = sparse_config.get("sparse_gmail_review", sparse_config)
         if isinstance(sparse_values, dict):
             rules["sparse_gmail_review"].update(sparse_values)
+    potential_rules_path = rules_path.with_name("potential_priority_rules.yml")
+    rules["potential_priority"] = (
+        load_potential_priority_rules(potential_rules_path) if potential_rules_path.exists() else {}
+    )
     return rules
 
 
@@ -361,5 +366,11 @@ def score_job(job: JobPosting, rules: dict[str, Any], company_context: dict[str,
     job.total_score = total
     job.alert_tier = alert_tier
     job.score_explanation = "; ".join(explanation_parts)
+    apply_potential_priority(
+        job,
+        rules.get("potential_priority", {}) or {},
+        company_context=company_context,
+        hard_exclude=hard_exclude,
+    )
     job.refresh_updated_at()
     return job
