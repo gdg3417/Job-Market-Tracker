@@ -53,11 +53,12 @@ def merge_verified_evidence(
     if evidence.source_location and (_unknown(job.location) or locations_compatible(job.location, evidence.source_location)):
         _set_if_changed(job, "location", evidence.source_location, changed)
 
+    incoming_salary_present = evidence.salary_min is not None or evidence.salary_max is not None
     if evidence.salary_min is not None and job.salary_min is None:
         _set_if_changed(job, "salary_min", evidence.salary_min, changed)
     if evidence.salary_max is not None and job.salary_max is None:
         _set_if_changed(job, "salary_max", evidence.salary_max, changed)
-    if evidence.currency and (job.salary_min is not None or job.salary_max is not None):
+    if evidence.currency and incoming_salary_present and _unknown(job.currency):
         _set_if_changed(job, "currency", evidence.currency, changed)
 
     if not _unknown(evidence.remote_status):
