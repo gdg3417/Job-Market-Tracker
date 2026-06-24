@@ -215,6 +215,14 @@ class DirectLinkFetcher:
                         status_code=status_code,
                         final_url=final_url,
                     )
+                if status_code in {401, 403}:
+                    raise EnrichmentFetchError(
+                        "access_blocked",
+                        f"Direct URL returned HTTP {status_code}",
+                        retryable=False,
+                        status_code=status_code,
+                        final_url=final_url,
+                    )
                 if status_code == 429 or status_code >= 500:
                     raise EnrichmentFetchError(
                         "http_retryable",
