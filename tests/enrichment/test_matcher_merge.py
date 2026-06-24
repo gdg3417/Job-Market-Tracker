@@ -71,6 +71,42 @@ def test_mismatched_company_is_not_accepted():
     assert match.confidence < 80
 
 
+def test_same_title_and_company_at_wrong_location_is_not_automatic_match():
+    match = assess_match(job(), evidence(source_location="Austin, TX"))
+    assert match.accepted is False
+    assert match.outcome == "ambiguous"
+    assert "location conflict" in match.reasons
+
+
+def test_incompatible_location_never_overwrites_existing_location():
+    target = job()
+    source = evidence(source_location="Austin, TX")
+    merged, changed = merge_verified_evidence(target, source, match_confidence=90)
+    assert merged.location == "Plano, TX"
+    assert "location" not in changed
+
+
+def test_unsafe_canonical_url_is_not_merged():
+    target = job()
+    source = evidence(canonical_url="http://127.0.0.1/private", source_url="http://127.0.0.1/private")
+    merged, changed = merge_verified_evidence(target, source, match_confidence=90)
+    assert merged.canonical_url == "https://linkedin.example/jobs/123"
+    assert "canonical_url" not in changed
+
+
+def test_incomplete_recovered_evidence_remains_partial():
+    target = job(description_text="Extracted from Gmail job alert")
+    source = evidence(description_text="Short posting text")
+    rules = {
+        "enrichment": {"complete_evidence_threshold": 70, "partial_evidence_threshold": 40},
+        "evidence_weights": {"full_description": 30},
+        "evidence_rules": {"meaningful_description_min_words": 20, "partial_description_min_words": 8},
+    }
+    merged, _ = merge_verified_evidence(target, source, match_confidence=90, evidence_rules=rules)
+    assert merged.enrichment_status == "partial"
+    assert merged.score_status == "provisional"
+
+
 def test_shorter_direct_description_does_not_replace_stronger_existing_description():
     existing = " ".join(["Detailed responsibilities and qualifications for strategic product leadership"] * 20)
     target = job(description_text=existing, salary_min=170000)
