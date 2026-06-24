@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Iterable
 
 from src.dedupe import SOURCE_FIELDS
+from src.enrichment.models import ENRICHMENT_EVIDENCE_FIELDS, ENRICHMENT_QUEUE_FIELDS
 from src.models import JOB_FIELDS
 
 EXPECTED_TIMEZONE = "America/Chicago"
@@ -20,6 +21,8 @@ SCORING_RULES_HEADERS = "rule_id category rule_name max_points positive_signals 
 TARGET_COMPANIES_HEADERS = "target_company_id company_name parent_company industry_bucket company_size_bucket ownership_type priority_tier location_focus commute_bucket p_and_l_path_rationale role_families_to_watch score_boost_points active notes".split()
 REJECTED_JOBS_HEADERS = "rejected_id source message_id thread_id subject sender received_date title company location url confidence rejection_reason extraction_notes raw_evidence created_at updated_at".split()
 GMAIL_MESSAGES_HEADERS = "message_id thread_id subject sender received_at status attempt_count alerts_parsed jobs_accepted jobs_rejected error_message first_processed_at last_processed_at".split()
+ENRICHMENT_QUEUE_HEADERS = list(ENRICHMENT_QUEUE_FIELDS)
+ENRICHMENT_EVIDENCE_HEADERS = list(ENRICHMENT_EVIDENCE_FIELDS)
 
 
 class SchemaValidationError(ValueError):
@@ -86,6 +89,8 @@ CANONICAL_SCHEMA = {
     "Target_Companies": HeaderSpec("Target_Companies", TARGET_COMPANIES_HEADERS),
     "Rejected_Jobs": HeaderSpec("Rejected_Jobs", REJECTED_JOBS_HEADERS),
     "Gmail_Messages": HeaderSpec("Gmail_Messages", GMAIL_MESSAGES_HEADERS),
+    "Enrichment_Queue": HeaderSpec("Enrichment_Queue", ENRICHMENT_QUEUE_HEADERS),
+    "Enrichment_Evidence": HeaderSpec("Enrichment_Evidence", ENRICHMENT_EVIDENCE_HEADERS),
 }
 
 
