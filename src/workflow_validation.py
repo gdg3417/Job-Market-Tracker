@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +9,7 @@ from src.models import utc_now_iso
 from src.schema import validate_workbook_or_raise
 from src.settings import load_settings
 from src.sheets import SheetClient
+from src.workflow_output import load_json_output
 
 
 def _run_timestamp(value: str) -> str:
@@ -37,12 +37,9 @@ def _cached_validation_summary() -> dict[str, Any] | None:
     if not path.exists():
         return None
 
-    text = path.read_text(encoding="utf-8").strip()
-    if not text:
-        return None
-
-    match = re.search(r"\{.*\}\s*$", text, re.S)
-    data = json.loads(match.group(0) if match else text)
+    data = load_json_output(path)
+    if not data:
+        raise ValueError("Cached workbook schema validation output was missing or invalid")
     if not data.get("ok"):
         raise ValueError("Cached workbook schema validation did not pass")
 

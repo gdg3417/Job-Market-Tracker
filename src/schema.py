@@ -205,10 +205,11 @@ def _clear_header_cache(sheet_client: Any) -> None:
         sheet_client._header_cache.clear()
 
 
-def migrate_trailing_headers(sheet_client: Any) -> None:
-    """Append canonical trailing headers without moving or relabeling existing data columns."""
+def migrate_trailing_headers(sheet_client: Any) -> WorkbookValidationResult:
+    """Append canonical trailing headers and return validation from the same read pass."""
     from src.sheets import with_quota_backoff
 
+    results: list[HeaderValidationResult] = []
     for spec in CANONICAL_SCHEMA.values():
         required_rows = max(1000, spec.header_row + 10)
         required_cols = len(spec.headers)
@@ -225,32 +226,33 @@ def migrate_trailing_headers(sheet_client: Any) -> None:
             worksheet_name=spec.worksheet_name,
         )
         current = _trim(worksheet.row_values(spec.header_row))
-        if current == spec.headers:
-            continue
-        if not current:
-            start_index = 1
-            missing = list(spec.headers)
-        else:
-            current_normalized = [normalize_header_name(header) for header in current]
-            expected_prefix = [normalize_header_name(header) for header in spec.headers[: len(current)]]
-            if current_normalized != expected_prefix:
-                raise SchemaValidationError(
-                    f"Worksheet {spec.worksheet_name} cannot be migrated safely because existing headers are not a canonical prefix"
+        final_headers = list(current)
+        if current != spec.headers:
+            if not current:
+                start_index = 1
+                missing = list(spec.headers)
+            else:
+                current_normalized = [normalize_header_name(header) for header in current]
+                expected_prefix = [normalize_header_name(header) for header in spec.headers[: len(current)]]
+                if current_normalized != expected_prefix:
+                    raise SchemaValidationError(
+                        f"Worksheet {spec.worksheet_name} cannot be migrated safely because existing headers are not a canonical prefix"
+                    )
+                start_index = len(current) + 1
+                missing = spec.headers[len(current) :]
+            if missing:
+                end_index = start_index + len(missing) - 1
+                cell_range = f"{_column_name(start_index)}{spec.header_row}:{_column_name(end_index)}{spec.header_row}"
+                with_quota_backoff(
+                    lambda worksheet=worksheet, cell_range=cell_range, missing=missing: worksheet.update(
+                        range_name=cell_range,
+                        values=[missing],
+                        value_input_option="USER_ENTERED",
+                    ),
+                    operation_name=f"migrate trailing headers {spec.worksheet_name}",
                 )
-            start_index = len(current) + 1
-            missing = spec.headers[len(current) :]
-        if not missing:
-            continue
-        end_index = start_index + len(missing) - 1
-        cell_range = f"{_column_name(start_index)}{spec.header_row}:{_column_name(end_index)}{spec.header_row}"
-        with_quota_backoff(
-            lambda worksheet=worksheet, cell_range=cell_range, missing=missing: worksheet.update(
-                range_name=cell_range,
-                values=[missing],
-                value_input_option="USER_ENTERED",
-            ),
-            operation_name=f"migrate trailing headers {spec.worksheet_name}",
-        )
+                final_headers.extend(missing)
+        results.append(compare_headers(spec, final_headers))
 
     metadata = _metadata(sheet_client)
     timezone = str((metadata.get("properties") or {}).get("timeZone") or "")
@@ -261,7 +263,9 @@ def migrate_trailing_headers(sheet_client: Any) -> None:
             ),
             operation_name="migrate workbook timezone",
         )
+        timezone = EXPECTED_TIMEZONE
     _clear_header_cache(sheet_client)
+    return WorkbookValidationResult(timezone, EXPECTED_TIMEZONE, timezone == EXPECTED_TIMEZONE, results)
 
 
 def repair_headers(sheet_client: Any) -> None:
@@ -322,11 +326,17 @@ def main() -> None:
     if not args.validate and not args.migrate and not args.repair_headers:
         args.validate = True
     sheet_client = _load_sheet_client()
+    migration_result: WorkbookValidationResult | None = None
     if args.migrate:
-        migrate_trailing_headers(sheet_client)
+        migration_result = migrate_trailing_headers(sheet_client)
     if args.repair_headers:
         repair_headers(sheet_client)
-    result = validate_workbook(sheet_client)
+    if args.validate or args.repair_headers:
+        result = validate_workbook(sheet_client)
+    elif migration_result is not None:
+        result = migration_result
+    else:
+        result = validate_workbook(sheet_client)
     print(json.dumps(result.to_dict(), indent=2))
     if not result.ok:
         raise SystemExit(1)

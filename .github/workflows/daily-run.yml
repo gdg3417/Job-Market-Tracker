@@ -138,11 +138,6 @@ jobs:
         if: steps.daily_gate.outputs.should_run == 'true'
         run: pytest
 
-      - name: Ensure Gmail message ledger
-        if: steps.daily_gate.outputs.should_run == 'true'
-        shell: bash
-        run: python -m src.gmail_ingestion --ensure-ledger
-
       - name: Migrate and validate workbook schema
         if: steps.daily_gate.outputs.should_run == 'true'
         shell: bash
@@ -164,17 +159,15 @@ jobs:
           set -o pipefail
           python -m src.main --static-pages-smoke-test | tee "$RUNNER_TEMP/static_pages.json"
           python - <<'PY'
-          import json
           import os
-          import re
           from pathlib import Path
 
-          def load_json(path: Path) -> dict:
-              text = path.read_text(encoding="utf-8").strip()
-              match = re.search(r"\{.*\}\s*$", text, re.S)
-              return json.loads(match.group(0) if match else text)
+          from src.workflow_output import load_json_output
 
-          data = load_json(Path(os.environ["RUNNER_TEMP"]) / "static_pages.json")
+          data = load_json_output(Path(os.environ["RUNNER_TEMP"]) / "static_pages.json")
+          if not data:
+              print("::error::Static career pages did not produce valid JSON output.")
+              raise SystemExit(1)
           upsert = data.get("upsert_summary") or {}
           records_seen = int(upsert.get("records_seen") or data.get("jobs_found") or 0)
           accepted = int(upsert.get("jobs_created") or 0) + int(upsert.get("duplicates_matched") or 0)
@@ -202,21 +195,29 @@ jobs:
           python -m src.gmail_ingestion --run $force_arg | tee "$RUNNER_TEMP/gmail_alerts.json"
           ingestion_status=${PIPESTATUS[0]}
           python - <<'PY'
-          import json
           import os
-          import re
           from pathlib import Path
 
+          from src.workflow_output import load_json_output
+
           path = Path(os.environ["RUNNER_TEMP"]) / "gmail_alerts.json"
-          text = path.read_text(encoding="utf-8").strip()
-          match = re.search(r"\{.*\}\s*$", text, re.S)
-          data = json.loads(match.group(0) if match else text)
+          data = load_json_output(
+              path,
+              {
+                  "status": "command_failed",
+                  "failed_messages": 1,
+                  "backlog_remaining": 0,
+              },
+          )
           backlog = int(data.get("backlog_remaining") or 0)
           failed = int(data.get("failed_messages") or 0)
           status = str(data.get("status") or "unknown")
           with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as handle:
               handle.write(f"failed_messages={failed}\n")
               handle.write(f"ingestion_status={status}\n")
+          if status == "command_failed":
+              print("::error::Gmail ingestion exited before producing a valid JSON summary. Review the Gmail ingestion log above for the original exception.")
+              raise SystemExit(1)
           if backlog:
               print(f"::warning::Gmail backlog remains after this run: {backlog} message(s).")
           if failed:
@@ -268,26 +269,18 @@ jobs:
           DAILY_GATE_RESULT: ${{ steps.daily_gate.outputs.gate_result }}
         run: |
           python - <<'PY'
-          import json
           import os
-          import re
           from pathlib import Path
 
+          from src.workflow_output import load_json_output
+
           temp = Path(os.environ["RUNNER_TEMP"])
-
-          def load_json(name: str, default: dict) -> dict:
-              path = temp / name
-              if not path.exists():
-                  return default
-              text = path.read_text(encoding="utf-8").strip()
-              if not text:
-                  return default
-              match = re.search(r"\{.*\}\s*$", text, re.S)
-              return json.loads(match.group(0) if match else text)
-
-          static = load_json("static_pages.json", {})
-          gmail = load_json("gmail_alerts.json", {"status": "not_run"})
-          dashboard = load_json("dashboard.json", {})
+          static = load_json_output(temp / "static_pages.json")
+          gmail = load_json_output(
+              temp / "gmail_alerts.json",
+              {"status": "not_run", "failed_messages": 0},
+          )
+          dashboard = load_json_output(temp / "dashboard.json")
 
           static_upsert = static.get("upsert_summary") or {}
           static_records_seen = int(static_upsert.get("records_seen") or static.get("jobs_found") or 0)
@@ -320,6 +313,8 @@ jobs:
                   handle.write(f"| {metric} | {value} |\n")
               if gmail.get("status") == "skipped":
                   handle.write("\nGmail ingestion skipped because optional Gmail secrets are not configured.\n")
+              elif gmail.get("status") == "command_failed":
+                  handle.write("\nGmail ingestion failed before producing its structured summary.\n")
               elif int(gmail.get("failed_messages") or 0):
                   handle.write("\nDaily completion was withheld because retryable Gmail failures remain.\n")
           PY
