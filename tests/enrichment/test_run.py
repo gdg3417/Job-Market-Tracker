@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from src.enrichment.fetcher import EnrichmentFetchError, FetchResult
 from src.enrichment.run import run_direct_link_enrichment
 from src.models import JobPosting
@@ -149,6 +151,31 @@ def test_mismatched_posting_is_audited_but_not_merged():
     assert job["enrichment_status"] == "not_found"
     assert evidence["accepted"] is False
     assert evidence["rejection_reason"]
+
+
+@pytest.mark.parametrize(("error_type", "status_code"), [("not_found", 404), ("access_blocked", 403)])
+def test_missing_or_blocked_direct_link_routes_to_later_fallback(error_type: str, status_code: int):
+    url = "https://careers.example.com/jobs/missing"
+    client = FakeSheetClient([queued_job("missing", "Topgolf", "Sr Manager, Strategic Planning", url, "Dallas, TX")])
+    fetcher = FakeFetcher(
+        {
+            url: EnrichmentFetchError(
+                error_type,
+                f"HTTP {status_code}",
+                retryable=False,
+                status_code=status_code,
+                final_url=url,
+            )
+        }
+    )
+
+    summary = run_direct_link_enrichment(client, fetcher=fetcher, now=NOW, priority_rules={})
+
+    assert summary.not_found == 1
+    assert summary.permanent_failures == 0
+    assert client.tables["Jobs"][0]["enrichment_status"] == "not_found"
+    assert client.tables["Enrichment_Queue"][0]["status"] == "not_found"
+    assert len(client.tables["Enrichment_Evidence"][0]["raw_content_hash"]) == 64
 
 
 def test_failure_of_one_enrichment_does_not_stop_other_jobs():
