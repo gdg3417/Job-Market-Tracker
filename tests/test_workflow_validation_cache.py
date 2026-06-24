@@ -75,3 +75,14 @@ def test_cached_validation_summary_rejects_failed_schema_result(tmp_path, monkey
 
     with pytest.raises(ValueError, match="did not pass"):
         workflow_validation._cached_validation_summary()
+
+
+def test_cached_validation_summary_rejects_invalid_output(tmp_path, monkeypatch):
+    (tmp_path / "schema_validation.json").write_text(
+        "Traceback: schema command failed before JSON output",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
+
+    with pytest.raises(ValueError, match="missing or invalid"):
+        workflow_validation._cached_validation_summary()
