@@ -87,6 +87,7 @@ def build_sprint16_run_record(validation_summary: dict[str, Any]) -> dict[str, A
 
 def run_workflow_validation() -> dict[str, Any]:
     summary = _cached_validation_summary()
+    validation_source = "cached" if summary is not None else "live"
     settings = load_settings()
     sheet_client = SheetClient.from_settings(settings)
     if summary is None:
@@ -96,7 +97,7 @@ def run_workflow_validation() -> dict[str, Any]:
     return {
         "run_mode": "sprint_16_workflow_validation",
         "status": "success",
-        "validation_source": "cached" if os.environ.get("RUNNER_TEMP") else "live",
+        "validation_source": validation_source,
         "runs_rows_appended": 1,
         **summary,
     }
