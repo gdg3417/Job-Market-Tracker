@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import re
+from pathlib import Path
 from typing import Any
 
 from src.models import utc_now_iso
@@ -21,6 +24,36 @@ def _validation_summary(validation_result: Any) -> dict[str, Any]:
         "timezone_ok": validation_result.timezone_ok,
         "worksheets_validated": len(validation_result.sheets),
         "worksheet_names": [sheet.worksheet_name for sheet in validation_result.sheets],
+    }
+
+
+def _cached_validation_summary() -> dict[str, Any] | None:
+    """Reuse the schema result produced by the immediately preceding workflow step."""
+    runner_temp = os.environ.get("RUNNER_TEMP", "").strip()
+    if not runner_temp:
+        return None
+
+    path = Path(runner_temp) / "schema_validation.json"
+    if not path.exists():
+        return None
+
+    text = path.read_text(encoding="utf-8").strip()
+    if not text:
+        return None
+
+    match = re.search(r"\{.*\}\s*$", text, re.S)
+    data = json.loads(match.group(0) if match else text)
+    if not data.get("ok"):
+        raise ValueError("Cached workbook schema validation did not pass")
+
+    sheets = data.get("sheets") or []
+    return {
+        "ok": True,
+        "timezone": str(data.get("timezone") or ""),
+        "expected_timezone": str(data.get("expected_timezone") or ""),
+        "timezone_ok": bool(data.get("timezone_ok")),
+        "worksheets_validated": len(sheets),
+        "worksheet_names": [str(sheet.get("worksheet_name") or "") for sheet in sheets],
     }
 
 
@@ -53,14 +86,17 @@ def build_sprint16_run_record(validation_summary: dict[str, Any]) -> dict[str, A
 
 
 def run_workflow_validation() -> dict[str, Any]:
+    summary = _cached_validation_summary()
     settings = load_settings()
     sheet_client = SheetClient.from_settings(settings)
-    validation_result = validate_workbook_or_raise(sheet_client)
-    summary = _validation_summary(validation_result)
+    if summary is None:
+        validation_result = validate_workbook_or_raise(sheet_client)
+        summary = _validation_summary(validation_result)
     sheet_client.append_run(build_sprint16_run_record(summary))
     return {
         "run_mode": "sprint_16_workflow_validation",
         "status": "success",
+        "validation_source": "cached" if os.environ.get("RUNNER_TEMP") else "live",
         "runs_rows_appended": 1,
         **summary,
     }
