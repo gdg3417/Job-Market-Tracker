@@ -144,7 +144,7 @@ def normalize_job_posting(posting: dict[str, Any]) -> dict[str, Any]:
     elif re.search(r"\bhybrid\b", description, flags=re.IGNORECASE):
         remote_status = "hybrid"
         work_model = "hybrid"
-    elif re.search(r"\bremote\b", description, flags=re.IGNORECASE) and not re.search(
+    elif re.search(r"\bremote(?:ly)?\b", description, flags=re.IGNORECASE) and not re.search(
         r"\b(?:not|non[- ]?)remote\b", description, flags=re.IGNORECASE
     ):
         remote_status = "remote"
