@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import argparse
+import json
+
 import pytest
 
 import src.schema as schema_module
@@ -10,6 +13,7 @@ from src.schema import (
     RUNS_HEADERS,
     HeaderSpec,
     SchemaValidationError,
+    WorkbookValidationResult,
     compare_headers,
     migrate_trailing_headers,
     validate_record_headers_for_write,
@@ -154,3 +158,55 @@ def test_migrate_trailing_headers_expands_grid_before_writing(monkeypatch: pytes
     assert worksheet.update_calls == [("C1:C1", [["c"]], "USER_ENTERED")]
     assert worksheet.headers == ["a", "b", "c"]
     assert sheet_client._header_cache == {}
+
+
+def test_migrate_trailing_headers_rejects_noncanonical_prefix(monkeypatch: pytest.MonkeyPatch):
+    worksheet = _FakeWorksheet()
+    worksheet.headers = ["a", "legacy"]
+    sheet_client = _FakeSheetClient(worksheet)
+    monkeypatch.setattr(
+        schema_module,
+        "CANONICAL_SCHEMA",
+        {"Example": HeaderSpec("Example", ["a", "b", "c"])},
+    )
+
+    with pytest.raises(SchemaValidationError, match="not a canonical prefix"):
+        migrate_trailing_headers(sheet_client)
+
+    assert worksheet.row_values_calls == 1
+    assert worksheet.update_calls == []
+
+
+def test_schema_main_migrate_reuses_single_pass_validation(monkeypatch: pytest.MonkeyPatch, capsys):
+    sheet_client = object()
+    spec = HeaderSpec("Example", ["a"])
+    migration_result = WorkbookValidationResult(
+        timezone=EXPECTED_TIMEZONE,
+        expected_timezone=EXPECTED_TIMEZONE,
+        timezone_ok=True,
+        sheets=[compare_headers(spec, ["a"])],
+    )
+
+    monkeypatch.setattr(
+        schema_module,
+        "parse_args",
+        lambda: argparse.Namespace(validate=False, migrate=True, repair_headers=False),
+    )
+    monkeypatch.setattr(schema_module, "_load_sheet_client", lambda: sheet_client)
+    monkeypatch.setattr(
+        schema_module,
+        "migrate_trailing_headers",
+        lambda client: migration_result if client is sheet_client else None,
+    )
+
+    def fail_duplicate_validation(_client):
+        raise AssertionError("--migrate must not perform a second full workbook validation")
+
+    monkeypatch.setattr(schema_module, "validate_workbook", fail_duplicate_validation)
+
+    schema_module.main()
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["ok"] is True
+    assert output["timezone"] == EXPECTED_TIMEZONE
+    assert output["sheets"][0]["worksheet_name"] == "Example"
