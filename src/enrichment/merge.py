@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.enrichment.matcher import is_authoritative_url
+from src.enrichment.matcher import is_authoritative_url, locations_compatible
 from src.enrichment.models import EnrichmentEvidence
 from src.models import JobPosting, utc_now_iso
 
@@ -11,6 +11,13 @@ UNKNOWN_VALUES = {"", "unknown", "unspecified", "not specified", "n/a", "na", "n
 
 def _unknown(value: Any) -> bool:
     return str(value or "").strip().lower() in UNKNOWN_VALUES
+
+
+def _safe_int(value: Any, default: int) -> int:
+    try:
+        return int(float(str(value).strip()))
+    except (TypeError, ValueError):
+        return default
 
 
 def _set_if_changed(job: JobPosting, field_name: str, value: Any, changed: list[str]) -> None:
@@ -43,7 +50,7 @@ def merge_verified_evidence(
         if current_is_generic or len(incoming_description) > len(current_description):
             _set_if_changed(job, "description_text", incoming_description, changed)
 
-    if evidence.source_location and (_unknown(job.location) or match_confidence >= 90):
+    if evidence.source_location and (_unknown(job.location) or locations_compatible(job.location, evidence.source_location)):
         _set_if_changed(job, "location", evidence.source_location, changed)
 
     if evidence.salary_min is not None and job.salary_min is None:
@@ -62,7 +69,6 @@ def merge_verified_evidence(
     if is_authoritative_url(authoritative_url):
         _set_if_changed(job, "canonical_url", authoritative_url, changed)
 
-    job.enrichment_status = "enriched" if evidence.description_text else "partial"
     job.enrichment_priority = job.potential_priority if job.potential_priority in {"high", "medium", "low"} else job.enrichment_priority
     job.enrichment_last_attempted_at = completed_at
     job.enrichment_completed_at = completed_at
@@ -74,10 +80,16 @@ def merge_verified_evidence(
 
         evidence_score, _ = calculate_evidence_completeness(job, evidence_rules)
         job.evidence_completeness_score = max(job.evidence_completeness_score, evidence_score)
+        enrichment_rules = evidence_rules.get("enrichment", {}) or {}
+        complete_threshold = _safe_int(enrichment_rules.get("complete_evidence_threshold"), 70)
+        partial_threshold = _safe_int(enrichment_rules.get("partial_evidence_threshold"), 40)
+        job.enrichment_status = "enriched" if job.evidence_completeness_score >= complete_threshold else "partial"
         if job.score_status not in {"excluded", "verified"}:
-            job.score_status = "partially_verified" if job.evidence_completeness_score >= 40 else "provisional"
-    elif job.score_status not in {"excluded", "verified"} and evidence.description_text:
-        job.score_status = "partially_verified"
+            job.score_status = "partially_verified" if job.evidence_completeness_score >= partial_threshold else "provisional"
+    else:
+        job.enrichment_status = "enriched" if evidence.description_text else "partial"
+        if job.score_status not in {"excluded", "verified"} and evidence.description_text:
+            job.score_status = "partially_verified"
 
     if hasattr(job, "refresh_updated_at"):
         job.refresh_updated_at()
