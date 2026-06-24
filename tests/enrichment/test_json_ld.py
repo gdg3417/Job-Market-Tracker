@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from src.enrichment.extractors import extract_job_evidence
 from src.enrichment.fetcher import FetchResult
 from src.enrichment.json_ld import best_job_posting
@@ -26,6 +28,23 @@ def job_html() -> str:
     """
 
 
+def posting_html(*, unit: str, minimum: int, maximum: int, description: str = "Work remotely from an approved location.") -> str:
+    posting = {
+        "@context": "https://schema.org",
+        "@type": "JobPosting",
+        "title": "Senior Manager, Strategic Planning",
+        "hiringOrganization": {"@type": "Organization", "name": "Topgolf"},
+        "jobLocation": {"@type": "Place", "address": {"addressLocality": "Dallas", "addressRegion": "TX"}},
+        "description": description,
+        "baseSalary": {
+            "@type": "MonetaryAmount",
+            "currency": "USD",
+            "value": {"@type": "QuantitativeValue", "minValue": minimum, "maxValue": maximum, "unitText": unit},
+        },
+    }
+    return f'<script type="application/ld+json">{json.dumps(posting)}</script>'
+
+
 def test_valid_json_ld_job_posting_is_extracted():
     posting = best_job_posting(job_html())
     assert posting is not None
@@ -35,6 +54,29 @@ def test_valid_json_ld_job_posting_is_extracted():
     assert posting["salary_min"] == 150000
     assert posting["salary_max"] == 180000
     assert posting["currency"] == "USD"
+
+
+def test_hourly_salary_is_not_treated_as_annual_compensation():
+    posting = best_job_posting(posting_html(unit="HOUR", minimum=60, maximum=80))
+    assert posting is not None
+    assert posting["salary_min"] is None
+    assert posting["salary_max"] is None
+    assert posting["currency"] == ""
+
+
+def test_remote_description_is_not_forced_to_on_site_when_location_exists():
+    posting = best_job_posting(posting_html(unit="YEAR", minimum=150000, maximum=180000))
+    assert posting is not None
+    assert posting["remote_status"] == "remote"
+    assert posting["work_model"] == "remote"
+
+
+def test_non_remote_phrase_does_not_create_remote_status():
+    posting = best_job_posting(
+        posting_html(unit="YEAR", minimum=150000, maximum=180000, description="This is a non-remote role in Dallas.")
+    )
+    assert posting is not None
+    assert posting["remote_status"] == "on-site"
 
 
 def test_evidence_does_not_store_raw_html_and_captures_hash():
