@@ -52,7 +52,11 @@ def test_workflow_validation_uses_cached_result_without_second_schema_read(tmp_p
         raise AssertionError("live workbook validation should not run when cached output exists")
 
     monkeypatch.setattr(workflow_validation, "load_settings", lambda: object())
-    monkeypatch.setattr(workflow_validation.SheetClient, "from_settings", lambda _settings: FakeSheetClient())
+    monkeypatch.setattr(
+        workflow_validation.SheetClient,
+        "from_settings",
+        classmethod(lambda _cls, _settings: FakeSheetClient()),
+    )
     monkeypatch.setattr(workflow_validation, "validate_workbook_or_raise", fail_live_validation)
 
     result = workflow_validation.run_workflow_validation()
