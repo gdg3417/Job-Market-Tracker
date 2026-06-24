@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any, Iterable
 from urllib.parse import urlsplit, urlunsplit
 
@@ -10,6 +11,7 @@ from src.models import JobPosting
 
 OPEN_STATUSES = {"open", "reopened"}
 PROCESSABLE_QUEUE_STATUSES = {"pending", "retryable_failure"}
+STALE_IN_PROGRESS_AFTER = timedelta(minutes=30)
 
 
 @dataclass(slots=True)
@@ -140,12 +142,34 @@ def enqueue_eligible_jobs(
     return summary, sorted(existing_by_id.values(), key=lambda pair: pair[0])
 
 
+def _parse_timestamp(value: str) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
 def due_for_processing(item: EnrichmentQueueItem, *, now: str) -> bool:
+    current_time = _parse_timestamp(now)
+    if current_time is None:
+        return False
+
+    if item.status == "in_progress":
+        last_attempt = _parse_timestamp(item.last_attempted_at or item.updated_at)
+        return last_attempt is None or current_time - last_attempt >= STALE_IN_PROGRESS_AFTER
+
     if item.status not in PROCESSABLE_QUEUE_STATUSES:
         return False
     if not item.next_attempt_at:
         return True
-    return item.next_attempt_at <= now
+    next_attempt = _parse_timestamp(item.next_attempt_at)
+    return next_attempt is not None and next_attempt <= current_time
 
 
 def priority_sort_key(item: EnrichmentQueueItem) -> tuple[int, str, str]:
