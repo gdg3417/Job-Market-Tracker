@@ -6,6 +6,8 @@ from typing import Any, Iterable
 
 from bs4 import BeautifulSoup
 
+ANNUAL_SALARY_UNITS = {"", "year", "yearly", "annual", "annually", "annum", "per year"}
+
 
 def _as_text(value: Any) -> str:
     if value in (None, ""):
@@ -95,6 +97,9 @@ def _salary(posting: dict[str, Any]) -> tuple[int | None, int | None, str]:
         value = item.get("value")
         if not isinstance(value, dict):
             value = item
+        unit = _as_text(value.get("unitText") or item.get("unitText")).strip().lower()
+        if unit not in ANNUAL_SALARY_UNITS:
+            continue
         min_value = value.get("minValue")
         max_value = value.get("maxValue")
         exact_value = value.get("value")
@@ -106,7 +111,7 @@ def _salary(posting: dict[str, Any]) -> tuple[int | None, int | None, str]:
             salary_max = int(float(max_value if max_value not in (None, "") else exact_value))
         except (TypeError, ValueError):
             salary_max = None
-        if salary_min is not None or salary_max is not None or currency:
+        if salary_min is not None or salary_max is not None:
             return salary_min, salary_max, currency
     return None, None, ""
 
@@ -139,6 +144,11 @@ def normalize_job_posting(posting: dict[str, Any]) -> dict[str, Any]:
     elif re.search(r"\bhybrid\b", description, flags=re.IGNORECASE):
         remote_status = "hybrid"
         work_model = "hybrid"
+    elif re.search(r"\bremote\b", description, flags=re.IGNORECASE) and not re.search(
+        r"\b(?:not|non[- ]?)remote\b", description, flags=re.IGNORECASE
+    ):
+        remote_status = "remote"
+        work_model = "remote"
     elif location:
         remote_status = "on-site"
         work_model = "on-site"
