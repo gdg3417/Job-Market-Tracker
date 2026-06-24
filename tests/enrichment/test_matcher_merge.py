@@ -51,6 +51,7 @@ def test_confident_match_merges_authoritative_fields_without_changing_identity()
     assert merged.company == "Toyota North America"
     assert merged.description_text.startswith("Lead product strategy")
     assert merged.salary_min == 160000
+    assert merged.currency == "USD"
     assert merged.canonical_url == "https://careers.toyota.com/jobs/123"
     assert merged.enrichment_status == "enriched"
     assert "description_text" in changed
@@ -92,6 +93,24 @@ def test_unsafe_canonical_url_is_not_merged():
     merged, changed = merge_verified_evidence(target, source, match_confidence=90)
     assert merged.canonical_url == "https://linkedin.example/jobs/123"
     assert "canonical_url" not in changed
+
+
+def test_existing_compensation_currency_is_not_overwritten():
+    target = job(salary_min=170000, salary_max=190000, currency="USD")
+    source = evidence(salary_min=160000, salary_max=180000, currency="CAD")
+    merged, changed = merge_verified_evidence(target, source, match_confidence=90)
+    assert merged.salary_min == 170000
+    assert merged.salary_max == 190000
+    assert merged.currency == "USD"
+    assert "currency" not in changed
+
+
+def test_currency_is_not_added_without_incoming_salary():
+    target = job(salary_min=170000, currency="")
+    source = evidence(salary_min=None, salary_max=None, currency="CAD")
+    merged, changed = merge_verified_evidence(target, source, match_confidence=90)
+    assert merged.currency == ""
+    assert "currency" not in changed
 
 
 def test_incomplete_recovered_evidence_remains_partial():
