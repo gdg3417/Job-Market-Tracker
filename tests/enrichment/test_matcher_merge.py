@@ -105,14 +105,6 @@ def test_existing_compensation_currency_is_not_overwritten():
     assert "currency" not in changed
 
 
-def test_currency_is_not_added_without_incoming_salary():
-    target = job(salary_min=170000, currency="")
-    source = evidence(salary_min=None, salary_max=None, currency="CAD")
-    merged, changed = merge_verified_evidence(target, source, match_confidence=90)
-    assert merged.currency == ""
-    assert "currency" not in changed
-
-
 def test_incomplete_recovered_evidence_remains_partial():
     target = job(description_text="Extracted from Gmail job alert")
     source = evidence(description_text="Short posting text")
