@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import urlsplit
 
 from rapidfuzz import fuzz
 
+from src.enrichment.fetcher import is_safe_public_url
 from src.enrichment.models import EnrichmentEvidence, MatchResult
 from src.models import JobPosting
 
@@ -80,7 +80,7 @@ def _role_family(value: str) -> set[str]:
     return {term for term in ROLE_FAMILY_TERMS if _token_present(text, term)}
 
 
-def _location_similarity(left: str, right: str) -> int:
+def location_similarity(left: str, right: str) -> int:
     left_normalized = _normalize(left)
     right_normalized = _normalize(right)
     if not left_normalized or not right_normalized:
@@ -88,6 +88,12 @@ def _location_similarity(left: str, right: str) -> int:
     if left_normalized == right_normalized:
         return 100
     return int(fuzz.token_set_ratio(left_normalized, right_normalized))
+
+
+def locations_compatible(left: str, right: str) -> bool:
+    if not str(left or "").strip() or not str(right or "").strip():
+        return True
+    return location_similarity(left, right) >= 70
 
 
 def assess_match(job: JobPosting, evidence: EnrichmentEvidence) -> MatchResult:
@@ -130,15 +136,16 @@ def assess_match(job: JobPosting, evidence: EnrichmentEvidence) -> MatchResult:
     else:
         reasons.append("company missing from source")
 
-    location_similarity = _location_similarity(job.location, evidence.source_location)
-    if location_similarity >= 90:
+    location_match = location_similarity(job.location, evidence.source_location)
+    if location_match >= 90:
         score += 10
         reasons.append("location match")
-    elif location_similarity >= 70:
+    elif location_match >= 70:
         score += 5
         reasons.append("partial location match")
     elif job.location and evidence.source_location:
-        reasons.append("location differs")
+        score -= 15
+        reasons.append("location conflict")
 
     source_job_id = str(job.source_job_id or "").strip().lower()
     candidate_urls = " ".join([evidence.source_url, evidence.canonical_url]).lower()
@@ -164,8 +171,4 @@ def assess_match(job: JobPosting, evidence: EnrichmentEvidence) -> MatchResult:
 
 
 def is_authoritative_url(url: str) -> bool:
-    try:
-        parts = urlsplit(str(url or "").strip())
-    except ValueError:
-        return False
-    return parts.scheme in {"http", "https"} and bool(parts.netloc)
+    return is_safe_public_url(url)
