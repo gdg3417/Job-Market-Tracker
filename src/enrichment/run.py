@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -22,6 +23,7 @@ from src.models import JobPosting
 
 DEFAULT_PRIORITY_RULES_PATH = Path(__file__).resolve().parents[2] / "config" / "potential_priority_rules.yml"
 MAX_DIRECT_ATTEMPTS = 3
+DIRECT_FALLBACK_ERROR_TYPES = {"not_found", "access_blocked"}
 
 
 def _records_with_rows(sheet_client: Any, worksheet_name: str) -> list[tuple[int, dict[str, Any]]]:
@@ -108,6 +110,7 @@ def _record_failure_evidence(
     message: str,
 ) -> EnrichmentEvidence:
     content_key = f"failure:{item.attempt_count}:{error_type}:{status_code or ''}"
+    content_hash = hashlib.sha256(content_key.encode("utf-8")).hexdigest()
     evidence = EnrichmentEvidence(
         job_key=item.job_key,
         enrichment_id=item.enrichment_id,
@@ -117,9 +120,9 @@ def _record_failure_evidence(
         http_status=status_code,
         accepted=False,
         rejection_reason=f"{error_type}: {message}"[:1000],
-        raw_content_hash=content_key,
+        raw_content_hash=content_hash,
     )
-    evidence.evidence_id = evidence_id_for(item.enrichment_id, evidence.source_url, content_key)
+    evidence.evidence_id = evidence_id_for(item.enrichment_id, evidence.source_url, content_hash)
     return evidence
 
 
@@ -242,8 +245,12 @@ def run_direct_link_enrichment(
                     job.enrichment_source_url = evidence.source_url
                     summary.not_found += 1
         except EnrichmentFetchError as exc:
-            retryable = exc.retryable and item.attempt_count < MAX_DIRECT_ATTEMPTS
-            item.status = "retryable_failure" if retryable else "permanent_failure"
+            direct_fallback = exc.error_type in DIRECT_FALLBACK_ERROR_TYPES
+            retryable = exc.retryable and not direct_fallback and item.attempt_count < MAX_DIRECT_ATTEMPTS
+            if direct_fallback:
+                item.status = "not_found"
+            else:
+                item.status = "retryable_failure" if retryable else "permanent_failure"
             item.error_type = exc.error_type
             item.error_message = str(exc)[:1000]
             item.matched_url = exc.final_url
@@ -260,7 +267,9 @@ def run_direct_link_enrichment(
             )
             if _write_evidence(sheet_client, failure_evidence, evidence_by_id):
                 summary.evidence_written += 1
-            if retryable:
+            if direct_fallback:
+                summary.not_found += 1
+            elif retryable:
                 summary.retryable_failures += 1
             else:
                 summary.permanent_failures += 1
