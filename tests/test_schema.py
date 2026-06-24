@@ -21,6 +21,7 @@ class _FakeWorksheet:
         self.row_count = 1000
         self.col_count = 2
         self.headers = ["a", "b"]
+        self.row_values_calls = 0
         self.resize_calls: list[tuple[int, int]] = []
         self.update_calls: list[tuple[str, list[list[str]], str]] = []
 
@@ -31,6 +32,7 @@ class _FakeWorksheet:
 
     def row_values(self, row_number: int) -> list[str]:
         assert row_number == 1
+        self.row_values_calls += 1
         return list(self.headers)
 
     def update(self, *, range_name: str, values: list[list[str]], value_input_option: str) -> None:
@@ -142,8 +144,12 @@ def test_migrate_trailing_headers_expands_grid_before_writing(monkeypatch: pytes
         {"Example": HeaderSpec("Example", ["a", "b", "c"])},
     )
 
-    migrate_trailing_headers(sheet_client)
+    result = migrate_trailing_headers(sheet_client)
 
+    assert result.ok is True
+    assert result.timezone == EXPECTED_TIMEZONE
+    assert result.sheets[0].actual_headers == ["a", "b", "c"]
+    assert worksheet.row_values_calls == 1
     assert worksheet.resize_calls == [(1000, 3)]
     assert worksheet.update_calls == [("C1:C1", [["c"]], "USER_ENTERED")]
     assert worksheet.headers == ["a", "b", "c"]
