@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import ipaddress
 import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Iterable, Protocol
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 import requests
 
 DEFAULT_USER_AGENT = "JobMarketTracker-Enrichment/1.0 (+direct-link-stage)"
+REDIRECT_STATUSES = {301, 302, 303, 307, 308}
+BLOCKED_HOST_SUFFIXES = (".localhost", ".local", ".internal")
+ALLOWED_PORTS = {None, 80, 443}
 
 
 class ResponseLike(Protocol):
@@ -25,8 +29,6 @@ class ResponseLike(Protocol):
 
 
 class SessionLike(Protocol):
-    max_redirects: int
-
     def get(self, url: str, **kwargs: Any) -> ResponseLike:
         ...
 
@@ -92,14 +94,36 @@ class DomainRateLimiter:
             self._last_request_at[domain] = time.monotonic()
 
 
-def _validate_url(url: str) -> str:
+def is_safe_public_url(url: str) -> bool:
     candidate = str(url or "").strip()
     try:
         parts = urlsplit(candidate)
-    except ValueError as exc:
-        raise EnrichmentFetchError("invalid_url", f"Invalid enrichment URL: {candidate}", retryable=False) from exc
-    if parts.scheme not in {"http", "https"} or not parts.netloc:
-        raise EnrichmentFetchError("invalid_url", f"Only HTTP and HTTPS enrichment URLs are supported: {candidate}", retryable=False)
+        port = parts.port
+    except ValueError:
+        return False
+    if parts.scheme not in {"http", "https"} or not parts.netloc or not parts.hostname:
+        return False
+    if parts.username or parts.password or port not in ALLOWED_PORTS:
+        return False
+
+    hostname = parts.hostname.rstrip(".").lower()
+    if hostname == "localhost" or hostname.endswith(BLOCKED_HOST_SUFFIXES):
+        return False
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        return True
+    return address.is_global
+
+
+def _validate_url(url: str) -> str:
+    candidate = str(url or "").strip()
+    if not is_safe_public_url(candidate):
+        raise EnrichmentFetchError(
+            "unsafe_url",
+            f"Enrichment URL is not a permitted public HTTP or HTTPS destination: {candidate}",
+            retryable=False,
+        )
     return candidate
 
 
@@ -126,6 +150,10 @@ def _decode_body(body: bytes, encoding: str | None) -> str:
         return body.decode("utf-8", errors="replace")
 
 
+def _redirect_location(response: ResponseLike) -> str:
+    return str(response.headers.get("Location") or response.headers.get("location") or "").strip()
+
+
 class DirectLinkFetcher:
     def __init__(
         self,
@@ -136,100 +164,125 @@ class DirectLinkFetcher:
     ) -> None:
         self.policy = policy or FetchPolicy()
         self.session = session or requests.Session()
-        self.session.max_redirects = self.policy.max_redirects
         self.rate_limiter = rate_limiter or DomainRateLimiter(self.policy.minimum_domain_interval_seconds)
 
     def fetch(self, url: str) -> FetchResult:
         requested_url = _validate_url(url)
-        self.rate_limiter.wait(requested_url)
+        current_url = requested_url
         response: ResponseLike | None = None
         try:
-            response = self.session.get(
-                requested_url,
-                timeout=self.policy.timeout_seconds,
-                headers={"User-Agent": DEFAULT_USER_AGENT, "Accept": "text/html,application/xhtml+xml,application/ld+json"},
-                allow_redirects=True,
-                stream=True,
-            )
-            status_code = int(response.status_code)
-            final_url = _validate_url(response.url or requested_url)
+            for redirect_count in range(self.policy.max_redirects + 1):
+                self.rate_limiter.wait(current_url)
+                response = self.session.get(
+                    current_url,
+                    timeout=self.policy.timeout_seconds,
+                    headers={"User-Agent": DEFAULT_USER_AGENT, "Accept": "text/html,application/xhtml+xml,application/ld+json"},
+                    allow_redirects=False,
+                    stream=True,
+                )
+                status_code = int(response.status_code)
 
-            if status_code in {404, 410}:
-                raise EnrichmentFetchError(
-                    "not_found",
-                    f"Direct URL returned HTTP {status_code}",
-                    retryable=False,
-                    status_code=status_code,
-                    final_url=final_url,
-                )
-            if status_code == 429 or status_code >= 500:
-                raise EnrichmentFetchError(
-                    "http_retryable",
-                    f"Direct URL returned HTTP {status_code}",
-                    retryable=True,
-                    status_code=status_code,
-                    final_url=final_url,
-                )
-            if status_code >= 400:
-                raise EnrichmentFetchError(
-                    "http_permanent",
-                    f"Direct URL returned HTTP {status_code}",
-                    retryable=False,
-                    status_code=status_code,
-                    final_url=final_url,
-                )
-
-            content_type = _content_type(response.headers)
-            if content_type not in self.policy.allowed_content_types:
-                raise EnrichmentFetchError(
-                    "unsupported_content_type",
-                    f"Unsupported enrichment content type: {content_type or 'missing'}",
-                    retryable=False,
-                    status_code=status_code,
-                    final_url=final_url,
-                )
-
-            declared_length = _content_length(response.headers)
-            if declared_length is not None and declared_length > self.policy.max_response_bytes:
-                raise EnrichmentFetchError(
-                    "response_too_large",
-                    f"Response declares {declared_length} bytes, above the {self.policy.max_response_bytes} byte limit",
-                    retryable=False,
-                    status_code=status_code,
-                    final_url=final_url,
-                )
-
-            chunks: list[bytes] = []
-            total = 0
-            for chunk in response.iter_content(chunk_size=65536):
-                if not chunk:
+                if status_code in REDIRECT_STATUSES:
+                    location = _redirect_location(response)
+                    if not location:
+                        raise EnrichmentFetchError(
+                            "redirect_missing_location",
+                            f"Direct URL returned HTTP {status_code} without a Location header",
+                            retryable=False,
+                            status_code=status_code,
+                            final_url=current_url,
+                        )
+                    if redirect_count >= self.policy.max_redirects:
+                        raise EnrichmentFetchError(
+                            "redirect_limit",
+                            "Direct URL exceeded the redirect limit",
+                            retryable=False,
+                            status_code=status_code,
+                            final_url=current_url,
+                        )
+                    next_url = _validate_url(urljoin(current_url, location))
+                    response.close()
+                    response = None
+                    current_url = next_url
                     continue
-                total += len(chunk)
-                if total > self.policy.max_response_bytes:
+
+                final_url = _validate_url(response.url or current_url)
+                if status_code in {404, 410}:
                     raise EnrichmentFetchError(
-                        "response_too_large",
-                        f"Response exceeded the {self.policy.max_response_bytes} byte limit",
+                        "not_found",
+                        f"Direct URL returned HTTP {status_code}",
                         retryable=False,
                         status_code=status_code,
                         final_url=final_url,
                     )
-                chunks.append(chunk)
+                if status_code == 429 or status_code >= 500:
+                    raise EnrichmentFetchError(
+                        "http_retryable",
+                        f"Direct URL returned HTTP {status_code}",
+                        retryable=True,
+                        status_code=status_code,
+                        final_url=final_url,
+                    )
+                if status_code >= 400:
+                    raise EnrichmentFetchError(
+                        "http_permanent",
+                        f"Direct URL returned HTTP {status_code}",
+                        retryable=False,
+                        status_code=status_code,
+                        final_url=final_url,
+                    )
 
-            return FetchResult(
-                requested_url=requested_url,
-                final_url=final_url,
-                status_code=status_code,
-                content_type=content_type,
-                text=_decode_body(b"".join(chunks), response.encoding),
-            )
+                content_type = _content_type(response.headers)
+                if content_type not in self.policy.allowed_content_types:
+                    raise EnrichmentFetchError(
+                        "unsupported_content_type",
+                        f"Unsupported enrichment content type: {content_type or 'missing'}",
+                        retryable=False,
+                        status_code=status_code,
+                        final_url=final_url,
+                    )
+
+                declared_length = _content_length(response.headers)
+                if declared_length is not None and declared_length > self.policy.max_response_bytes:
+                    raise EnrichmentFetchError(
+                        "response_too_large",
+                        f"Response declares {declared_length} bytes, above the {self.policy.max_response_bytes} byte limit",
+                        retryable=False,
+                        status_code=status_code,
+                        final_url=final_url,
+                    )
+
+                chunks: list[bytes] = []
+                total = 0
+                for chunk in response.iter_content(chunk_size=65536):
+                    if not chunk:
+                        continue
+                    total += len(chunk)
+                    if total > self.policy.max_response_bytes:
+                        raise EnrichmentFetchError(
+                            "response_too_large",
+                            f"Response exceeded the {self.policy.max_response_bytes} byte limit",
+                            retryable=False,
+                            status_code=status_code,
+                            final_url=final_url,
+                        )
+                    chunks.append(chunk)
+
+                return FetchResult(
+                    requested_url=requested_url,
+                    final_url=final_url,
+                    status_code=status_code,
+                    content_type=content_type,
+                    text=_decode_body(b"".join(chunks), response.encoding),
+                )
+
+            raise EnrichmentFetchError("redirect_limit", "Direct URL exceeded the redirect limit", retryable=False)
         except EnrichmentFetchError:
             raise
-        except requests.TooManyRedirects as exc:
-            raise EnrichmentFetchError("redirect_limit", "Direct URL exceeded the redirect limit", retryable=False) from exc
         except (requests.Timeout, requests.ConnectionError) as exc:
-            raise EnrichmentFetchError("network_retryable", str(exc), retryable=True) from exc
+            raise EnrichmentFetchError("network_retryable", str(exc), retryable=True, final_url=current_url) from exc
         except requests.RequestException as exc:
-            raise EnrichmentFetchError("request_failure", str(exc), retryable=False) from exc
+            raise EnrichmentFetchError("request_failure", str(exc), retryable=False, final_url=current_url) from exc
         finally:
             if response is not None:
                 response.close()
