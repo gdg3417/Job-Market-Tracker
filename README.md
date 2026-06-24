@@ -6,7 +6,7 @@ The tracker is intentionally not a generic finance job scraper. It monitors role
 
 ## Current status
 
-Sprints 1 through 23 are implemented in code.
+Sprints 1 through 27 are implemented in code.
 
 The current system supports:
 
@@ -27,6 +27,8 @@ The current system supports:
 15. LinkedIn multi-job digest card parsing with stable posting IDs
 16. Sparse Gmail high-signal title review routing without score inflation
 17. Paginated, ledger-backed Gmail ingestion with per-message retries and idempotent rejection handling
+18. Potential-priority, evidence-completeness, and verified-score states
+19. An auditable enrichment queue with controlled direct-link extraction
 
 Sprint 20 redesigns the Dashboard so it is an action-oriented executive summary instead of a fragile formula page. It also adds a bound Apps Script weekly digest email that can be scheduled for Monday around 8:00 AM Central.
 
@@ -36,6 +38,10 @@ Sprint 22 flags sparse Gmail records with strategically relevant management-leve
 
 Sprint 23 adds the `Gmail_Messages` ledger, paginated Gmail listing, retryable message processing, force reprocessing, idempotent `Rejected_Jobs` writes, backlog metrics, and a Central-date workflow completion lock. The two UTC schedules remain, but only the first successful run for a Central calendar date records completion.
 
+Sprint 26 separates potential priority from verified fit. Missing salary or description details reduce evidence completeness instead of automatically lowering a promising role into a completed low-fit recommendation.
+
+Sprint 27 adds `Enrichment_Queue` and `Enrichment_Evidence`, controlled direct-link fetching, JSON-LD extraction, match-confidence validation, and safe evidence merging. It does not yet add broad web search, company career-site discovery, or production scheduling.
+
 ## Repo structure
 
 ```text
@@ -43,6 +49,7 @@ job-market-tracker/
   apps_script/
     weekly_digest_email.gs
   config/
+    potential_priority_rules.yml
     scoring_rules.yml
     sparse_gmail_review.yml
     target_profile.yml
@@ -51,10 +58,21 @@ job-market-tracker/
     sprint_20_weekly_email_dashboard.md
     sprint_22_sparse_gmail_review.md
     sprint_23_gmail_ingestion.md
+    sprint_27_direct_link_enrichment.md
   src/
     daily_run_gate.py
     dashboard.py
+    enrichment/
+      extractors.py
+      fetcher.py
+      json_ld.py
+      matcher.py
+      merge.py
+      models.py
+      queue.py
+      run.py
     gmail_ingestion.py
+    potential_priority.py
     rescore_jobs.py
     scoring.py
     sources/
@@ -62,6 +80,7 @@ job-market-tracker/
       gmail_alerts.py
       linkedin_digest.py
   tests/
+    enrichment/
     fixtures/
       linkedin_topgolf.eml
       linkedin_toyota.eml
@@ -92,6 +111,8 @@ Jobs
 Job_Sources
 Rejected_Jobs
 Gmail_Messages
+Enrichment_Queue
+Enrichment_Evidence
 Snapshots
 Runs
 Digest
@@ -101,6 +122,8 @@ Dashboard
 `Rejected_Jobs` captures records blocked by final quality gates. It is not a staging tab for good jobs.
 
 `Gmail_Messages` is the message processing ledger. It records each Gmail message ID, processing status, attempt count, parsed and accepted counts, errors, and processing timestamps.
+
+`Enrichment_Queue` records one deterministic direct-link work item for each eligible job and lead URL. `Enrichment_Evidence` stores parsed evidence, match confidence, acceptance status, and a content hash without storing full raw HTML.
 
 ## Local setup
 
@@ -131,6 +154,7 @@ Run these before trusting an unattended daily workflow run:
 ```powershell
 pytest
 python -m src.gmail_ingestion --ensure-ledger
+python -m src.schema --migrate
 python -m src.schema --validate
 python -m src.source_audit
 python -m src.gmail_ingestion --run
@@ -206,6 +230,28 @@ A message is marked complete only after its accepted jobs, rejected records, and
 
 See `docs/sprint_23_gmail_ingestion.md` for backlog and recovery procedures.
 
+## Direct-link enrichment
+
+Preview eligible jobs without workbook writes:
+
+```powershell
+python -m src.enrichment.run --dry-run
+```
+
+Create or migrate the enrichment tabs, enqueue eligible jobs, and process up to ten direct URLs:
+
+```powershell
+python -m src.enrichment.run --run --limit 10
+```
+
+Process one existing job:
+
+```powershell
+python -m src.enrichment.run --run --job-key "<job_key>" --limit 1
+```
+
+The direct-link fetcher validates every redirect destination, blocks private and local network targets, limits response size, and records blocked or missing direct links as `not_found` so later company and ATS discovery can continue. See `docs/sprint_27_direct_link_enrichment.md`.
+
 ## Weekly email digest
 
 Sprint 20 adds `apps_script/weekly_digest_email.gs` for a bound Google Apps Script weekly digest.
@@ -232,6 +278,8 @@ python -m src.main --static-pages-smoke-test
 python -m src.rescore_jobs
 python -m src.source_audit
 python -m src.source_audit --apply-recommendations
+python -m src.enrichment.run --dry-run
+python -m src.enrichment.run --run --limit 10
 python -m src.dashboard
 python -m src.workflow_validation
 ```
@@ -243,6 +291,8 @@ The daily workflow is `.github/workflows/daily-run.yml`.
 It supports manual runs with `workflow_dispatch` and two scheduled UTC invocations around 06:30 AM Central. Scheduled runs use a successful `daily_workflow_completion` record in `Runs` as the Central-date lock. A delayed first invocation still runs. The second invocation skips only after the first invocation completes successfully. Manual dispatch always bypasses the date lock.
 
 Manual dispatch also exposes a `force_reprocess` input for controlled Gmail replay.
+
+Sprint 27 direct-link enrichment is intentionally not part of the scheduled daily workflow. Production integration remains planned for Sprint 32.
 
 Pull requests are validated by `.github/workflows/pull-request-tests.yml`, which compiles Python sources and runs the full pytest suite.
 
@@ -273,3 +323,7 @@ Pull requests are validated by `.github/workflows/pull-request-tests.yml`, which
 | Sprint 21 | Complete | LinkedIn multi-job digest card parsing and stable posting IDs |
 | Sprint 22 | Complete | Sparse Gmail high-signal title review routing and re-score command |
 | Sprint 23 | Complete | Gmail ledger, pagination, retries, idempotent rejection writes, backlog metrics, and daily completion lock |
+| Sprint 24 | Complete | Recover LinkedIn lead cards from malformed or sparse alerts |
+| Sprint 25 | Complete | Preserve plain-text LinkedIn card ordering |
+| Sprint 26 | Complete | Separate potential priority, evidence completeness, and verified fit |
+| Sprint 27 | Complete | Enrichment queue, evidence audit trail, and direct-link extraction |
