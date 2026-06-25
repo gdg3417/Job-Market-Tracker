@@ -14,6 +14,11 @@ ScoreMatch = tuple[int, list[str]]
 DEFAULT_SPARSE_GMAIL_REVIEW_REASON = "sparse_gmail_high_signal_title"
 DEFAULT_GENERIC_GMAIL_DESCRIPTION_PREFIXES = ["Extracted from Gmail job alert"]
 DEFAULT_INCOMPLETE_WORK_MODEL_VALUES = {"", "unknown", "unspecified", "not specified", "n/a", "na", "none"}
+COMPANY_CONTEXT_SCORING_FIELDS = (
+    "industry_bucket",
+    "ownership_type",
+    "company_size_bucket",
+)
 
 
 def load_scoring_rules(path: str | Path) -> dict[str, Any]:
@@ -53,10 +58,6 @@ def _as_text(value: Any) -> str:
 def _text_for_job(job: JobPosting) -> str:
     parts = [
         job.title,
-        job.company,
-        job.location,
-        job.remote_status,
-        job.work_model,
         job.role_family,
         job.role_level,
         job.description_text,
@@ -245,7 +246,7 @@ def _score_company_context(company_context: dict[str, Any] | None, rules: dict[s
     max_points = int((rules.get("category_weights", {}) or {}).get("industry_match_score", 5))
     if not company_context:
         return 0, []
-    text = _as_text(company_context).lower()
+    text = _as_text([company_context.get(field_name) for field_name in COMPANY_CONTEXT_SCORING_FIELDS]).lower()
     matches: list[str] = []
     industry_score = 0
     for keyword, points in rules.get("industry_fit", {}).items():
