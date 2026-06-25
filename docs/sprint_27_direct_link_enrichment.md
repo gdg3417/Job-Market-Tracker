@@ -59,10 +59,13 @@ For each fetched page:
 
 1. Parse JSON-LD `JobPosting` data.
 2. Fall back to embedded metadata and visible structured job content.
-3. Reject generic career pages and other non-job pages.
-4. Capture the canonical URL and parsed evidence.
-5. Compare the source title, company, location, seniority, role family, and posting ID with the existing job.
-6. Merge only when match confidence is at least 80.
+3. Recover LinkedIn company, title, and location from metadata titles formatted as `Company hiring Title in Location | LinkedIn` when structured employer metadata is absent.
+4. Reject generic career pages and other non-job pages.
+5. Capture the canonical URL and parsed evidence.
+6. Compare the source title, company, location, seniority, role family, and posting ID with the existing job.
+7. Merge only when match confidence is at least 80.
+
+Provider-prefixed source IDs such as `linkedin-4417965465` are matched against the underlying posting ID in canonical URLs.
 
 ## Safe merge behavior
 
@@ -99,6 +102,14 @@ Process one existing job:
 ```powershell
 python -m src.enrichment.run --run --job-key "<job_key>" --limit 1
 ```
+
+Replay one existing terminal queue item after a parser or matcher correction:
+
+```powershell
+python -m src.enrichment.run --run --job-key "<job_key>" --replay --limit 1
+```
+
+Replay requires an exact job key and an existing queue row whose status is `not_found`, `ambiguous`, or `permanent_failure`. It reuses the deterministic queue ID. When the fetched content hash is unchanged, it updates the existing evidence row rather than appending a duplicate.
 
 Validate the workbook after the run:
 
