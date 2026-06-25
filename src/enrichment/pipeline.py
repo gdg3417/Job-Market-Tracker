@@ -14,7 +14,11 @@ from src.enrichment.search import (
     DuckDuckGoHtmlSearchProvider,
     SearchProvider,
 )
-from src.enrichment.search_run import preview_external_search_queue, run_external_search_enrichment
+from src.enrichment.search_run import (
+    ExternalSearchRunSummary,
+    preview_external_search_queue,
+    run_external_search_enrichment,
+)
 
 
 def run_enrichment_pipeline(
@@ -41,14 +45,18 @@ def run_enrichment_pipeline(
         limit=company_limit,
         job_key=job_key,
     )
-    external = run_external_search_enrichment(
-        sheet_client,
-        limit=external_limit,
-        job_key=job_key,
-        provider=search_provider,
-        query_budget=search_query_budget,
-        results_per_query=search_results_per_query,
-        candidate_page_budget=candidate_page_budget,
+    external = (
+        run_external_search_enrichment(
+            sheet_client,
+            limit=external_limit,
+            job_key=job_key,
+            provider=search_provider,
+            query_budget=search_query_budget,
+            results_per_query=search_results_per_query,
+            candidate_page_budget=candidate_page_budget,
+        )
+        if external_limit > 0
+        else ExternalSearchRunSummary()
     )
     return {
         "direct_link": direct.to_dict(),
@@ -61,8 +69,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run direct-link, company and ATS, then external-search enrichment"
     )
-    parser.add_argument("--run", action="store_true", help="Run all enrichment stages")
-    parser.add_argument("--dry-run", action="store_true", help="Preview currently eligible work without writes")
+    execution = parser.add_mutually_exclusive_group(required=True)
+    execution.add_argument("--run", action="store_true", help="Run all enrichment stages")
+    execution.add_argument("--dry-run", action="store_true", help="Preview currently eligible work without writes")
     parser.add_argument("--direct-limit", type=int, default=10, help="Maximum direct URLs to process")
     parser.add_argument("--company-limit", type=int, default=10, help="Maximum company and ATS items to process")
     parser.add_argument("--external-limit", type=int, default=10, help="Maximum external-search items to process")
@@ -81,8 +90,6 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    if not args.run and not args.dry_run:
-        raise SystemExit("Choose --run or --dry-run")
     if args.replay and (not args.run or not args.job_key):
         raise SystemExit("--replay requires --run and an exact --job-key")
 
@@ -103,10 +110,11 @@ def main() -> None:
         )
         return
 
-    from src.schema import migrate_trailing_headers, validate_workbook_or_raise
+    from src.schema import migrate_trailing_headers
 
-    migrate_trailing_headers(sheet_client)
-    validate_workbook_or_raise(sheet_client)
+    migration = migrate_trailing_headers(sheet_client)
+    if not migration.ok:
+        raise RuntimeError("Workbook schema migration did not produce a valid workbook")
     provider: SearchProvider = DisabledSearchProvider() if args.no_web_search else DuckDuckGoHtmlSearchProvider()
     print(
         json.dumps(

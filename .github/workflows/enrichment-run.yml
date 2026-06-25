@@ -1,0 +1,178 @@
+name: Job Tracker Enrichment Run
+
+on:
+  workflow_run:
+    workflows:
+      - Job Tracker Daily Run
+    branches:
+      - main
+    types:
+      - completed
+  schedule:
+    - cron: "0 14 * * 0"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Production cycle to run
+        required: true
+        default: daily
+        type: choice
+        options:
+          - daily
+          - weekly
+          - backfill
+      job_key:
+        description: Optional exact Jobs job_key for a controlled single-job run
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: job-tracker-enrichment-production
+  cancel-in-progress: false
+
+jobs:
+  enrichment:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Resolve production mode
+        id: mode
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            mode="daily"
+            job_key=""
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
+            mode="weekly"
+            job_key=""
+          else
+            mode="${{ inputs.mode }}"
+            job_key="${{ inputs.job_key }}"
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "job_key=$job_key" >> "$GITHUB_OUTPUT"
+
+      - name: Validate required secrets
+        shell: bash
+        run: |
+          if [ -z "${GOOGLE_SHEET_ID}" ]; then
+            echo "::error::Missing required GitHub Secret: GOOGLE_SHEET_ID"
+            exit 1
+          fi
+          if [ -z "${GOOGLE_SERVICE_ACCOUNT_JSON}" ]; then
+            echo "::error::Missing required GitHub Secret: GOOGLE_SERVICE_ACCOUNT_JSON"
+            exit 1
+          fi
+
+      - name: Write temporary credential file
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          raw_value = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
+          json.loads(raw_value)
+          path = Path(os.environ["RUNNER_TEMP"]) / "google-service-account.json"
+          path.write_text(raw_value, encoding="utf-8")
+          path.chmod(0o600)
+          with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as handle:
+              handle.write(f"GOOGLE_APPLICATION_CREDENTIALS={path}\n")
+          PY
+
+      - name: Run validation
+        run: |
+          python -m compileall -q src
+          pytest
+
+      - name: Run production enrichment
+        shell: bash
+        run: |
+          set -o pipefail
+          args=(--run --mode "${{ steps.mode.outputs.mode }}")
+          if [ -n "${{ steps.mode.outputs.job_key }}" ]; then
+            args+=(--job-key "${{ steps.mode.outputs.job_key }}")
+          fi
+          python -m src.enrichment.production "${args[@]}" | tee "$RUNNER_TEMP/enrichment_production.json"
+
+      - name: Write GitHub Step Summary
+        if: always()
+        shell: bash
+        env:
+          FINAL_STATUS: ${{ job.status }}
+          RUN_MODE: ${{ steps.mode.outputs.mode }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          from src.workflow_output import load_json_output
+
+          data = load_json_output(Path(os.environ["RUNNER_TEMP"]) / "enrichment_production.json")
+          recovery = data.get("recovery") or {}
+          direct = data.get("direct_link") or {}
+          company = data.get("company_ats") or {}
+          external = data.get("external_search") or {}
+          lifecycle = data.get("lifecycle") or {}
+          rescore = data.get("rescore") or {}
+          dashboard = data.get("dashboard") or {}
+          health = data.get("health_metrics") or {}
+
+          rows = [
+              ("Mode", os.environ.get("RUN_MODE") or "not_resolved"),
+              ("Jobs evaluated for potential priority", direct.get("jobs_evaluated", 0)),
+              ("Jobs enqueued", direct.get("jobs_enqueued", 0)),
+              ("Queue backlog", health.get("enrichment_backlog", 0)),
+              ("Stale in-progress rows recovered", recovery.get("queue_rows_recovered", 0)),
+              ("Direct-link attempts", direct.get("direct_attempts", 0)),
+              ("ATS attempts", company.get("company_ats_attempts", 0)),
+              ("External-search jobs evaluated", external.get("jobs_evaluated", 0)),
+              ("External queries executed", external.get("queries_executed", 0)),
+              ("External cache hits", external.get("cache_hits", 0)),
+              ("Successful enrichments", int(direct.get("enriched", 0)) + int(company.get("enriched", 0)) + int(external.get("enriched", 0))),
+              ("Partial enrichments", int(direct.get("partial", 0)) + int(company.get("partial", 0)) + int(external.get("partial", 0))),
+              ("Ambiguous matches", int(direct.get("ambiguous", 0)) + int(company.get("ambiguous", 0)) + int(external.get("ambiguous", 0))),
+              ("Direct retryable failures", direct.get("retryable_failures", 0)),
+              ("Direct permanent failures", direct.get("permanent_failures", 0)),
+              ("Company or ATS failures", company.get("failures", 0)),
+              ("External search failures", external.get("search_failures", 0)),
+              ("Verified jobs after scoring", rescore.get("verified_jobs", 0)),
+              ("Jobs marked likely closed", lifecycle.get("likely_closed", 0)),
+              ("Jobs marked closed", int(lifecycle.get("confirmed_closed", 0)) + int(lifecycle.get("expired", 0))),
+              ("Dashboard rows written", dashboard.get("dashboard_rows_written", 0)),
+              ("Dashboard health rows written", data.get("health_rows_written", 0)),
+              ("Digest rows written", dashboard.get("digest_rows_written", 0)),
+              ("Final status", os.environ.get("FINAL_STATUS", "unknown")),
+          ]
+
+          summary_path = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          with summary_path.open("a", encoding="utf-8") as handle:
+              handle.write("### Job Tracker Enrichment Run\n\n")
+              handle.write("| Metric | Value |\n")
+              handle.write("| --- | ---: |\n")
+              for metric, value in rows:
+                  handle.write(f"| {metric} | {value} |\n")
+          PY
