@@ -244,6 +244,7 @@ def _build_run_record(summary: ProductionRunSummary) -> dict[str, Any]:
         int(summary.rescore.get("jobs_selected") or 0),
         int(lifecycle.get("jobs_evaluated") or 0),
     )
+    rows_read = max(evaluated, int(summary.rescore.get("jobs_read") or 0))
     return {
         "run_id": f"sprint32_{summary.mode}_{run_timestamp}",
         "run_type": f"sprint_32_enrichment_{summary.mode}",
@@ -262,7 +263,7 @@ def _build_run_record(summary: ProductionRunSummary) -> dict[str, Any]:
         ),
         "records_updated": updated,
         "records_failed": failures,
-        "rows_read": evaluated,
+        "rows_read": rows_read,
         "config_companies_rows": 0,
         "config_searches_rows": 0,
         "companies_read": 0,
@@ -369,8 +370,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run production-safe daily, weekly, or controlled-backfill enrichment"
     )
-    parser.add_argument("--run", action="store_true")
-    parser.add_argument("--dry-run", action="store_true")
+    execution = parser.add_mutually_exclusive_group(required=True)
+    execution.add_argument("--run", action="store_true")
+    execution.add_argument("--dry-run", action="store_true")
     parser.add_argument("--mode", choices=("daily", "weekly", "backfill"), default="daily")
     parser.add_argument("--job-key", default="")
     parser.add_argument("--direct-limit", type=int)
@@ -394,8 +396,6 @@ def _overridden_limits(args: argparse.Namespace) -> ProductionLimits:
 
 def main() -> None:
     args = parse_args()
-    if not args.run and not args.dry_run:
-        raise SystemExit("Choose --run or --dry-run")
 
     from src.enrichment.company_run import preview_company_ats_queue
     from src.enrichment.lifecycle import preview_lifecycle_checks
@@ -410,8 +410,8 @@ def main() -> None:
     sheet_client = SheetClient.from_settings(settings)
     limits = _overridden_limits(args)
 
-    validate_workbook_or_raise(sheet_client)
     if args.dry_run:
+        validate_workbook_or_raise(sheet_client)
         preview = {
             "mode": args.mode,
             "limits": asdict(limits),
@@ -423,8 +423,9 @@ def main() -> None:
         print(json.dumps(preview, indent=2))
         return
 
-    migrate_trailing_headers(sheet_client)
-    validate_workbook_or_raise(sheet_client)
+    migration = migrate_trailing_headers(sheet_client)
+    if not migration.ok:
+        raise RuntimeError("Workbook schema migration did not produce a valid workbook")
     scoring_rules = load_scoring_rules(settings.scoring_rules_path)
     summary = run_production_cycle(
         sheet_client,
