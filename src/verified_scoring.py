@@ -21,6 +21,7 @@ KNOWN_ATS_DOMAIN_SUFFIXES = {
     "taleo.net",
     "workday.com",
 }
+AUTHORITY_SUBDOMAIN_PREFIXES = ("www.", "careers.", "jobs.")
 TRUSTED_DIRECT_SOURCE_MARKERS = {
     "ats",
     "company_site",
@@ -44,6 +45,9 @@ MODEL_TAG_PREFIXES = (
     "score_status=",
     "enrichment_status=",
     "verification_gaps=",
+    "verified_alert_tier=",
+    "verified_score_basis=",
+    "verified_total_score=",
 )
 
 
@@ -71,6 +75,17 @@ def _hostname(value: Any) -> str:
         return ""
 
 
+def _host_variants(value: Any) -> set[str]:
+    host = _hostname(value)
+    if not host:
+        return set()
+    variants = {host}
+    for prefix in AUTHORITY_SUBDOMAIN_PREFIXES:
+        if host.startswith(prefix) and len(host) > len(prefix):
+            variants.add(host[len(prefix) :])
+    return variants
+
+
 def _host_matches(host: str, configured_host: str) -> bool:
     return bool(host and configured_host and (host == configured_host or host.endswith(f".{configured_host}")))
 
@@ -86,9 +101,7 @@ def _configured_authority_hosts(company_context: dict[str, Any] | None) -> set[s
         "canonical_career_url",
         "ats_url",
     ):
-        host = _hostname(company_context.get(field_name))
-        if host:
-            hosts.add(host)
+        hosts.update(_host_variants(company_context.get(field_name)))
     return hosts
 
 
@@ -131,9 +144,24 @@ def _source_is_untrusted(job: JobPosting) -> bool:
     return any(term in marker for term in UNTRUSTED_SOURCE_MARKERS)
 
 
+def _source_is_trusted_direct(job: JobPosting) -> bool:
+    marker = _source_marker(job)
+    return not _source_is_untrusted(job) and any(term in marker for term in TRUSTED_DIRECT_SOURCE_MARKERS)
+
+
 def _minimum_match_confidence(rules: dict[str, Any]) -> int:
     config = rules.get("verified_scoring", {}) or {}
     return _safe_int(config.get("minimum_match_confidence"), 80)
+
+
+def _candidate_urls(job: JobPosting) -> list[str]:
+    return list(
+        dict.fromkeys(
+            str(value or "").strip()
+            for value in (job.enrichment_source_url, job.canonical_url)
+            if str(value or "").strip()
+        )
+    )
 
 
 def _authoritative_source_assessment(
@@ -143,50 +171,31 @@ def _authoritative_source_assessment(
 ) -> tuple[bool, str, str]:
     minimum_confidence = _minimum_match_confidence(rules)
     confidence = job.enrichment_match_confidence
-    candidate_urls = list(
-        dict.fromkeys(
-            str(value or "").strip()
-            for value in (job.enrichment_source_url, job.canonical_url)
-            if str(value or "").strip()
-        )
-    )
+    candidate_urls = _candidate_urls(job)
+    untrusted_source = _source_is_untrusted(job)
+    trusted_direct = _source_is_trusted_direct(job)
 
-    if job.enrichment_source_url or job.enrichment_status in {"partial", "enriched"}:
-        marker = _source_marker(job)
-        untrusted_source = _source_is_untrusted(job)
-        trusted_direct = any(term in marker for term in TRUSTED_DIRECT_SOURCE_MARKERS) and not untrusted_source
-        if confidence is None:
-            trusted_url = next((url for url in candidate_urls if trusted_direct and is_safe_public_url(url)), "")
-            if trusted_url:
-                return True, trusted_url, "trusted direct source"
-            return False, "", f"below {minimum_confidence}"
-        if confidence < minimum_confidence:
-            return False, "", f"below {minimum_confidence}"
-        if untrusted_source:
-            authoritative_url = next(
-                (url for url in candidate_urls if is_authoritative_posting_url(url, company_context)),
-                "",
-            )
-            if not authoritative_url:
-                return False, "", "authoritative domain not confirmed"
-            return True, authoritative_url, f"accepted {confidence}"
-        safe_url = next((url for url in candidate_urls if is_safe_public_url(url)), "")
-        if not safe_url:
-            return False, "", "authoritative URL invalid"
-        return True, safe_url, f"accepted {confidence}"
-
-    if _source_is_untrusted(job):
-        return False, "", "not validated"
-
-    candidate_url = str(job.canonical_url or "").strip()
-    marker = _source_marker(job)
-    trusted_direct = any(term in marker for term in TRUSTED_DIRECT_SOURCE_MARKERS)
-    if not is_authoritative_posting_url(candidate_url, company_context):
-        if not trusted_direct or not is_safe_public_url(candidate_url):
-            return False, "", "authoritative domain not confirmed"
     if confidence is not None and confidence < minimum_confidence:
         return False, "", f"below {minimum_confidence}"
-    return True, candidate_url, "trusted direct source" if confidence is None else f"accepted {confidence}"
+    if untrusted_source and confidence is None:
+        return False, "", "not validated"
+
+    authoritative_url = next(
+        (url for url in candidate_urls if is_authoritative_posting_url(url, company_context)),
+        "",
+    )
+    if authoritative_url:
+        confidence_status = f"accepted {confidence}" if confidence is not None else "trusted authoritative source"
+        return True, authoritative_url, confidence_status
+
+    safe_url = next((url for url in candidate_urls if is_safe_public_url(url)), "")
+    if trusted_direct and safe_url:
+        confidence_status = f"accepted {confidence}" if confidence is not None else "trusted direct source"
+        return True, safe_url, confidence_status
+
+    if confidence is None and (job.enrichment_source_url or job.enrichment_status in {"partial", "enriched"}):
+        return False, "", f"below {minimum_confidence}"
+    return False, "", "authoritative domain not confirmed"
 
 
 def verification_gaps(
@@ -208,6 +217,34 @@ def verification_gaps(
     if not authoritative:
         gaps.append("authoritative matched source")
     return gaps, source_url, confidence_status
+
+
+def _compensation_unknown(job: JobPosting) -> bool:
+    return job.salary_min is None and job.salary_max is None and job.total_comp_estimate is None
+
+
+def _tier_for_score(score: int, rules: dict[str, Any]) -> str:
+    thresholds = rules.get("alert_thresholds", {}) or {}
+    if score >= _safe_int(thresholds.get("immediate_review"), 85):
+        return "immediate_review"
+    if score >= _safe_int(thresholds.get("strong_fit"), 75):
+        return "strong_fit"
+    if score >= _safe_int(thresholds.get("track_only"), 65):
+        return "track_only"
+    return str((rules.get("alert_tiers", {}) or {}).get("below_track", "ignore"))
+
+
+def _verified_score(job: JobPosting, rules: dict[str, Any]) -> tuple[int, str, str]:
+    if not _compensation_unknown(job):
+        return job.total_score, job.alert_tier, "complete_category_scale"
+
+    weights = rules.get("category_weights", {}) or {}
+    score_scale = _safe_int(rules.get("score_scale"), 100)
+    configured_total = sum(max(0, _safe_int(value)) for value in weights.values()) or score_scale
+    compensation_weight = max(0, _safe_int(weights.get("comp_score"), 0))
+    available_total = max(1, configured_total - compensation_weight)
+    normalized_score = min(score_scale, round(job.total_score * score_scale / available_total))
+    return normalized_score, _tier_for_score(normalized_score, rules), "normalized_without_compensation"
 
 
 def _recommendation(job: JobPosting) -> str:
@@ -245,16 +282,19 @@ def finalize_verified_scoring(
     complete_threshold = _safe_int(verification_rules.get("complete_evidence_threshold"), 70)
     partial_threshold = _safe_int(verification_rules.get("partial_evidence_threshold"), 40)
     gaps, source_url, confidence_status = verification_gaps(job, rules, company_context)
+    score_basis = "pending_verification"
 
     excluded = hard_exclude or job.alert_tier == "exclude" or "hard_exclude=true" in _normalize(job.score_explanation)
     if excluded:
         job.score_status = "excluded"
         job.verified_total_score = 0
         job.verified_alert_tier = "exclude"
+        score_basis = "hard_exclusion"
     elif job.evidence_completeness_score >= complete_threshold and not gaps:
         job.score_status = "verified"
-        job.verified_total_score = job.total_score
-        job.verified_alert_tier = job.alert_tier
+        verified_score, verified_tier, score_basis = _verified_score(job, rules)
+        job.verified_total_score = verified_score
+        job.verified_alert_tier = verified_tier
     elif job.evidence_completeness_score >= partial_threshold or job.enrichment_status in {"partial", "enriched"}:
         job.score_status = "partially_verified"
         job.verified_total_score = None
@@ -278,9 +318,12 @@ def finalize_verified_scoring(
         f"authoritative_source={source_url or 'pending'}",
         f"match_confidence_status={confidence_status}",
         f"verification_gaps={','.join(gaps) if gaps else 'none'}",
+        f"verified_total_score={job.verified_total_score if job.verified_total_score is not None else 'pending'}",
+        f"verified_alert_tier={job.verified_alert_tier or 'pending'}",
+        f"verified_score_basis={score_basis}",
         f"recommended_action={_recommendation(job)}",
     ]
-    if job.salary_min is None and job.salary_max is None and job.total_comp_estimate is None:
+    if _compensation_unknown(job):
         tags.append("compensation_status=unknown")
     job.score_explanation = _replace_model_tags(job.score_explanation, tags)
     return job
