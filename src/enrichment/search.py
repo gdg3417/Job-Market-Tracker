@@ -55,6 +55,7 @@ GENERIC_COMPANY_DOMAIN_TERMS = {
     "america",
     "the",
 }
+COMPANY_COMPACT_IGNORED_TERMS = {"and", "the"}
 CAREER_URL_MARKERS = ("career", "careers", "job", "jobs", "position", "positions", "opening", "openings")
 
 AUTHORITATIVE_ATS_HOST_SUFFIXES = (
@@ -158,6 +159,8 @@ class SearchCacheRecord:
         return urls
 
     def is_fresh(self, *, now: str, ttl: timedelta = DEFAULT_CACHE_TTL) -> bool:
+        if clean_text(self.status).lower() == "failed":
+            return False
         searched = parse_timestamp(self.searched_at)
         current = parse_timestamp(now)
         return searched is not None and current is not None and timedelta(0) <= current - searched <= ttl
@@ -283,13 +286,22 @@ def _company_domain_candidate(url: str, company: str) -> bool:
         return False
     parts = urlsplit(normalized)
     host = (parts.hostname or "").lower()
-    host_compact = re.sub(r"[^a-z0-9]+", "", host)
-    company_tokens = [
+    host_labels = [label for label in re.findall(r"[a-z0-9]+", host) if label]
+    company_tokens = re.findall(r"[a-z0-9]+", clean_text(company).lower())
+    all_identity_tokens = [token for token in company_tokens if token not in COMPANY_COMPACT_IGNORED_TERMS]
+    distinctive_tokens = [
         token
-        for token in re.findall(r"[a-z0-9]+", clean_text(company).lower())
+        for token in company_tokens
         if len(token) >= 4 and token not in GENERIC_COMPANY_DOMAIN_TERMS
     ]
-    if not company_tokens or not any(token in host_compact for token in company_tokens):
+    identity_variants = {
+        "".join(all_identity_tokens),
+        "".join(distinctive_tokens),
+    } - {""}
+    identity_match = any(label in identity_variants for label in host_labels) or any(
+        token == label for token in distinctive_tokens for label in host_labels
+    )
+    if not identity_match:
         return False
     career_text = f"{host} {parts.path}".lower()
     return any(marker in career_text for marker in CAREER_URL_MARKERS)
@@ -347,6 +359,15 @@ def _quoted(value: str) -> str:
     return f'"{text}"' if text else ""
 
 
+def _expanded_title(value: str) -> str:
+    text = clean_text(value)
+    text = re.sub(r"\bsr\.?\b", "Senior", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bmgr\.?\b", "Manager", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bvp\b", "Vice President", text, flags=re.IGNORECASE)
+    text = re.sub(r"[^A-Za-z0-9&]+", " ", text)
+    return clean_text(text)
+
+
 def _query(*parts: str) -> str:
     return clean_text(" ".join(part for part in parts if clean_text(part)))
 
@@ -377,20 +398,26 @@ def indeed_search_url(job: JobPosting) -> str:
 
 
 def build_search_plan(job: JobPosting, config: CompanyEnrichmentConfig | None = None) -> SearchPlan:
-    title = _quoted(job.title)
-    company = _quoted(job.company)
+    original_title = _quoted(job.title)
+    expanded_title = _expanded_title(job.title)
     location = _quoted(job.location)
+    canonical_company = config.canonical_name if config and config.canonical_name else job.company
+    company = _quoted(canonical_company)
     queries: list[str] = []
 
+    scoped_hosts: list[str] = []
     career_domain = clean_text(config.career_domain).lower() if config else ""
-    if career_domain:
-        queries.append(_query(f"site:{career_domain}", title, company, location))
-
     configured_host = _hostname(config.career_search_url or config.source_url) if config else ""
-    if configured_host and configured_host != career_domain:
-        queries.append(_query(f"site:{configured_host}", title, company, location))
+    for host in (career_domain, configured_host):
+        if host and host not in scoped_hosts:
+            scoped_hosts.append(host)
 
-    queries.append(_query(company, title, location, "jobs"))
+    for host in scoped_hosts:
+        queries.append(_query(f"site:{host}", original_title, location))
+        queries.append(_query(f"site:{host}", expanded_title))
+
+    queries.append(_query(company, expanded_title, location, "jobs"))
+    queries.append(_query(company, expanded_title, "jobs"))
 
     unique_queries: list[str] = []
     seen: set[str] = set()
@@ -400,7 +427,7 @@ def build_search_plan(job: JobPosting, config: CompanyEnrichmentConfig | None = 
             unique_queries.append(query)
             seen.add(key)
 
-    primary_query = unique_queries[0] if unique_queries else _query(company, title, "jobs")
+    primary_query = unique_queries[0] if unique_queries else _query(company, expanded_title, "jobs")
     manual_links: list[tuple[str, str]] = []
     if config and clean_text(config.career_search_url):
         manual_links.append(("Company careers", clean_text(config.career_search_url)))
