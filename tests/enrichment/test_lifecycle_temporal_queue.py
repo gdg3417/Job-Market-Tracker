@@ -1,5 +1,6 @@
 from src.enrichment.lifecycle import LifecycleObservation, apply_lifecycle_observation, run_lifecycle_checks
 from src.enrichment.models import EnrichmentQueueItem
+from src.enrichment.queue import enrichment_id_for
 from src.models import JobPosting
 
 NOW = "2026-06-25T18:00:00Z"
@@ -110,25 +111,23 @@ def test_reopened_queue_row_gets_fresh_retry_budget_and_clean_state():
         enrichment_source_url="https://careers.topgolf.com/jobs/123",
         enrichment_match_confidence=95,
     )
-    queue = [
-        EnrichmentQueueItem(
-            enrichment_id="enr-1",
-            job_key=job.job_key,
-            status="closed",
-            current_stage="external_search",
-            attempt_count=8,
-            next_attempt_at="2026-07-01T18:00:00Z",
-            last_attempted_at="2026-06-20T18:00:00Z",
-            matched_url="https://example.com/old-result",
-            match_confidence=22,
-            fields_recovered="title, location",
-            error_type="posting_closed",
-            error_message="old state",
-            created_at="2026-06-01T18:00:00Z",
-            updated_at="2026-06-20T18:00:00Z",
-        )
-    ]
-    client = FakeSheetClient([job], queue)
+    old_row = EnrichmentQueueItem(
+        enrichment_id="enr-1",
+        job_key=job.job_key,
+        status="closed",
+        current_stage="external_search",
+        attempt_count=8,
+        next_attempt_at="2026-07-01T18:00:00Z",
+        last_attempted_at="2026-06-20T18:00:00Z",
+        matched_url="https://example.com/old-result",
+        match_confidence=22,
+        fields_recovered="title, location",
+        error_type="posting_closed",
+        error_message="old state",
+        created_at="2026-06-01T18:00:00Z",
+        updated_at="2026-06-20T18:00:00Z",
+    )
+    client = FakeSheetClient([job], [old_row])
 
     def checker(_job, *, checked_at):
         return LifecycleObservation(
@@ -141,7 +140,11 @@ def test_reopened_queue_row_gets_fresh_retry_budget_and_clean_state():
         )
 
     run_lifecycle_checks(client, checker=checker, now=NOW, write_run_record=False)
-    row = client.tables["Enrichment_Queue"][0]
+    assert len(client.tables["Enrichment_Queue"]) == 2
+    rows = {row["enrichment_id"]: row for row in client.tables["Enrichment_Queue"]}
+    current_id = enrichment_id_for(job.job_key, job.canonical_url)
+    assert rows["enr-1"]["status"] == "closed"
+    row = rows[current_id]
     assert row["status"] == "pending"
     assert row["current_stage"] == "direct_url"
     assert row["attempt_count"] == 0
