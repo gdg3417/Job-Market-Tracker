@@ -8,11 +8,17 @@ import yaml
 
 from src.models import JobPosting
 from src.potential_priority import apply_potential_priority, load_potential_priority_rules
+from src.verified_scoring import finalize_verified_scoring
 
 ScoreMatch = tuple[int, list[str]]
 DEFAULT_SPARSE_GMAIL_REVIEW_REASON = "sparse_gmail_high_signal_title"
 DEFAULT_GENERIC_GMAIL_DESCRIPTION_PREFIXES = ["Extracted from Gmail job alert"]
 DEFAULT_INCOMPLETE_WORK_MODEL_VALUES = {"", "unknown", "unspecified", "not specified", "n/a", "na", "none"}
+COMPANY_CONTEXT_SCORING_FIELDS = (
+    "industry_bucket",
+    "ownership_type",
+    "company_size_bucket",
+)
 
 
 def load_scoring_rules(path: str | Path) -> dict[str, Any]:
@@ -35,6 +41,7 @@ def load_scoring_rules(path: str | Path) -> dict[str, Any]:
     rules["potential_priority"] = (
         load_potential_priority_rules(potential_rules_path) if potential_rules_path.exists() else {}
     )
+    rules["verified_scoring"] = dict((rules["potential_priority"] or {}).get("verified_scoring") or {})
     return rules
 
 
@@ -48,17 +55,12 @@ def _as_text(value: Any) -> str:
     return str(value)
 
 
-def _text_for_job(job: JobPosting, company_context: dict[str, Any] | None = None) -> str:
+def _text_for_job(job: JobPosting) -> str:
     parts = [
         job.title,
-        job.company,
-        job.location,
-        job.remote_status,
-        job.work_model,
         job.role_family,
         job.role_level,
         job.description_text,
-        _as_text(company_context or {}),
     ]
     return re.sub(r"\s+", " ", " ".join(parts)).strip().lower()
 
@@ -159,10 +161,9 @@ def _score_fit(job: JobPosting, text: str, rules: dict[str, Any]) -> tuple[int, 
     role_level_match = ""
     title_and_level = f"{job.title} {job.role_level}".lower()
     for keyword, points in rules.get("role_level_keywords", {}).items():
-        if _contains_phrase(title_and_level, str(keyword)):
-            if int(points) > role_level_score:
-                role_level_score = int(points)
-                role_level_match = str(keyword)
+        if _contains_phrase(title_and_level, str(keyword)) and int(points) > role_level_score:
+            role_level_score = int(points)
+            role_level_match = str(keyword)
     family_score = int(rules.get("role_family_fit", {}).get(job.role_family, 0))
     family_matches: list[str] = []
     for family, keywords in rules.get("role_family_keywords", {}).items():
@@ -227,22 +228,39 @@ def _score_location(job: JobPosting, rules: dict[str, Any]) -> tuple[int, str]:
     return int(location_rules.get("default", 1)), "default location"
 
 
-def _score_industry(company_context: dict[str, Any] | None, rules: dict[str, Any]) -> tuple[int, list[str]]:
+def _safe_context_boost(company_context: dict[str, Any] | None, cap: int) -> tuple[int, str]:
+    if not company_context or cap <= 0:
+        return 0, ""
+    raw = company_context.get("score_boost_points", company_context.get("company_preference_boost", 0))
+    try:
+        requested = max(0, int(float(str(raw or 0).strip())))
+    except (TypeError, ValueError):
+        requested = 0
+    if requested <= 0:
+        return 0, ""
+    applied = min(cap, requested)
+    return applied, f"target company boost {applied} (requested {requested}, capped {cap})"
+
+
+def _score_company_context(company_context: dict[str, Any] | None, rules: dict[str, Any]) -> tuple[int, list[str]]:
+    max_points = int((rules.get("category_weights", {}) or {}).get("industry_match_score", 5))
     if not company_context:
         return 0, []
-    text = _as_text(company_context).lower()
+    text = _as_text([company_context.get(field_name) for field_name in COMPANY_CONTEXT_SCORING_FIELDS]).lower()
     matches: list[str] = []
-    score = 0
+    industry_score = 0
     for keyword, points in rules.get("industry_fit", {}).items():
         if _contains_phrase(text, str(keyword)):
             matches.append(str(keyword))
-            score = max(score, int(points))
+            industry_score = max(industry_score, int(points))
     for keyword in rules.get("industry_exclusions", []) or []:
         if _contains_phrase(text, str(keyword)):
             matches.append(f"excluded industry: {keyword}")
-            score = 0
-            break
-    return score, matches
+            return 0, matches
+    boost, boost_reason = _safe_context_boost(company_context, max_points)
+    if boost_reason:
+        matches.append(boost_reason)
+    return min(max_points, max(industry_score, boost)), matches
 
 
 def _negative_penalty(text: str, rules: dict[str, Any]) -> tuple[int, list[str], bool]:
@@ -284,40 +302,40 @@ def _explain(label: str, score: int, evidence: list[str] | str | None = None) ->
 
 
 def score_job(job: JobPosting, rules: dict[str, Any], company_context: dict[str, Any] | None = None) -> JobPosting:
-    text = _text_for_job(job, company_context)
+    job_text = _text_for_job(job)
     weights = rules.get("category_weights", {})
     targets = rules.get("category_match_targets", {})
     positive = rules.get("positive_keywords", {})
 
-    fit_score, fit_evidence = _score_fit(job, text, rules)
+    fit_score, fit_evidence = _score_fit(job, job_text, rules)
     p_and_l_score, p_and_l_matches = _weighted_keyword_score(
-        text,
+        job_text,
         list(positive.get("p_and_l_path", []) or []),
         int(weights.get("p_and_l_path_score", 20)),
         int(targets.get("p_and_l_path_score", 3)),
     )
     growth_score, growth_matches = _weighted_keyword_score(
-        text,
+        job_text,
         list(positive.get("growth_ownership", []) or []),
         int(weights.get("growth_ownership_score", 20)),
         int(targets.get("growth_ownership_score", 3)),
     )
     executive_score, executive_matches = _weighted_keyword_score(
-        text,
+        job_text,
         list(positive.get("executive_exposure", []) or []),
         int(weights.get("executive_exposure_score", 15)),
         int(targets.get("executive_exposure_score", 2)),
     )
     cadence_score, cadence_matches = _weighted_keyword_score(
-        text,
+        job_text,
         list(positive.get("operating_cadence", []) or []),
         int(weights.get("operating_cadence_score", 10)),
         int(targets.get("operating_cadence_score", 2)),
     )
     comp_score, comp_evidence = _score_comp(job, rules)
     location_score, location_evidence = _score_location(job, rules)
-    industry_score, industry_matches = _score_industry(company_context, rules)
-    penalty, penalty_matches, hard_exclude = _negative_penalty(text, rules)
+    industry_score, industry_matches = _score_company_context(company_context, rules)
+    penalty, penalty_matches, hard_exclude = _negative_penalty(job_text, rules)
 
     raw_total = sum(
         [
@@ -369,6 +387,12 @@ def score_job(job: JobPosting, rules: dict[str, Any], company_context: dict[str,
     apply_potential_priority(
         job,
         rules.get("potential_priority", {}) or {},
+        company_context=company_context,
+        hard_exclude=hard_exclude,
+    )
+    finalize_verified_scoring(
+        job,
+        rules,
         company_context=company_context,
         hard_exclude=hard_exclude,
     )

@@ -101,6 +101,7 @@ def test_verified_rescore_preserves_completed_enrichment_status():
             "location": "Plano, TX Hybrid",
             "salary": "$180,000 to $220,000",
             "url": "https://example.com/jobs/verified-enriched",
+            "source_primary": "company_site",
             "description": (
                 "Responsibilities include owning revenue growth, pricing strategy, margin expansion, and operating reviews. "
                 "Lead a cross-functional team and report to the business unit president. Qualifications include a bachelor's "
@@ -112,7 +113,11 @@ def test_verified_rescore_preserves_completed_enrichment_status():
     job.enrichment_completed_at = "2026-06-23T12:00:00Z"
     job.enrichment_source_url = "https://example.com/jobs/verified-enriched"
 
-    scored = score_job(job, rules, company_context={"industry_bucket": "manufacturing"})
+    scored = score_job(
+        job,
+        rules,
+        company_context={"industry_bucket": "manufacturing", "career_domain": "example.com"},
+    )
 
     assert scored.score_status == "verified"
     assert scored.enrichment_status == "enriched"
