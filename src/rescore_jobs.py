@@ -87,10 +87,20 @@ def build_rescore_run_record(result: RescoreJobsResult, *, gmail_only: bool = Fa
     }
 
 
-def _matches_company(job: JobPosting, company: str | None) -> bool:
+def _canonical_company_key(company: str, company_contexts: dict[str, dict[str, Any]]) -> str:
+    context = company_context_for_name(company, company_contexts)
+    canonical_name = str((context or {}).get("resolved_canonical_company_name") or company).strip()
+    return normalize_key_part(canonical_name)
+
+
+def _matches_company(
+    job: JobPosting,
+    company: str | None,
+    company_contexts: dict[str, dict[str, Any]],
+) -> bool:
     if not company:
         return True
-    return normalize_key_part(job.company) == normalize_key_part(company)
+    return _canonical_company_key(job.company, company_contexts) == _canonical_company_key(company, company_contexts)
 
 
 def _selected(
@@ -102,10 +112,11 @@ def _selected(
     company: str | None,
     all_open: bool,
     gmail_only: bool,
+    company_contexts: dict[str, dict[str, Any]],
 ) -> bool:
     if job_key and job.job_key != job_key:
         return False
-    if not _matches_company(job, company):
+    if not _matches_company(job, company, company_contexts):
         return False
     if gmail_only and not _is_open_gmail_job(job):
         return False
@@ -152,6 +163,7 @@ def rescore_jobs(
             company=company,
             all_open=all_open,
             gmail_only=gmail_only,
+            company_contexts=company_contexts,
         ):
             result.jobs_skipped += 1
             continue
@@ -201,12 +213,26 @@ def parse_args() -> argparse.Namespace:
     state_group.add_argument("--provisional-only", action="store_true", help="Only re-score provisional jobs")
     state_group.add_argument("--verified-only", action="store_true", help="Only re-score verified jobs")
     parser.add_argument("--job-key", help="Only re-score the exact job_key")
-    parser.add_argument("--company", help="Only re-score jobs for the normalized company name")
+    parser.add_argument("--company", help="Only re-score jobs for the company or a configured alias")
     parser.add_argument("--all-open", action="store_true", help="Re-score every open or reopened job")
     parser.add_argument("--dry-run", action="store_true", help="Calculate changes without writing Jobs, Runs, Dashboard, or Digest")
-    parser.add_argument("--refresh-dashboard", action="store_true", help="Refresh Dashboard and Digest after successful writes")
+    dashboard_group = parser.add_mutually_exclusive_group()
+    dashboard_group.add_argument("--refresh-dashboard", action="store_true", help="Refresh Dashboard and Digest after successful writes")
+    dashboard_group.add_argument("--no-refresh", action="store_true", help="Skip the legacy Dashboard and Digest refresh")
     parser.add_argument("--no-run-log", action="store_true", help="Do not append a rescore record to Runs")
     return parser.parse_args()
+
+
+def _selection_requested(args: argparse.Namespace) -> bool:
+    return any(
+        [
+            args.job_key,
+            args.company,
+            args.provisional_only,
+            args.verified_only,
+            args.all_open,
+        ]
+    )
 
 
 def main() -> None:
@@ -214,6 +240,8 @@ def main() -> None:
     settings = load_settings()
     rules = load_scoring_rules(settings.scoring_rules_path)
     sheet_client = SheetClient.from_settings(settings)
+    legacy_gmail_mode = not _selection_requested(args)
+    refresh_dashboard = args.refresh_dashboard or (legacy_gmail_mode and not args.no_refresh)
     result = rescore_jobs(
         sheet_client,
         rules,
@@ -221,12 +249,14 @@ def main() -> None:
         verified_only=args.verified_only,
         job_key=args.job_key,
         company=args.company,
-        all_open=args.all_open or not any([args.job_key, args.company, args.provisional_only, args.verified_only]),
+        all_open=args.all_open,
+        gmail_only=legacy_gmail_mode,
         dry_run=args.dry_run,
-        refresh_dashboard=args.refresh_dashboard,
+        refresh_dashboard=refresh_dashboard,
         append_run=not args.no_run_log,
     )
-    print(json.dumps({"run_mode": "sprint_30_verified_rescore", "status": "success", **result.to_dict()}, indent=2))
+    run_mode = "sprint_26_potential_priority_rescore" if legacy_gmail_mode else "sprint_30_verified_rescore"
+    print(json.dumps({"run_mode": run_mode, "status": "success", **result.to_dict()}, indent=2))
 
 
 if __name__ == "__main__":
