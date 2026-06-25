@@ -83,3 +83,32 @@ def test_inactive_configuration_is_not_resolved():
     )
 
     assert resolve_company_config("Inactive Company", [config]) is None
+
+
+def test_legacy_source_active_false_does_not_disable_separate_enrichment_default():
+    configs = load_company_configs(FakeSheetClient([{"company_name": "Topgolf", "active": "FALSE"}]))
+
+    assert resolve_company_config("Topgolf", configs) is not None
+
+
+def test_related_legal_entity_row_does_not_override_toyota_parent_default():
+    configs = load_company_configs(
+        FakeSheetClient(
+            [
+                {
+                    "company_name": "Toyota Financial Services",
+                    "career_search_url": "https://example.com/tfs-specific",
+                    "enrichment_active": True,
+                }
+            ]
+        )
+    )
+
+    parent = resolve_company_config("Toyota Motor North America", configs)
+    financial_services = resolve_company_config("Toyota Financial Services", configs)
+
+    assert parent is not None
+    assert parent.career_search_url == "https://careers.toyota.com/us/search-results"
+    assert financial_services is not None
+    assert financial_services.company_name == "Toyota Financial Services"
+    assert financial_services.career_search_url == "https://example.com/tfs-specific"
