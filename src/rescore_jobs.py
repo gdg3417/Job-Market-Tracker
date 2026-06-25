@@ -59,14 +59,14 @@ def _increment_state_counts(result: RescoreJobsResult, job: JobPosting) -> None:
         result.enrichment_pending_jobs += 1
 
 
-def build_rescore_run_record(result: RescoreJobsResult) -> dict[str, Any]:
+def build_rescore_run_record(result: RescoreJobsResult, *, gmail_only: bool = False) -> dict[str, Any]:
     now = utc_now_iso()
     run_timestamp = now.replace(":", "").replace("-", "").replace("+0000", "Z").replace("+00:00", "Z")
     return {
-        "run_id": f"sprint30_rescore_{run_timestamp}",
-        "run_type": "sprint_30_verified_rescore",
-        "source_type": "jobs",
-        "source_name": "Selected Jobs rows",
+        "run_id": f"{'sprint26_gmail_rescore' if gmail_only else 'sprint30_rescore'}_{run_timestamp}",
+        "run_type": "sprint_22_sparse_gmail_rescore" if gmail_only else "sprint_30_verified_rescore",
+        "source_type": GMAIL_SOURCE if gmail_only else "jobs",
+        "source_name": "Open Gmail jobs" if gmail_only else "Selected Jobs rows",
         "status": "success",
         "started_at": now,
         "finished_at": now,
@@ -173,7 +173,7 @@ def rescore_jobs(
         result.dashboard_refreshed = True
 
     if append_run and not dry_run:
-        sheet_client.append_run(build_rescore_run_record(result))
+        sheet_client.append_run(build_rescore_run_record(result, gmail_only=gmail_only))
 
     return result
 
