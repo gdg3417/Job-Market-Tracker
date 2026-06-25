@@ -21,11 +21,22 @@ A job is verified only when all of the following are present:
 2. Credible company.
 3. Credible location or remote designation.
 4. Meaningful job description.
-5. Authoritative employer or ATS posting URL.
-6. Accepted match confidence when enrichment or external discovery supplied the evidence.
+5. Authoritative employer or ATS posting URL, or a controlled direct source.
+6. Accepted match confidence when alert, enrichment, or external-search evidence supplied the match.
 7. Evidence completeness at or above the configured threshold.
 
-Salary is not required. Missing compensation is recorded as `compensation_status=unknown`.
+Unrecognized or search-derived sources cannot become verified from a safe URL alone. They require accepted match confidence and an employer, configured company, or known ATS domain.
+
+## Missing compensation
+
+Salary is not required for verification. When compensation is missing:
+
+1. `comp_score` remains zero in the raw score because no compensation evidence exists.
+2. The verified score is normalized across the other configured categories.
+3. `compensation_status=unknown` and `verified_score_basis=normalized_without_compensation` are recorded.
+4. The role remains eligible for the `Needs salary research` section.
+
+Known compensation below the configured floor is not normalized and remains negative evidence.
 
 ## Company context
 
@@ -36,7 +47,9 @@ Company context is resolved from `Config_Companies` and `Target_Companies` by:
 3. Parent company.
 4. Explicit company aliases.
 
-Company context can provide industry scoring and a capped company preference boost. It cannot award P&L, growth, executive exposure, or operating cadence points without job-posting evidence.
+Company context can provide industry scoring and a capped company preference boost. Only structured industry, ownership, and company-size fields can award industry points. URLs, notes, P&L rationale, and other context fields cannot create job-level or industry score points.
+
+P&L, growth, executive exposure, operating cadence, fit, and penalty keywords are evaluated from role fields and the posting description. Company names, locations, URLs, and company notes are excluded from those keyword calculations.
 
 ## Audit fields
 
@@ -45,15 +58,36 @@ The score explanation records:
 - `authoritative_source`
 - `match_confidence_status`
 - `verification_gaps`
+- `verified_total_score`
+- `verified_alert_tier`
+- `verified_score_basis`
 - `recommended_action`
 - `compensation_status` when compensation is unknown
 
 ## Rescore commands
 
+The historical command remains backward compatible. It re-scores open Gmail jobs and refreshes Dashboard and Digest:
+
+```powershell
+python -m src.rescore_jobs
+```
+
+Run the legacy Gmail rescore without the Dashboard and Digest refresh:
+
+```powershell
+python -m src.rescore_jobs --no-refresh
+```
+
 Preview all open jobs without writing:
 
 ```powershell
 python -m src.rescore_jobs --all-open --dry-run
+```
+
+Rescore all open jobs and refresh Dashboard and Digest:
+
+```powershell
+python -m src.rescore_jobs --all-open --refresh-dashboard
 ```
 
 Rescore provisional jobs and refresh Dashboard and Digest:
@@ -68,7 +102,7 @@ Rescore one job:
 python -m src.rescore_jobs --job-key JOB_KEY --refresh-dashboard
 ```
 
-Rescore one company:
+Rescore one company or configured company alias:
 
 ```powershell
 python -m src.rescore_jobs --company "Toyota North America" --refresh-dashboard
