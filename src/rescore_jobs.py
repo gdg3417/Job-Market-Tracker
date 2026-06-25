@@ -24,6 +24,7 @@ class RescoreJobsResult:
     gmail_open_jobs: int = 0
     jobs_updated: int = 0
     jobs_would_update: int = 0
+    jobs_unchanged: int = 0
     manual_review_jobs: int = 0
     provisional_jobs: int = 0
     partially_verified_jobs: int = 0
@@ -57,6 +58,14 @@ def _increment_state_counts(result: RescoreJobsResult, job: JobPosting) -> None:
         result.high_potential_jobs += 1
     if job.enrichment_status == "pending":
         result.enrichment_pending_jobs += 1
+
+
+def _meaningful_record_changed(before: dict[str, Any], after: dict[str, Any]) -> bool:
+    before_values = dict(before)
+    after_values = dict(after)
+    before_values.pop("updated_at", None)
+    after_values.pop("updated_at", None)
+    return before_values != after_values
 
 
 def build_rescore_run_record(result: RescoreJobsResult, *, gmail_only: bool = False) -> dict[str, Any]:
@@ -144,6 +153,7 @@ def rescore_jobs(
     dry_run: bool = False,
     refresh_dashboard: bool = False,
     append_run: bool = True,
+    only_if_changed: bool = False,
 ) -> RescoreJobsResult:
     if provisional_only and verified_only:
         raise ValueError("provisional_only and verified_only cannot both be true")
@@ -169,15 +179,20 @@ def rescore_jobs(
             continue
 
         result.jobs_selected += 1
+        before = job.to_dict()
         scored = score_job(
             job,
             scoring_rules,
             company_context=company_context_for_name(job.company, company_contexts),
         )
-        result.jobs_would_update += 1
-        if not dry_run:
-            sheet_client.update_job(row_number, scored)
-            result.jobs_updated += 1
+        changed = _meaningful_record_changed(before, scored.to_dict())
+        if only_if_changed and not changed:
+            result.jobs_unchanged += 1
+        else:
+            result.jobs_would_update += 1
+            if not dry_run:
+                sheet_client.update_job(row_number, scored)
+                result.jobs_updated += 1
         _increment_state_counts(result, scored)
 
     if refresh_dashboard and not dry_run:
