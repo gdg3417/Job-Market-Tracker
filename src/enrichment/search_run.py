@@ -29,11 +29,11 @@ from src.enrichment.search import (
     build_search_plan,
     candidate_authority_rank,
     clean_text,
+    duckduckgo_search_url,
     encode_result_urls,
     is_authoritative_candidate,
     normalize_candidate_url,
     query_id_for,
-    duckduckgo_search_url,
 )
 from src.models import JobPosting
 
@@ -246,7 +246,7 @@ def _dedupe_candidate_urls(
             continue
         seen.add(url)
         urls.append(url)
-    urls.sort(key=lambda url: (candidate_authority_rank(url, config, company=company), url))
+    urls.sort(key=lambda url: candidate_authority_rank(url, config, company=company))
     return urls
 
 
@@ -348,12 +348,19 @@ def run_external_search_enrichment(
     company_configs = list(configs) if configs is not None else load_company_configs(sheet_client)
     provider = provider or DuckDuckGoHtmlSearchProvider()
     fetcher = fetcher or DirectLinkFetcher()
+
+    requested_candidate_urls = [clean_text(value) for value in candidate_urls or [] if clean_text(value)]
     supplied_urls: list[str] = []
-    for value in candidate_urls or []:
+    invalid_urls: list[str] = []
+    for value in requested_candidate_urls:
         normalized = normalize_candidate_url(value)
-        if normalized and normalized not in supplied_urls:
+        if not normalized:
+            invalid_urls.append(value)
+        elif normalized not in supplied_urls:
             supplied_urls.append(normalized)
-    if supplied_urls and not job_key:
+    if invalid_urls:
+        raise ValueError(f"Manual candidate URLs must be safe public HTTP or HTTPS URLs: {', '.join(invalid_urls)}")
+    if requested_candidate_urls and not job_key:
         raise ValueError("Manual candidate URLs require an exact job_key")
 
     summary = ExternalSearchRunSummary()
@@ -371,6 +378,20 @@ def run_external_search_enrichment(
         )
     ]
     due.sort(key=lambda pair: priority_sort_key(pair[1]))
+
+    if supplied_urls:
+        if job_key not in job_by_key:
+            raise ValueError(f"Manual candidate validation job was not found: {job_key}")
+        queue_for_job = [pair for pair in queue_rows if pair[1].job_key == job_key]
+        if not queue_for_job:
+            raise ValueError(f"Manual candidate validation requires an existing enrichment queue item for job_key={job_key}")
+        if not due:
+            _, current = queue_for_job[0]
+            raise ValueError(
+                "Manual candidate validation requires a terminal company_ats or external_search queue item; "
+                f"current_stage={current.current_stage}, status={current.status}"
+            )
+
     evidence_by_id = _existing_evidence(sheet_client)
     cache = _search_cache_from_evidence(evidence_by_id)
 
