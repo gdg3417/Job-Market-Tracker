@@ -162,10 +162,11 @@ jobs:
               ("Ambiguous matches", int(direct.get("ambiguous", 0)) + int(company.get("ambiguous", 0)) + int(external.get("ambiguous", 0))),
               ("Retryable failures", direct.get("retryable_failures", 0)),
               ("Permanent failures", direct.get("permanent_failures", 0)),
-              ("Verified scores created", rescore.get("verified_jobs", 0)),
+              ("Verified jobs after scoring", rescore.get("verified_jobs", 0)),
               ("Jobs marked likely closed", lifecycle.get("likely_closed", 0)),
               ("Jobs marked closed", int(lifecycle.get("confirmed_closed", 0)) + int(lifecycle.get("expired", 0))),
               ("Dashboard rows written", dashboard.get("dashboard_rows_written", 0)),
+              ("Dashboard health rows written", data.get("health_rows_written", 0)),
               ("Digest rows written", dashboard.get("digest_rows_written", 0)),
               ("Final status", os.environ.get("FINAL_STATUS", "unknown")),
           ]
