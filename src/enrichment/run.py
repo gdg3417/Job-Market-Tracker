@@ -3,12 +3,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from src.enrichment.extractors import extract_job_evidence
 from src.enrichment.fetcher import DirectLinkFetcher, EnrichmentFetchError
+from src.enrichment.lifecycle import max_attempts_for_priority, next_retry_at
 from src.enrichment.matcher import assess_match
 from src.enrichment.merge import merge_verified_evidence
 from src.enrichment.models import EnrichmentEvidence, EnrichmentQueueItem, EnrichmentRunSummary, utc_now_iso
@@ -23,7 +23,6 @@ from src.enrichment.queue import (
 from src.models import JobPosting
 
 DEFAULT_PRIORITY_RULES_PATH = Path(__file__).resolve().parents[2] / "config" / "potential_priority_rules.yml"
-MAX_DIRECT_ATTEMPTS = 3
 DIRECT_FALLBACK_ERROR_TYPES = {"not_found", "access_blocked"}
 REPLAYABLE_QUEUE_STATUSES = {"not_found", "ambiguous", "permanent_failure"}
 
@@ -57,12 +56,6 @@ def _load_priority_rules(path: str | Path | None) -> dict[str, Any]:
     from src.potential_priority import load_potential_priority_rules
 
     return load_potential_priority_rules(path)
-
-
-def _next_attempt(attempt_count: int, now: str) -> str:
-    parsed = datetime.fromisoformat(now.replace("Z", "+00:00"))
-    delay_hours = min(24, 2 ** max(0, attempt_count - 1))
-    return (parsed + timedelta(hours=delay_hours)).astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _existing_evidence(sheet_client: Any) -> dict[str, tuple[int, dict[str, Any]]]:
@@ -157,6 +150,12 @@ def _prepare_replay(
     job.enrichment_status = "pending"
     _update_job(sheet_client, job_row_number, job)
     return queue_row_number, item
+
+
+def _set_retry_state(item: EnrichmentQueueItem, job: JobPosting, *, timestamp: str, retryable: bool) -> None:
+    item.status = "retryable_failure" if retryable else "permanent_failure"
+    item.next_attempt_at = next_retry_at(item.attempt_count, timestamp) if retryable else ""
+    job.enrichment_status = _job_error_status(item.status)
 
 
 def run_direct_link_enrichment(
@@ -290,16 +289,17 @@ def run_direct_link_enrichment(
                     summary.not_found += 1
         except EnrichmentFetchError as exc:
             direct_fallback = exc.error_type in DIRECT_FALLBACK_ERROR_TYPES
-            retryable = exc.retryable and not direct_fallback and item.attempt_count < MAX_DIRECT_ATTEMPTS
+            maximum = max_attempts_for_priority(item.priority)
+            retryable = exc.retryable and not direct_fallback and item.attempt_count < maximum
             if direct_fallback:
                 item.status = "not_found"
+                item.next_attempt_at = ""
+                job.enrichment_status = "not_found"
             else:
-                item.status = "retryable_failure" if retryable else "permanent_failure"
+                _set_retry_state(item, job, timestamp=timestamp, retryable=retryable)
             item.error_type = exc.error_type
             item.error_message = str(exc)[:1000]
             item.matched_url = exc.final_url
-            item.next_attempt_at = _next_attempt(item.attempt_count, timestamp) if retryable else ""
-            job.enrichment_status = _job_error_status(item.status)
             job.enrichment_source_url = exc.final_url or item.lead_url
             failure_evidence = _record_failure_evidence(
                 item=item,
@@ -318,12 +318,11 @@ def run_direct_link_enrichment(
             else:
                 summary.permanent_failures += 1
         except Exception as exc:
-            retryable = item.attempt_count < MAX_DIRECT_ATTEMPTS
-            item.status = "retryable_failure" if retryable else "permanent_failure"
+            maximum = max_attempts_for_priority(item.priority)
+            retryable = item.attempt_count < maximum
+            _set_retry_state(item, job, timestamp=timestamp, retryable=retryable)
             item.error_type = "unexpected_error"
             item.error_message = str(exc)[:1000]
-            item.next_attempt_at = _next_attempt(item.attempt_count, timestamp) if retryable else ""
-            job.enrichment_status = _job_error_status(item.status)
             job.enrichment_source_url = item.lead_url
             failure_evidence = _record_failure_evidence(
                 item=item,
