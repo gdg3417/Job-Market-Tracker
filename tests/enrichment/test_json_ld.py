@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from src.enrichment.extractors import extract_job_evidence
 from src.enrichment.fetcher import FetchResult
 from src.enrichment.json_ld import best_job_posting
@@ -43,6 +45,29 @@ def posting_html(*, unit: str, minimum: int, maximum: int, description: str = "W
         },
     }
     return f'<script type="application/ld+json">{json.dumps(posting)}</script>'
+
+
+def linkedin_metadata_html(company: str, title: str, location: str, job_id: str) -> str:
+    description = " ".join(
+        [
+            "Responsibilities include leading strategic planning, building business cases, and partnering with executive leadership.",
+            "Qualifications include extensive relevant experience, strong analytical skills, and excellent communication capabilities.",
+            "The role drives growth priorities, operating decisions, market analysis, performance reporting, and cross-functional execution.",
+            "The successful candidate will manage multiple priorities, develop recommendations, and support senior stakeholders.",
+        ]
+        * 3
+    )
+    metadata_title = f"{company} hiring {title} in {location} | LinkedIn"
+    return f"""
+    <html>
+      <head>
+        <meta property="og:title" content="{metadata_title}">
+        <meta property="og:site_name" content="LinkedIn">
+        <link rel="canonical" href="https://www.linkedin.com/jobs/view/{title.lower().replace(' ', '-')}-{job_id}">
+      </head>
+      <body><h1>{title}</h1><p>{description}</p></body>
+    </html>
+    """
 
 
 def test_valid_json_ld_job_posting_is_extracted():
@@ -93,6 +118,33 @@ def test_evidence_does_not_store_raw_html_and_captures_hash():
     assert "<script" not in evidence.description_text
     assert len(evidence.raw_content_hash) == 64
     assert evidence.team_leadership_text.startswith("Lead strategic planning")
+
+
+@pytest.mark.parametrize(
+    ("company", "title", "location", "job_id"),
+    [
+        ("Topgolf", "Sr Manager, Strategic Planning", "Dallas, TX", "4417965465"),
+        ("Deloitte", "Strategic Planning Manager", "Dallas, TX", "4431303282"),
+        ("divcon", "Director of Product Strategy", "Dallas, TX", "4422518097"),
+    ],
+)
+def test_linkedin_metadata_title_recovers_company_title_and_location(company: str, title: str, location: str, job_id: str):
+    url = f"https://www.linkedin.com/jobs/view/{job_id}"
+    result = FetchResult(
+        requested_url=url,
+        final_url=url,
+        status_code=200,
+        content_type="text/html",
+        text=linkedin_metadata_html(company, title, location, job_id),
+    )
+
+    evidence = extract_job_evidence(result, job_key=f"job-{job_id}", enrichment_id=f"enr-{job_id}")
+
+    assert evidence is not None
+    assert evidence.source_title == title
+    assert evidence.source_company == company
+    assert evidence.source_location == location
+    assert evidence.canonical_url.endswith(job_id)
 
 
 def test_non_job_page_is_rejected():
