@@ -11,6 +11,7 @@ from src.enrichment.lifecycle import (
     schedule_enrichment_retry,
 )
 from src.enrichment.models import EnrichmentQueueItem
+from src.enrichment.queue import enrichment_id_for
 from src.models import JobPosting
 
 NOW = "2026-06-25T18:00:00Z"
@@ -311,11 +312,26 @@ def test_workbook_run_records_closure_evidence_and_closes_queue():
     assert len(client.tables["Runs"]) == 1
 
 
-def test_reopen_resets_every_closed_queue_row():
+def test_reopen_activates_only_current_canonical_queue_row():
     posting = job(status="confirmed_closed", closed_date="2026-06-20", enrichment_status="closed")
+    current_id = enrichment_id_for(posting.job_key, posting.canonical_url)
+    obsolete_url = "https://www.linkedin.com/jobs/view/1"
+    obsolete_id = enrichment_id_for(posting.job_key, obsolete_url)
     queue = [
-        EnrichmentQueueItem(enrichment_id="enr-1", job_key=posting.job_key, status="closed"),
-        EnrichmentQueueItem(enrichment_id="enr-2", job_key=posting.job_key, status="closed"),
+        EnrichmentQueueItem(
+            enrichment_id=obsolete_id,
+            job_key=posting.job_key,
+            lead_url=obsolete_url,
+            status="closed",
+            attempt_count=5,
+        ),
+        EnrichmentQueueItem(
+            enrichment_id=current_id,
+            job_key=posting.job_key,
+            lead_url=posting.canonical_url,
+            status="closed",
+            attempt_count=6,
+        ),
     ]
     client = FakeSheetClient([posting], queue)
 
@@ -325,7 +341,11 @@ def test_reopen_resets_every_closed_queue_row():
     run_lifecycle_checks(client, checker=checker, now=NOW, write_run_record=False)
     assert client.tables["Jobs"][0]["status"] == "reopened"
     assert client.tables["Jobs"][0]["enrichment_status"] == "pending"
-    assert {row["status"] for row in client.tables["Enrichment_Queue"]} == {"pending"}
+    rows = {row["enrichment_id"]: row for row in client.tables["Enrichment_Queue"]}
+    assert rows[current_id]["status"] == "pending"
+    assert rows[current_id]["attempt_count"] == 0
+    assert rows[obsolete_id]["status"] == "closed"
+    assert rows[obsolete_id]["attempt_count"] == 5
 
 
 def test_job_key_scope_does_not_mutate_unrelated_retries_and_dry_run_previews_changes():
