@@ -104,6 +104,10 @@ enrichment:
   include_medium_when_capacity: false
   complete_evidence_threshold: 70
   partial_evidence_threshold: 40
+verified_scoring:
+  complete_evidence_threshold: 70
+  partial_evidence_threshold: 40
+  minimum_match_confidence: 80
 evidence_weights:
   full_description: 30
   responsibilities: 15
