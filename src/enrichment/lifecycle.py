@@ -13,32 +13,11 @@ from src.enrichment.extractors import extract_job_evidence
 from src.enrichment.fetcher import DirectLinkFetcher, EnrichmentFetchError
 from src.enrichment.models import EnrichmentEvidence, EnrichmentQueueItem, utc_now_iso
 from src.enrichment.queue import evidence_id_for
-from src.models import JobPosting, days_between, normalize_key_part, parse_iso_date, today_iso
+from src.enrichment.search import is_authoritative_candidate
+from src.models import JobPosting, days_between, parse_iso_date, today_iso
 
 TERMINAL_JOB_STATUSES = {"confirmed_closed", "closed", "expired"}
-QUEUE_RETRY_STATUSES = {"retryable_failure", "not_found", "permanent_failure"}
-KNOWN_AGGREGATOR_HOSTS = {
-    "indeed.com",
-    "www.indeed.com",
-    "linkedin.com",
-    "www.linkedin.com",
-    "glassdoor.com",
-    "www.glassdoor.com",
-    "ziprecruiter.com",
-    "www.ziprecruiter.com",
-}
-KNOWN_ATS_HOST_TERMS = (
-    "greenhouse.io",
-    "lever.co",
-    "ashbyhq.com",
-    "smartrecruiters.com",
-    "myworkdayjobs.com",
-    "workdayjobs.com",
-    "icims.com",
-    "phenompeople.com",
-    "oraclecloud.com",
-    "successfactors.com",
-)
+QUEUE_RETRY_STATUSES = {"retryable_failure"}
 CLOSED_TEXT_PATTERNS = (
     r"job (?:is )?no longer available",
     r"position (?:has been|is) filled",
@@ -86,7 +65,6 @@ class LifecycleObservation:
 
     @property
     def evidence_key(self) -> str:
-        """Deduplicate equivalent observations made on the same calendar day."""
         payload = {
             "checked_date": str(parse_iso_date(self.checked_at) or self.checked_at),
             "source_type": self.source_type,
@@ -98,7 +76,6 @@ class LifecycleObservation:
             "redirected_to_generic": self.redirected_to_generic,
             "valid_through": self.valid_through,
             "error_type": self.error_type,
-            "message": self.message,
             "supporting_absence": self.supporting_absence,
         }
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -186,7 +163,7 @@ def schedule_enrichment_retry(
     now: str,
     policy: LifecyclePolicy | None = None,
 ) -> bool:
-    """Normalize a retryable queue item to the Sprint 31 cadence."""
+    """Normalize only an existing transient failure without altering stage handoff statuses."""
     if item.status not in QUEUE_RETRY_STATUSES:
         return False
     maximum = max_attempts_for_priority(item.priority, policy)
@@ -202,12 +179,10 @@ def schedule_enrichment_retry(
     current = _parse_timestamp(item.next_attempt_at)
     desired_time = _parse_timestamp(desired)
     should_update_time = current is None or (desired_time is not None and current < desired_time)
-    changed = item.status != "retryable_failure" or should_update_time
-    item.status = "retryable_failure"
     if should_update_time:
         item.next_attempt_at = desired
-    item.updated_at = now
-    return changed
+        item.updated_at = now
+    return should_update_time
 
 
 def _is_expired(valid_through: str, checked_at: str) -> bool:
@@ -248,10 +223,10 @@ def _evidence_type(observation: LifecycleObservation) -> str:
         return "valid_through_expired"
     if observation.authoritative and observation.http_status in {404, 410}:
         return "authoritative_http_missing"
-    if observation.authoritative and observation.listed is False:
-        return "authoritative_listing_missing"
     if observation.authoritative and observation.redirected_to_generic:
         return "authoritative_generic_redirect"
+    if observation.authoritative and observation.listed is False:
+        return "authoritative_listing_missing"
     if _is_authoritative_open(observation):
         return "authoritative_open"
     if _is_temporary_failure(observation):
@@ -294,17 +269,22 @@ def apply_lifecycle_observation(
         job.status = "confirmed_closed"
         job.closed_date = str(parse_iso_date(observation.checked_at) or today_iso())
         job.lifecycle_miss_count = max(job.lifecycle_miss_count, rules.authoritative_misses_to_close)
+        job.missed_count = 0
         reason = "Authoritative posting explicitly reports the role is closed"
     elif observation.authoritative and _is_expired(observation.valid_through, observation.checked_at):
         expiry_date = str(parse_iso_date(observation.valid_through) or parse_iso_date(observation.checked_at) or today_iso())
         job.mark_expired(expiry_date)
         job.lifecycle_miss_count = max(job.lifecycle_miss_count, rules.authoritative_misses_to_close)
+        job.missed_count = 0
         reason = f"Structured validThrough expired on {expiry_date}"
     elif _is_authoritative_open(observation):
         job.lifecycle_miss_count = 0
+        job.missed_count = 0
         job.closed_date = ""
         if previous_status in TERMINAL_JOB_STATUSES or previous_status in {"likely_closed", "not_seen_once"}:
             job.status = "reopened"
+            job.enrichment_status = "pending"
+            job.enrichment_completed_at = ""
             reason = "Authoritative posting was rediscovered after a closure signal"
         else:
             job.status = "open"
@@ -312,6 +292,7 @@ def apply_lifecycle_observation(
         job.last_seen_date = str(parse_iso_date(observation.checked_at) or today_iso())
     elif _is_authoritative_absence(observation):
         job.lifecycle_miss_count += 1
+        job.missed_count = 0
         if job.lifecycle_miss_count >= rules.authoritative_misses_to_close:
             job.status = "confirmed_closed"
             job.closed_date = str(parse_iso_date(observation.checked_at) or today_iso())
@@ -326,8 +307,8 @@ def apply_lifecycle_observation(
         and observation.supporting_absence
         and days_between(job.first_seen_date, observation.checked_at) >= rules.gmail_likely_closed_after_days
     ):
-        job.lifecycle_miss_count += 1
-        if job.lifecycle_miss_count >= rules.gmail_supporting_misses_required:
+        job.missed_count += 1
+        if job.missed_count >= rules.gmail_supporting_misses_required:
             job.status = "likely_closed"
             reason = "Aged Gmail-only role has repeated supporting absence but no authoritative closure"
         else:
@@ -353,34 +334,25 @@ def apply_lifecycle_observation(
 
 def _host(url: str) -> str:
     try:
-        return (urlsplit(str(url or "").strip()).hostname or "").lower()
+        return (urlsplit(str(url or "").strip()).hostname or "").rstrip(".").lower()
     except ValueError:
         return ""
 
 
-def _company_host_match(job: JobPosting, host: str) -> bool:
-    company_tokens = [token for token in normalize_key_part(job.company).split("-") if len(token) >= 4]
-    return any(token in host.replace("-", "") for token in company_tokens)
+def _same_host(left: str, right: str) -> bool:
+    return bool(_host(left) and _host(left) == _host(right))
 
 
 def is_authoritative_lifecycle_url(url: str, job: JobPosting | None = None) -> bool:
-    host = _host(url)
-    if not host or host in KNOWN_AGGREGATOR_HOSTS:
-        return False
-    if any(term in host for term in KNOWN_ATS_HOST_TERMS):
-        return True
     if job is None:
-        return False
-    source_text = str(job.source_primary or "").lower()
-    if any(term in source_text for term in ("company", "career", "employer", "ats", "static")):
+        return is_authoritative_candidate(url)
+    if is_authoritative_candidate(url, company=job.company):
         return True
-    if (
+    return (
         str(job.enrichment_source_url or "").strip() == str(url or "").strip()
         and job.enrichment_status in {"enriched", "partial"}
         and (job.enrichment_match_confidence or 0) >= 80
-    ):
-        return True
-    return _company_host_match(job, host)
+    )
 
 
 def _looks_generic_redirect(requested_url: str, final_url: str) -> bool:
@@ -389,7 +361,7 @@ def _looks_generic_redirect(requested_url: str, final_url: str) -> bool:
         final = urlsplit(final_url)
     except ValueError:
         return False
-    if not final.netloc or requested.netloc.lower() != final.netloc.lower():
+    if not final.netloc or not _same_host(requested_url, final_url):
         return False
     requested_path = requested.path.rstrip("/") or "/"
     final_path = final.path.rstrip("/") or "/"
@@ -406,43 +378,56 @@ class DirectUrlLifecycleChecker:
         self.fetcher = fetcher or DirectLinkFetcher()
 
     def __call__(self, job: JobPosting, *, checked_at: str) -> LifecycleObservation:
-        source_url = str(job.enrichment_source_url or job.canonical_url or "").strip()
-        if not source_url:
+        requested_url = str(job.enrichment_source_url or job.canonical_url or "").strip()
+        if not requested_url:
             return LifecycleObservation(
                 checked_at=checked_at,
                 source_type="missing_url",
                 error_type="missing_url",
                 message="No lifecycle URL is available",
             )
-        authoritative = is_authoritative_lifecycle_url(source_url, job)
         try:
-            fetched = self.fetcher.fetch(source_url)
+            fetched = self.fetcher.fetch(requested_url)
+            authoritative = is_authoritative_lifecycle_url(fetched.final_url, job)
+            if not authoritative:
+                return LifecycleObservation(
+                    checked_at=checked_at,
+                    source_type="direct_url",
+                    source_url=fetched.final_url,
+                    http_status=fetched.status_code,
+                    error_type="non_authoritative_redirect" if _host(fetched.final_url) != _host(requested_url) else "",
+                    message="Final lifecycle URL is not an authoritative employer or ATS posting",
+                )
             extracted = extract_job_evidence(
                 fetched,
                 job_key=job.job_key,
                 enrichment_id=f"lifecycle_{job.job_key}",
                 retrieved_at=checked_at,
             )
+            explicit_closed = _explicit_closed_text(fetched.text)
+            generic_redirect = _looks_generic_redirect(requested_url, fetched.final_url)
             specific_posting = bool(extracted and extracted.source_title and extracted.description_text)
-            generic_redirect = _looks_generic_redirect(source_url, fetched.final_url)
             return LifecycleObservation(
                 checked_at=checked_at,
                 source_type="direct_url",
                 source_url=fetched.final_url,
-                authoritative=authoritative,
+                authoritative=True,
                 http_status=fetched.status_code,
-                listed=specific_posting if authoritative else None,
-                explicitly_closed=authoritative and _explicit_closed_text(fetched.text),
-                redirected_to_generic=authoritative and generic_redirect,
-                valid_through=extracted.valid_through if authoritative and extracted else "",
-                supporting_absence=generic_redirect or _explicit_closed_text(fetched.text),
+                listed=True if specific_posting else None,
+                explicitly_closed=explicit_closed,
+                redirected_to_generic=generic_redirect,
+                valid_through=extracted.valid_through if extracted else "",
+                supporting_absence=generic_redirect or explicit_closed,
+                message="Authoritative page could not be parsed as a specific posting" if not extracted else "",
             )
         except EnrichmentFetchError as exc:
+            source_url = exc.final_url or requested_url
+            authoritative = is_authoritative_lifecycle_url(source_url, job)
             missing = exc.status_code in {404, 410}
             return LifecycleObservation(
                 checked_at=checked_at,
                 source_type="direct_url_failure",
-                source_url=exc.final_url or source_url,
+                source_url=source_url,
                 authoritative=authoritative,
                 http_status=exc.status_code,
                 listed=False if authoritative and missing else None,
@@ -454,8 +439,8 @@ class DirectUrlLifecycleChecker:
             return LifecycleObservation(
                 checked_at=checked_at,
                 source_type="direct_url_failure",
-                source_url=source_url,
-                authoritative=authoritative,
+                source_url=requested_url,
+                authoritative=is_authoritative_lifecycle_url(requested_url, job),
                 error_type="unexpected_error",
                 message=str(exc),
             )
@@ -561,9 +546,7 @@ def lifecycle_health_metrics(
     average_attempts = round(sum(item.attempt_count for item in attempted) / len(attempted), 2) if attempted else 0.0
     success_rate = round(100 * len(successful) / len(attempted), 1) if attempted else 0.0
     return {
-        "open_verified_jobs": sum(
-            1 for job in job_rows if job.status in {"open", "reopened"} and job.score_status == "verified"
-        ),
+        "open_verified_jobs": sum(1 for job in job_rows if job.status in {"open", "reopened"} and job.score_status == "verified"),
         "open_provisional_jobs": sum(
             1
             for job in job_rows
@@ -586,6 +569,9 @@ def build_lifecycle_run_record(
     started_at: str,
     finished_at: str,
 ) -> dict[str, Any]:
+    started = _parse_timestamp(started_at)
+    finished = _parse_timestamp(finished_at)
+    duration = max(0, int((finished - started).total_seconds())) if started and finished else 0
     run_timestamp = finished_at.replace(":", "").replace("-", "").replace("+00:00", "Z")
     return {
         "run_id": f"sprint31_lifecycle_{run_timestamp}",
@@ -595,7 +581,7 @@ def build_lifecycle_run_record(
         "status": "success",
         "started_at": started_at,
         "finished_at": finished_at,
-        "duration_seconds": 0,
+        "duration_seconds": duration,
         "records_found": summary.jobs_evaluated,
         "records_inserted": summary.evidence_written,
         "records_updated": summary.jobs_updated,
@@ -621,16 +607,40 @@ def _normalize_queue_retry_rows(
     summary: LifecycleRunSummary,
 ) -> None:
     for row_number, item in queue_rows:
-        if item.status not in QUEUE_RETRY_STATUSES:
-            continue
-        before_status = item.status
         if not schedule_enrichment_retry(item, now=now, policy=policy):
             continue
         sheet_client.update_record("Enrichment_Queue", row_number, item.to_dict())
         if item.status == "permanent_failure":
             summary.queue_permanent_failures += 1
-        elif before_status != "retryable_failure" or item.next_attempt_at:
+        else:
             summary.queue_retries_scheduled += 1
+
+
+def _sync_queue_for_lifecycle(
+    sheet_client: Any,
+    queue_matches: list[tuple[int, EnrichmentQueueItem]],
+    job: JobPosting,
+    *,
+    timestamp: str,
+) -> None:
+    for queue_row, item in queue_matches:
+        changed = False
+        if job.status in TERMINAL_JOB_STATUSES:
+            changed = item.status != "closed" or bool(item.next_attempt_at)
+            item.status = "closed"
+            item.next_attempt_at = ""
+            item.error_type = "posting_closed"
+            item.error_message = job.lifecycle_reason[:1000]
+        elif job.status == "reopened" and item.status == "closed":
+            item.status = "pending"
+            item.current_stage = "direct_url"
+            item.next_attempt_at = ""
+            item.error_type = ""
+            item.error_message = ""
+            changed = True
+        if changed:
+            item.updated_at = timestamp
+            sheet_client.update_record("Enrichment_Queue", queue_row, item.to_dict())
 
 
 def run_lifecycle_checks(
@@ -643,23 +653,21 @@ def run_lifecycle_checks(
     policy: LifecyclePolicy | None = None,
     write_run_record: bool = True,
 ) -> LifecycleRunSummary:
-    timestamp = now or utc_now_iso()
+    started_at = now or utc_now_iso()
+    timestamp = started_at
     lifecycle_checker = checker or DirectUrlLifecycleChecker()
     rules = policy or LifecyclePolicy()
     summary = LifecycleRunSummary()
     job_rows = [(row, job) for row, job in _jobs(sheet_client) if not job_key or job.job_key == job_key]
-    queue_rows = [(row, EnrichmentQueueItem.from_dict(record)) for row, record in _records(sheet_client, "Enrichment_Queue")]
-    queue_by_job = {item.job_key: (row, item) for row, item in queue_rows if item.job_key}
+    all_queue_rows = [(row, EnrichmentQueueItem.from_dict(record)) for row, record in _records(sheet_client, "Enrichment_Queue")]
+    queue_rows = [(row, item) for row, item in all_queue_rows if not job_key or item.job_key == job_key]
+    queue_by_job: dict[str, list[tuple[int, EnrichmentQueueItem]]] = {}
+    for row, item in queue_rows:
+        queue_by_job.setdefault(item.job_key, []).append((row, item))
     evidence_by_id = _existing_evidence(sheet_client)
     summary.jobs_evaluated = len(job_rows)
 
-    _normalize_queue_retry_rows(
-        sheet_client,
-        queue_rows,
-        now=timestamp,
-        policy=rules,
-        summary=summary,
-    )
+    _normalize_queue_retry_rows(sheet_client, queue_rows, now=timestamp, policy=rules, summary=summary)
 
     due_jobs = [(row, job) for row, job in job_rows if _is_due(job, timestamp)]
     due_jobs.sort(
@@ -690,39 +698,16 @@ def run_lifecycle_checks(
         summary.expired += int(job.status == "expired")
         summary.reopened += int(job.status == "reopened")
         summary.open_confirmed += int(job.status == "open" and decision.evidence_type == "authoritative_open")
-
-        queue_match = queue_by_job.get(job.job_key)
-        if queue_match is None:
-            continue
-        queue_row, item = queue_match
-        queue_changed = False
-        if job.status in TERMINAL_JOB_STATUSES:
-            queue_changed = item.status != "closed" or bool(item.next_attempt_at)
-            item.status = "closed"
-            item.next_attempt_at = ""
-            item.error_type = "posting_closed"
-            item.error_message = job.lifecycle_reason[:1000]
-            item.updated_at = timestamp
-        elif job.status == "reopened" and item.status == "closed":
-            item.status = "pending"
-            item.current_stage = "direct_url"
-            item.next_attempt_at = ""
-            item.error_type = ""
-            item.error_message = ""
-            item.updated_at = timestamp
-            queue_changed = True
-        if queue_changed:
-            sheet_client.update_record("Enrichment_Queue", queue_row, item.to_dict())
+        _sync_queue_for_lifecycle(sheet_client, queue_by_job.get(job.job_key, []), job, timestamp=timestamp)
 
     summary.health_metrics = lifecycle_health_metrics(
         [job for _, job in job_rows],
-        [item for _, item in queue_rows],
+        [item for _, item in all_queue_rows],
         now=timestamp,
     )
+    finished_at = utc_now_iso() if now is None else timestamp
     if write_run_record and hasattr(sheet_client, "append_run"):
-        sheet_client.append_run(
-            build_lifecycle_run_record(summary, started_at=timestamp, finished_at=timestamp)
-        )
+        sheet_client.append_run(build_lifecycle_run_record(summary, started_at=started_at, finished_at=finished_at))
     return summary
 
 
@@ -731,13 +716,30 @@ def preview_lifecycle_checks(
     *,
     now: str | None = None,
     job_key: str = "",
+    policy: LifecyclePolicy | None = None,
 ) -> dict[str, Any]:
     timestamp = now or utc_now_iso()
+    rules = policy or LifecyclePolicy()
     jobs = [
         job
         for _, job in _jobs(sheet_client)
         if (not job_key or job.job_key == job_key) and _is_due(job, timestamp)
     ]
+    retry_updates = []
+    for _, record in _records(sheet_client, "Enrichment_Queue"):
+        item = EnrichmentQueueItem.from_dict(record)
+        if job_key and item.job_key != job_key:
+            continue
+        before = item.to_dict()
+        if schedule_enrichment_retry(item, now=timestamp, policy=rules):
+            retry_updates.append(
+                {
+                    "job_key": item.job_key,
+                    "from_status": before["status"],
+                    "to_status": item.status,
+                    "next_attempt_at": item.next_attempt_at,
+                }
+            )
     return {
         "due_jobs": len(jobs),
         "jobs": [
@@ -751,12 +753,13 @@ def preview_lifecycle_checks(
             }
             for job in jobs
         ],
+        "retry_updates": retry_updates,
     }
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Check job posting lifecycle, schedule retries, and record closure evidence"
+        description="Check job posting lifecycle, schedule transient retries, and record closure evidence"
     )
     parser.add_argument("--run", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
