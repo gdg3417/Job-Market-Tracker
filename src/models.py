@@ -51,6 +51,7 @@ VALID_ENRICHMENT_STATUSES = {
     "permanent_failure",
     "closed",
 }
+TERMINAL_JOB_STATUSES = {"confirmed_closed", "closed", "expired"}
 OPTIONAL_INT_FIELDS = {
     "commute_estimate_minutes", "salary_min", "salary_max", "total_comp_estimate",
     "verified_total_score", "enrichment_match_confidence",
@@ -287,7 +288,7 @@ class JobPosting:
         previous_status = self.status
         self.last_seen_date = seen_date or today_iso()
         self.missed_count = 0
-        if previous_status in {"confirmed_closed", "closed", "expired"}:
+        if previous_status in TERMINAL_JOB_STATUSES:
             self.status = "reopened"
         elif previous_status in {"not_seen_once", "likely_closed", "reopened"}:
             self.status = "open"
@@ -296,10 +297,14 @@ class JobPosting:
         self.refresh_updated_at()
 
     def mark_missed(self, run_date: str | None = None) -> None:
+        if self.status in TERMINAL_JOB_STATUSES:
+            self.days_open = days_between(self.first_seen_date, self.closed_date or run_date or today_iso())
+            self.refresh_updated_at()
+            return
         self.missed_count += 1
         if self.missed_count == 1:
             self.status = "not_seen_once"
-        elif self.missed_count >= 2 and self.status not in {"confirmed_closed", "closed", "expired"}:
+        elif self.missed_count >= 2:
             self.status = "likely_closed"
         self.days_open = days_between(self.first_seen_date, run_date or today_iso())
         self.refresh_updated_at()
