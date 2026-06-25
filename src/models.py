@@ -26,6 +26,7 @@ JOB_FIELDS = [
     "lifecycle_last_checked_at", "lifecycle_next_check_at", "lifecycle_check_count",
     "lifecycle_miss_count", "lifecycle_last_evidence_key", "lifecycle_evidence_type",
     "lifecycle_evidence_url", "lifecycle_evidence_at", "lifecycle_reason",
+    "lifecycle_last_authoritative_miss_date",
 ]
 
 VALID_JOB_STATUSES = {
@@ -230,6 +231,7 @@ class JobPosting:
     lifecycle_evidence_url: str = ""
     lifecycle_evidence_at: str = ""
     lifecycle_reason: str = ""
+    lifecycle_last_authoritative_miss_date: str = ""
 
     def __post_init__(self) -> None:
         for field_name in OPTIONAL_INT_FIELDS:
