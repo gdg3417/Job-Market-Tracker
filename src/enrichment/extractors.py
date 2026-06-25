@@ -21,6 +21,7 @@ GENERIC_PAGE_TITLES = {
     "open positions",
     "join our team",
 }
+GENERIC_SITE_NAMES = {"linkedin", "indeed", "glassdoor", "ziprecruiter"}
 JOB_MARKERS = (
     "responsibilities",
     "qualifications",
@@ -81,6 +82,27 @@ def _page_title(soup: BeautifulSoup) -> str:
     return _clean_text(soup.title.get_text(" ", strip=True) if soup.title else "")
 
 
+def _linkedin_title_fields(value: str) -> tuple[str, str, str]:
+    title = _clean_text(value)
+    suffix_match = re.match(r"^(?P<body>.+?)\s*\|\s*LinkedIn$", title, flags=re.IGNORECASE)
+    if suffix_match is None:
+        return "", "", ""
+    body = suffix_match.group("body").strip()
+    hiring_marker = re.search(r"\s+hiring\s+", body, flags=re.IGNORECASE)
+    if hiring_marker is None:
+        return "", "", ""
+    company = body[: hiring_marker.start()].strip()
+    remainder = body[hiring_marker.end() :].strip()
+    location = ""
+    location_match = re.match(r"^(?P<title>.+)\s+in\s+(?P<location>[^|]+)$", remainder, flags=re.IGNORECASE)
+    if location_match is not None:
+        role_title = location_match.group("title").strip()
+        location = location_match.group("location").strip()
+    else:
+        role_title = remainder
+    return _clean_text(company), _clean_text(role_title), _clean_text(location)
+
+
 def _visible_text(soup: BeautifulSoup) -> str:
     for tag in soup(["script", "style", "noscript", "svg", "nav", "footer"]):
         tag.decompose()
@@ -104,12 +126,19 @@ def _team_leadership_text(description: str) -> str:
 
 
 def _metadata_candidate(soup: BeautifulSoup, final_url: str) -> dict[str, Any] | None:
-    title = _page_title(soup)
+    page_title = _page_title(soup)
     text = _visible_text(soup)
-    if not _looks_like_job_page(title, text):
+    if not _looks_like_job_page(page_title, text):
         return None
+
+    linkedin_company, linkedin_title, linkedin_location = _linkedin_title_fields(page_title)
+    title = linkedin_title or page_title
     company = _meta(soup, "hiringorganization", "job:company", "og:site_name", "application-name")
-    location = _meta(soup, "job:location", "joblocation", "location")
+    if company.lower() in GENERIC_SITE_NAMES:
+        company = ""
+    company = company or linkedin_company
+    location = _meta(soup, "job:location", "joblocation", "location") or linkedin_location
+
     description = _meta(soup, "description", "og:description")
     if len(description.split()) < 40:
         description = text
