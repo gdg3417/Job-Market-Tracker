@@ -153,7 +153,7 @@ def rescore_jobs(
     dry_run: bool = False,
     refresh_dashboard: bool = False,
     append_run: bool = True,
-    only_if_changed: bool = False,
+    only_if_changed: bool = True,
 ) -> RescoreJobsResult:
     if provisional_only and verified_only:
         raise ValueError("provisional_only and verified_only cannot both be true")
