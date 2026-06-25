@@ -15,7 +15,7 @@ from src.enrichment.extractors import extract_job_evidence
 from src.enrichment.fetcher import DirectLinkFetcher, EnrichmentFetchError
 from src.enrichment.matcher import assess_match
 from src.enrichment.models import EnrichmentEvidence, EnrichmentQueueItem, utc_now_iso
-from src.enrichment.queue import evidence_id_for
+from src.enrichment.queue import enrichment_id_for, evidence_id_for, normalize_lead_url
 from src.enrichment.search import is_authoritative_candidate
 from src.models import JobPosting, days_between, parse_iso_date, today_iso
 
@@ -569,12 +569,24 @@ def _is_due(job: JobPosting, now: str) -> bool:
     return due is not None and current is not None and due <= current
 
 
+def _lifecycle_enrichment_id(job_key: str) -> str:
+    return f"lifecycle_{hashlib.sha256(job_key.encode('utf-8')).hexdigest()[:24]}"
+
+
+def _lifecycle_evidence_id(job: JobPosting, observation: LifecycleObservation) -> str:
+    return evidence_id_for(
+        _lifecycle_enrichment_id(job.job_key),
+        observation.source_url,
+        observation.evidence_key,
+    )
+
+
 def _lifecycle_evidence(
     job: JobPosting,
     observation: LifecycleObservation,
     decision: LifecycleDecision,
 ) -> EnrichmentEvidence:
-    enrichment_id = f"lifecycle_{hashlib.sha256(job.job_key.encode('utf-8')).hexdigest()[:24]}"
+    enrichment_id = _lifecycle_enrichment_id(job.job_key)
     evidence = EnrichmentEvidence(
         job_key=job.job_key,
         enrichment_id=enrichment_id,
@@ -598,7 +610,7 @@ def _lifecycle_evidence(
             sort_keys=True,
         )[:1000],
     )
-    evidence.evidence_id = evidence_id_for(enrichment_id, observation.source_url, decision.evidence_key)
+    evidence.evidence_id = _lifecycle_evidence_id(job, observation)
     return evidence
 
 
@@ -711,37 +723,99 @@ def _normalize_queue_retry_rows(
             summary.queue_retries_scheduled += 1
 
 
+def _reset_queue_item_for_reopen(
+    item: EnrichmentQueueItem,
+    job: JobPosting,
+    *,
+    target_url: str,
+    timestamp: str,
+) -> None:
+    item.company = job.company
+    item.title = job.title
+    item.location = job.location
+    item.source_job_id = job.source_job_id
+    item.lead_url = target_url
+    item.priority = job.enrichment_priority or job.potential_priority or "high"
+    item.status = "pending"
+    item.current_stage = "direct_url"
+    item.attempt_count = 0
+    item.next_attempt_at = ""
+    item.last_attempted_at = ""
+    item.matched_url = ""
+    item.match_confidence = None
+    item.fields_recovered = ""
+    item.error_type = ""
+    item.error_message = ""
+    item.created_at = timestamp
+    item.updated_at = timestamp
+
+
 def _sync_queue_for_lifecycle(
     sheet_client: Any,
     queue_matches: list[tuple[int, EnrichmentQueueItem]],
     job: JobPosting,
     *,
     timestamp: str,
+    all_queue_rows: list[tuple[int, EnrichmentQueueItem]],
 ) -> None:
-    for queue_row, item in queue_matches:
-        changed = False
-        if job.status in TERMINAL_JOB_STATUSES:
+    if job.status in TERMINAL_JOB_STATUSES:
+        for queue_row, item in queue_matches:
             changed = item.status != "closed" or bool(item.next_attempt_at)
             item.status = "closed"
             item.next_attempt_at = ""
             item.error_type = "posting_closed"
             item.error_message = job.lifecycle_reason[:1000]
-        elif job.status == "reopened" and item.status == "closed":
-            item.status = "pending"
-            item.current_stage = "direct_url"
-            item.attempt_count = 0
-            item.next_attempt_at = ""
-            item.last_attempted_at = ""
-            item.matched_url = ""
-            item.match_confidence = None
-            item.fields_recovered = ""
-            item.error_type = ""
-            item.error_message = ""
-            item.created_at = timestamp
-            changed = True
+            if changed:
+                item.updated_at = timestamp
+                sheet_client.update_record("Enrichment_Queue", queue_row, item.to_dict())
+        return
+
+    if job.status != "reopened":
+        return
+
+    target_url = normalize_lead_url(job.canonical_url)
+    if not target_url:
+        return
+    target_id = enrichment_id_for(job.job_key, target_url)
+    exact_matches = [pair for pair in queue_matches if pair[1].enrichment_id == target_id]
+    target_match = min(exact_matches, key=lambda pair: pair[0]) if exact_matches else None
+
+    for queue_row, item in queue_matches:
+        if target_match is not None and queue_row == target_match[0]:
+            _reset_queue_item_for_reopen(item, job, target_url=target_url, timestamp=timestamp)
+            sheet_client.update_record("Enrichment_Queue", queue_row, item.to_dict())
+            continue
+        changed = item.status != "closed" or bool(item.next_attempt_at)
+        item.status = "closed"
+        item.next_attempt_at = ""
         if changed:
+            item.error_type = "superseded_queue_row"
+            item.error_message = "Historical enrichment row remains closed after reopening; the current canonical URL owns the new retry cycle"
             item.updated_at = timestamp
             sheet_client.update_record("Enrichment_Queue", queue_row, item.to_dict())
+
+    if target_match is not None:
+        return
+
+    created = EnrichmentQueueItem(
+        enrichment_id=target_id,
+        job_key=job.job_key,
+        company=job.company,
+        title=job.title,
+        location=job.location,
+        source_job_id=job.source_job_id,
+        lead_url=target_url,
+        priority=job.enrichment_priority or job.potential_priority or "high",
+        status="pending",
+        current_stage="direct_url",
+        created_at=timestamp,
+        updated_at=timestamp,
+    )
+    sheet_client.append_record("Enrichment_Queue", created.to_dict())
+    next_row = max((row_number for row_number, _ in all_queue_rows), default=1) + 1
+    created_pair = (next_row, created)
+    all_queue_rows.append(created_pair)
+    queue_matches.append(created_pair)
 
 
 def run_lifecycle_checks(
@@ -782,16 +856,18 @@ def run_lifecycle_checks(
     for row_number, job in due_jobs[: max(0, limit)]:
         summary.jobs_checked += 1
         observation = lifecycle_checker(job, checked_at=timestamp)
-        duplicate = observation.evidence_key == job.lifecycle_last_evidence_key
-        decision = apply_lifecycle_observation(job, observation, policy=rules)
-        if duplicate:
+        prospective_evidence_id = _lifecycle_evidence_id(job, observation)
+        if prospective_evidence_id in evidence_by_id:
             summary.duplicate_observations += 1
             summary.jobs_unchanged += 1
             continue
 
+        prior_key_duplicate = observation.evidence_key == job.lifecycle_last_evidence_key
+        decision = apply_lifecycle_observation(job, observation, policy=rules)
         evidence = _lifecycle_evidence(job, observation, decision)
         summary.evidence_written += int(_write_evidence(sheet_client, evidence, evidence_by_id))
         if not decision.changed:
+            summary.duplicate_observations += int(prior_key_duplicate)
             summary.jobs_unchanged += 1
             continue
 
@@ -803,7 +879,14 @@ def run_lifecycle_checks(
         summary.expired += int(job.status == "expired")
         summary.reopened += int(job.status == "reopened")
         summary.open_confirmed += int(job.status == "open" and decision.evidence_type == "authoritative_open")
-        _sync_queue_for_lifecycle(sheet_client, queue_by_job.get(job.job_key, []), job, timestamp=timestamp)
+        job_queue_rows = queue_by_job.setdefault(job.job_key, [])
+        _sync_queue_for_lifecycle(
+            sheet_client,
+            job_queue_rows,
+            job,
+            timestamp=timestamp,
+            all_queue_rows=all_queue_rows,
+        )
 
     summary.health_metrics = lifecycle_health_metrics(
         [job for _, job in job_rows],
