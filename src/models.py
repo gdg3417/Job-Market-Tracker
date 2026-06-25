@@ -23,9 +23,21 @@ JOB_FIELDS = [
     "verified_alert_tier", "enrichment_status", "enrichment_priority",
     "enrichment_last_attempted_at", "enrichment_completed_at",
     "enrichment_source_url", "enrichment_match_confidence",
+    "lifecycle_last_checked_at", "lifecycle_next_check_at", "lifecycle_check_count",
+    "lifecycle_miss_count", "lifecycle_last_evidence_key", "lifecycle_evidence_type",
+    "lifecycle_evidence_url", "lifecycle_evidence_at", "lifecycle_reason",
+    "lifecycle_last_authoritative_miss_date",
 ]
 
-VALID_JOB_STATUSES = {"open", "not_seen_once", "likely_closed", "confirmed_closed", "reopened"}
+VALID_JOB_STATUSES = {
+    "open",
+    "not_seen_once",
+    "likely_closed",
+    "confirmed_closed",
+    "closed",
+    "reopened",
+    "expired",
+}
 VALID_POTENTIAL_PRIORITIES = {"high", "medium", "low", "excluded"}
 VALID_SCORE_STATUSES = {"provisional", "partially_verified", "verified", "excluded"}
 VALID_ENRICHMENT_STATUSES = {
@@ -40,6 +52,7 @@ VALID_ENRICHMENT_STATUSES = {
     "permanent_failure",
     "closed",
 }
+TERMINAL_JOB_STATUSES = {"confirmed_closed", "closed", "expired"}
 OPTIONAL_INT_FIELDS = {
     "commute_estimate_minutes", "salary_min", "salary_max", "total_comp_estimate",
     "verified_total_score", "enrichment_match_confidence",
@@ -49,6 +62,7 @@ INT_FIELDS = {
     "growth_ownership_score", "executive_exposure_score", "operating_cadence_score",
     "comp_score", "location_score", "industry_match_score", "total_score",
     "potential_priority_score", "evidence_completeness_score",
+    "lifecycle_check_count", "lifecycle_miss_count",
 }
 
 
@@ -208,6 +222,16 @@ class JobPosting:
     enrichment_completed_at: str = ""
     enrichment_source_url: str = ""
     enrichment_match_confidence: int | None = None
+    lifecycle_last_checked_at: str = ""
+    lifecycle_next_check_at: str = ""
+    lifecycle_check_count: int = 0
+    lifecycle_miss_count: int = 0
+    lifecycle_last_evidence_key: str = ""
+    lifecycle_evidence_type: str = ""
+    lifecycle_evidence_url: str = ""
+    lifecycle_evidence_at: str = ""
+    lifecycle_reason: str = ""
+    lifecycle_last_authoritative_miss_date: str = ""
 
     def __post_init__(self) -> None:
         for field_name in OPTIONAL_INT_FIELDS:
@@ -262,23 +286,33 @@ class JobPosting:
     def refresh_updated_at(self) -> None:
         self.updated_at = utc_now_iso()
 
-    def mark_seen(self, seen_date: str | None = None) -> None:
+    def mark_seen(self, seen_date: str | None = None, *, allow_reopen: bool = False) -> None:
         previous_status = self.status
         self.last_seen_date = seen_date or today_iso()
         self.missed_count = 0
-        if previous_status == "confirmed_closed":
-            self.status = "reopened"
+        if previous_status in TERMINAL_JOB_STATUSES:
+            if allow_reopen:
+                self.status = "reopened"
+                self.closed_date = ""
+            else:
+                self.days_open = days_between(self.first_seen_date, self.closed_date or self.last_seen_date)
+                self.refresh_updated_at()
+                return
         elif previous_status in {"not_seen_once", "likely_closed", "reopened"}:
             self.status = "open"
-        self.closed_date = ""
+            self.closed_date = ""
         self.days_open = days_between(self.first_seen_date, self.last_seen_date)
         self.refresh_updated_at()
 
     def mark_missed(self, run_date: str | None = None) -> None:
+        if self.status in TERMINAL_JOB_STATUSES:
+            self.days_open = days_between(self.first_seen_date, self.closed_date or run_date or today_iso())
+            self.refresh_updated_at()
+            return
         self.missed_count += 1
         if self.missed_count == 1:
             self.status = "not_seen_once"
-        elif self.missed_count >= 2 and self.status != "confirmed_closed":
+        elif self.missed_count >= 2:
             self.status = "likely_closed"
         self.days_open = days_between(self.first_seen_date, run_date or today_iso())
         self.refresh_updated_at()
@@ -286,6 +320,12 @@ class JobPosting:
     def mark_closed(self, closed_date: str | None = None) -> None:
         self.status = "confirmed_closed"
         self.closed_date = closed_date or today_iso()
+        self.days_open = days_between(self.first_seen_date, self.closed_date)
+        self.refresh_updated_at()
+
+    def mark_expired(self, expired_date: str | None = None) -> None:
+        self.status = "expired"
+        self.closed_date = expired_date or today_iso()
         self.days_open = days_between(self.first_seen_date, self.closed_date)
         self.refresh_updated_at()
 
