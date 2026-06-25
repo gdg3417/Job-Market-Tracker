@@ -112,3 +112,33 @@ def test_related_legal_entity_row_does_not_override_toyota_parent_default():
     assert financial_services is not None
     assert financial_services.company_name == "Toyota Financial Services"
     assert financial_services.career_search_url == "https://example.com/tfs-specific"
+
+
+def test_legacy_static_source_is_not_implicitly_enabled_for_enrichment():
+    config = company_config_from_row(
+        {
+            "company_name": "Static Example",
+            "source_type": "static_page",
+            "ats_platform": "custom",
+            "source_url": "https://example.com/careers",
+            "active": "TRUE",
+        }
+    )
+
+    assert config.enrichment_active is False
+    assert resolve_company_config("Static Example", [config]) is None
+
+
+def test_legacy_supported_ats_source_is_implicitly_enabled_for_enrichment():
+    config = company_config_from_row(
+        {
+            "company_name": "Greenhouse Example",
+            "ats_platform": "greenhouse",
+            "source_slug": "greenhouse-example",
+            "source_url": "https://boards.greenhouse.io/greenhouse-example",
+            "active": "TRUE",
+        }
+    )
+
+    assert config.enrichment_active is True
+    assert resolve_company_config("Greenhouse Example", [config]) is config
