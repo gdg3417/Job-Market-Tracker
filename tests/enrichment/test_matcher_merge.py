@@ -57,6 +57,20 @@ def test_confident_match_merges_authoritative_fields_without_changing_identity()
     assert "description_text" in changed
 
 
+def test_provider_prefixed_source_job_id_matches_numeric_posting_url():
+    target = job(source_job_id="linkedin-4430066274")
+    source = evidence(
+        source_url="https://www.linkedin.com/jobs/view/4430066274",
+        canonical_url="https://www.linkedin.com/jobs/view/national-manager-product-at-toyota-4430066274",
+    )
+
+    match = assess_match(target, source)
+
+    assert match.accepted is True
+    assert match.confidence == 100
+    assert "source posting id in URL" in match.reasons
+
+
 def test_mismatched_title_is_not_accepted_or_mergeable():
     target = job()
     source = evidence(source_title="Staff Accountant")
