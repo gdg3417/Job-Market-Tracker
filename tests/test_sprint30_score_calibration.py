@@ -44,10 +44,12 @@ def test_bsn_sports_pricing_strategy_calibrates_as_verified_strong_fit_without_s
     )
 
     assert scored.score_status == "verified"
-    assert scored.verified_total_score == scored.total_score
+    assert scored.verified_total_score is not None
+    assert scored.verified_total_score >= scored.total_score
     assert scored.verified_alert_tier in {"strong_fit", "immediate_review"}
     assert scored.comp_score == 0
     assert "compensation_status=unknown" in scored.score_explanation
+    assert "verified_score_basis=normalized_without_compensation" in scored.score_explanation
 
 
 def test_ericsson_strategic_business_insights_calibrates_above_weak_strategy_title():
