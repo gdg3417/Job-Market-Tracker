@@ -391,10 +391,7 @@ def score_job(job: JobPosting, rules: dict[str, Any], company_context: dict[str,
     )
     finalize_verified_scoring(
         job,
-        rules.get("verified_scoring", {}) | {
-            "evidence_rules": (rules.get("potential_priority", {}) or {}).get("evidence_rules", {}),
-            "verified_scoring": rules.get("verified_scoring", {}),
-        },
+        rules,
         company_context=company_context,
         hard_exclude=hard_exclude,
     )
