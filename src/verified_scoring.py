@@ -41,6 +41,8 @@ MODEL_TAG_PREFIXES = (
     "compensation_status=",
     "match_confidence_status=",
     "recommended_action=",
+    "score_status=",
+    "enrichment_status=",
     "verification_gaps=",
 )
 
@@ -257,6 +259,8 @@ def finalize_verified_scoring(
         job.enrichment_priority = ""
 
     tags = [
+        f"score_status={job.score_status}",
+        f"enrichment_status={job.enrichment_status}",
         f"authoritative_source={source_url or 'pending'}",
         f"match_confidence_status={confidence_status}",
         f"verification_gaps={','.join(gaps) if gaps else 'none'}",
