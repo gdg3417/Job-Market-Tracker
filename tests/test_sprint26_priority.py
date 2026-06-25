@@ -351,7 +351,7 @@ def test_excluded_duplicate_replaces_verified_score_consistently():
 
 def test_sprint26_jobs_fields_are_appended_after_legacy_columns():
     assert JOB_FIELDS[34:36] == ["created_at", "updated_at"]
-    assert JOB_FIELDS[36:] == [
+    assert JOB_FIELDS[36:49] == [
         "potential_priority_score",
         "potential_priority",
         "potential_priority_reason",
@@ -365,4 +365,15 @@ def test_sprint26_jobs_fields_are_appended_after_legacy_columns():
         "enrichment_completed_at",
         "enrichment_source_url",
         "enrichment_match_confidence",
+    ]
+    assert JOB_FIELDS[49:] == [
+        "lifecycle_last_checked_at",
+        "lifecycle_next_check_at",
+        "lifecycle_check_count",
+        "lifecycle_miss_count",
+        "lifecycle_last_evidence_key",
+        "lifecycle_evidence_type",
+        "lifecycle_evidence_url",
+        "lifecycle_evidence_at",
+        "lifecycle_reason",
     ]
