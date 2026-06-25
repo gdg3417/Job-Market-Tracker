@@ -5,6 +5,23 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 from urllib.parse import urlsplit
 
+ENRICHMENT_PLATFORMS = {
+    "greenhouse",
+    "lever",
+    "ashby",
+    "smartrecruiters",
+    "smart recruiters",
+    "workday",
+    "icims",
+    "successfactors",
+    "success factors",
+    "phenom",
+    "oracle",
+    "oracle recruiting",
+    "company_api",
+    "company-specific",
+}
+
 DEFAULT_COMPANY_ROWS: tuple[dict[str, Any], ...] = (
     {
         "company_id": "topgolf",
@@ -36,6 +53,11 @@ DEFAULT_COMPANY_ROWS: tuple[dict[str, Any], ...] = (
 def normalize_company_name(value: Any) -> str:
     text = str(value or "").strip().lower().replace("&", " and ")
     text = re.sub(r"[^a-z0-9]+", " ", text)
+    return " ".join(text.split())
+
+
+def _normalize_platform(value: Any) -> str:
+    text = str(value or "").strip().lower().replace("_", " ").replace("-", " ")
     return " ".join(text.split())
 
 
@@ -74,6 +96,12 @@ def _domain_from_url(value: Any) -> str:
         return (urlsplit(text).hostname or "").lower()
     except ValueError:
         return ""
+
+
+def _implicit_enrichment_active(row: dict[str, Any], career_search_url: str) -> bool:
+    platform = _normalize_platform(row.get("ats_platform") or row.get("source_type"))
+    identifier = str(row.get("ats_board_token") or row.get("ats_company_id") or row.get("source_slug") or "").strip()
+    return platform in ENRICHMENT_PLATFORMS and bool(career_search_url or identifier)
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +173,8 @@ def company_config_from_row(row: dict[str, Any]) -> CompanyEnrichmentConfig:
     career_search_url = str(row.get("career_search_url") or row.get("source_url") or "").strip()
     career_domain = str(row.get("career_domain") or _domain_from_url(career_search_url)).strip().lower()
     active_value = row.get("enrichment_active")
+    if active_value in (None, ""):
+        active_value = _implicit_enrichment_active(row, career_search_url)
     return CompanyEnrichmentConfig(
         company_id=str(row.get("company_id") or "").strip(),
         company_name=company_name or canonical_name,
@@ -159,7 +189,7 @@ def company_config_from_row(row: dict[str, Any]) -> CompanyEnrichmentConfig:
         source_slug=str(row.get("source_slug") or "").strip(),
         source_url=str(row.get("source_url") or "").strip(),
         enrichment_mode=str(row.get("enrichment_mode") or row.get("ingestion_mode") or "").strip().lower(),
-        enrichment_active=_truthy(active_value, default=True),
+        enrichment_active=_truthy(active_value, default=False),
         enrichment_notes=str(row.get("enrichment_notes") or row.get("notes") or "").strip(),
     )
 
