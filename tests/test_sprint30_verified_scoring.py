@@ -63,6 +63,50 @@ def test_low_confidence_enrichment_cannot_create_verified_score():
     assert "authoritative matched source" in scored.score_explanation
 
 
+def test_enriched_gmail_can_use_authoritative_canonical_url_when_lead_url_is_not_authoritative():
+    rules = load_scoring_rules(RULES_PATH)
+    job = _complete_job(url="https://www.linkedin.com/jobs/view/1234567890")
+    job.canonical_url = "https://careers.acme.com/jobs/123"
+
+    scored = score_job(
+        job,
+        rules,
+        company_context={"career_domain": "careers.acme.com", "industry_bucket": "manufacturing"},
+    )
+
+    assert scored.score_status == "verified"
+    assert "authoritative_source=https://careers.acme.com/jobs/123" in scored.score_explanation
+
+
+def test_manual_search_without_match_confidence_is_not_trusted_as_manual_input():
+    rules = load_scoring_rules(RULES_PATH)
+    job = normalize_raw_job(
+        {
+            "company": "Acme Industrial",
+            "title": "Director, Commercial Strategy",
+            "location": "Plano, TX",
+            "url": "https://careers.acme.com/jobs/789",
+            "source_primary": "manual_search",
+            "description": (
+                "Responsibilities include commercial strategy, revenue growth, and operating reviews. Qualifications include "
+                "a bachelor's degree and ten years of experience. Lead a team and report to the business unit president."
+            ),
+        }
+    )
+    job.enrichment_status = "enriched"
+    job.enrichment_source_url = job.canonical_url
+
+    scored = score_job(
+        job,
+        rules,
+        company_context={"career_domain": "careers.acme.com", "industry_bucket": "manufacturing"},
+    )
+
+    assert scored.score_status == "partially_verified"
+    assert scored.verified_total_score is None
+    assert "match_confidence_status=below 80" in scored.score_explanation
+
+
 def test_company_context_does_not_award_job_level_ownership_points():
     rules = load_scoring_rules(RULES_PATH)
     job = normalize_raw_job(
@@ -177,4 +221,6 @@ def test_topgolf_and_toyota_sparse_leads_never_receive_verified_ignore_tier():
         assert scored.score_status == "provisional"
         assert scored.verified_total_score is None
         assert scored.verified_alert_tier == ""
+        assert "score_status=provisional" in scored.score_explanation
+        assert "enrichment_status=pending" in scored.score_explanation
         assert "recommended_action=Enrich or review" in scored.score_explanation
