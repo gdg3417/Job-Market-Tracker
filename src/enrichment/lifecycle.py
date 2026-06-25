@@ -21,6 +21,7 @@ from src.models import JobPosting, days_between, parse_iso_date, today_iso
 
 TERMINAL_JOB_STATUSES = {"confirmed_closed", "closed", "expired"}
 QUEUE_RETRY_STATUSES = {"retryable_failure"}
+TRUSTED_ENRICHMENT_SOURCE_STATUSES = {"enriched", "partial", "pending", "in_progress"}
 CLOSED_TEXT_PATTERNS = (
     r"job (?:is )?no longer available",
     r"position (?:has been|is) filled",
@@ -243,6 +244,12 @@ def _observation_date(value: str) -> str:
     return str(parse_iso_date(value) or today_iso())
 
 
+def _is_stale_observation(job: JobPosting, checked_at: str) -> bool:
+    previous = _parse_timestamp(job.lifecycle_last_checked_at)
+    current = _parse_timestamp(checked_at)
+    return bool(previous and current and current < previous)
+
+
 def apply_lifecycle_observation(
     job: JobPosting,
     observation: LifecycleObservation,
@@ -260,6 +267,17 @@ def apply_lifecycle_observation(
             status=job.status,
             changed=False,
             reason=job.lifecycle_reason or "duplicate lifecycle observation",
+            evidence_type=evidence_type,
+            evidence_key=evidence_key,
+            lifecycle_miss_count=job.lifecycle_miss_count,
+        )
+
+    if _is_stale_observation(job, observation.checked_at):
+        return LifecycleDecision(
+            previous_status=previous_status,
+            status=job.status,
+            changed=False,
+            reason="Out-of-order lifecycle evidence was audited without changing the newer posting state",
             evidence_type=evidence_type,
             evidence_key=evidence_key,
             lifecycle_miss_count=job.lifecycle_miss_count,
@@ -302,12 +320,16 @@ def apply_lifecycle_observation(
         job.last_seen_date = _observation_date(observation.checked_at)
     elif _is_authoritative_absence(observation):
         miss_date = _observation_date(observation.checked_at)
-        same_day_as_previous_miss = job.lifecycle_last_authoritative_miss_date == miss_date
+        current_miss_date = parse_iso_date(miss_date)
+        previous_miss_date = parse_iso_date(job.lifecycle_last_authoritative_miss_date)
         job.missed_count = 0
-        if same_day_as_previous_miss:
+        if previous_miss_date and current_miss_date and current_miss_date <= previous_miss_date:
             if job.status not in TERMINAL_JOB_STATUSES and job.lifecycle_miss_count > 0:
                 job.status = "likely_closed"
-            reason = "Additional same-day authoritative absence does not advance the closure threshold"
+            if current_miss_date == previous_miss_date:
+                reason = "Additional same-day authoritative absence does not advance the closure threshold"
+            else:
+                reason = "Older authoritative absence was audited without advancing the closure threshold"
         else:
             job.lifecycle_miss_count += 1
             job.lifecycle_last_authoritative_miss_date = miss_date
@@ -361,16 +383,28 @@ def _same_host(left: str, right: str) -> bool:
     return bool(_host(left) and _host(left) == _host(right))
 
 
+def _verified_enrichment_source_url(job: JobPosting) -> str:
+    source_url = str(job.enrichment_source_url or "").strip()
+    if not source_url:
+        return ""
+    if (job.enrichment_match_confidence or 0) < 80:
+        return ""
+    if job.enrichment_status not in TRUSTED_ENRICHMENT_SOURCE_STATUSES:
+        return ""
+    return source_url
+
+
+def lifecycle_url_for_job(job: JobPosting) -> str:
+    return _verified_enrichment_source_url(job) or str(job.canonical_url or "").strip()
+
+
 def is_authoritative_lifecycle_url(url: str, job: JobPosting | None = None) -> bool:
     if job is None:
         return is_authoritative_candidate(url)
     if is_authoritative_candidate(url, company=job.company):
         return True
-    return (
-        str(job.enrichment_source_url or "").strip() == str(url or "").strip()
-        and job.enrichment_status in {"enriched", "partial"}
-        and (job.enrichment_match_confidence or 0) >= 80
-    )
+    verified_source = _verified_enrichment_source_url(job)
+    return bool(verified_source and verified_source == str(url or "").strip())
 
 
 def _looks_generic_redirect(requested_url: str, final_url: str) -> bool:
@@ -403,18 +437,19 @@ class DirectUrlLifecycleChecker:
         self.fetcher = fetcher or DirectLinkFetcher()
 
     def __call__(self, job: JobPosting, *, checked_at: str) -> LifecycleObservation:
-        requested_url = str(job.enrichment_source_url or job.canonical_url or "").strip()
+        requested_url = lifecycle_url_for_job(job)
         if not requested_url:
             return LifecycleObservation(
                 checked_at=checked_at,
                 source_type="missing_url",
                 error_type="missing_url",
-                message="No lifecycle URL is available",
+                message="No trusted lifecycle URL is available",
             )
+        requested_authoritative = is_authoritative_lifecycle_url(requested_url, job)
         try:
             fetched = self.fetcher.fetch(requested_url)
-            authoritative = is_authoritative_lifecycle_url(fetched.final_url, job)
-            if not authoritative:
+            final_authoritative = is_authoritative_lifecycle_url(fetched.final_url, job)
+            if not final_authoritative:
                 return LifecycleObservation(
                     checked_at=checked_at,
                     source_type="direct_url",
@@ -434,12 +469,16 @@ class DirectUrlLifecycleChecker:
             specific_posting = bool(extracted and extracted.source_title and extracted.description_text)
             listed: bool | None = None
             explicitly_closed = visible_closed
+            valid_through = ""
+            accepted_match = False
             message = ""
 
             if specific_posting and extracted is not None:
                 match = assess_match(job, extracted)
                 if match.accepted:
+                    accepted_match = True
                     listed = True
+                    valid_through = extracted.valid_through
                     generic_redirect = False
                     if visible_closed:
                         listed = None
@@ -454,22 +493,31 @@ class DirectUrlLifecycleChecker:
             elif not extracted:
                 message = "Authoritative page could not be parsed as a specific posting"
 
+            authoritative = final_authoritative and (requested_authoritative or accepted_match)
+            if not authoritative:
+                listed = None
+                explicitly_closed = False
+                generic_redirect = False
+                valid_through = ""
+                if not message:
+                    message = "Authoritative final URL was reached from an unverified source and did not match the tracked posting"
+
             return LifecycleObservation(
                 checked_at=checked_at,
                 source_type="direct_url",
                 source_url=fetched.final_url,
-                authoritative=True,
+                authoritative=authoritative,
                 http_status=fetched.status_code,
                 listed=listed,
                 explicitly_closed=explicitly_closed,
                 redirected_to_generic=generic_redirect,
-                valid_through=extracted.valid_through if extracted else "",
-                supporting_absence=generic_redirect or explicitly_closed,
+                valid_through=valid_through,
+                supporting_absence=authoritative and (generic_redirect or explicitly_closed),
                 message=message,
             )
         except EnrichmentFetchError as exc:
             source_url = exc.final_url or requested_url
-            authoritative = is_authoritative_lifecycle_url(source_url, job)
+            authoritative = requested_authoritative and is_authoritative_lifecycle_url(source_url, job)
             missing = exc.status_code in {404, 410}
             return LifecycleObservation(
                 checked_at=checked_at,
@@ -480,14 +528,14 @@ class DirectUrlLifecycleChecker:
                 listed=False if authoritative and missing else None,
                 error_type=exc.error_type,
                 message=str(exc),
-                supporting_absence=missing,
+                supporting_absence=authoritative and missing,
             )
         except Exception as exc:
             return LifecycleObservation(
                 checked_at=checked_at,
                 source_type="direct_url_failure",
                 source_url=requested_url,
-                authoritative=is_authoritative_lifecycle_url(requested_url, job),
+                authoritative=requested_authoritative,
                 error_type="unexpected_error",
                 message=str(exc),
             )
@@ -681,9 +729,15 @@ def _sync_queue_for_lifecycle(
         elif job.status == "reopened" and item.status == "closed":
             item.status = "pending"
             item.current_stage = "direct_url"
+            item.attempt_count = 0
             item.next_attempt_at = ""
+            item.last_attempted_at = ""
+            item.matched_url = ""
+            item.match_confidence = None
+            item.fields_recovered = ""
             item.error_type = ""
             item.error_message = ""
+            item.created_at = timestamp
             changed = True
         if changed:
             item.updated_at = timestamp
@@ -737,6 +791,10 @@ def run_lifecycle_checks(
 
         evidence = _lifecycle_evidence(job, observation, decision)
         summary.evidence_written += int(_write_evidence(sheet_client, evidence, evidence_by_id))
+        if not decision.changed:
+            summary.jobs_unchanged += 1
+            continue
+
         _update_job(sheet_client, row_number, job)
         summary.jobs_updated += 1
         summary.temporary_failures += int(decision.evidence_type == "temporary_failure")
@@ -796,7 +854,7 @@ def preview_lifecycle_checks(
                 "title": job.title,
                 "status": job.status,
                 "lifecycle_next_check_at": job.lifecycle_next_check_at,
-                "url": job.enrichment_source_url or job.canonical_url,
+                "url": lifecycle_url_for_job(job),
             }
             for job in jobs
         ],
