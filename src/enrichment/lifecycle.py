@@ -9,8 +9,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Callable, Iterable
 from urllib.parse import urlsplit
 
+from bs4 import BeautifulSoup
+
 from src.enrichment.extractors import extract_job_evidence
 from src.enrichment.fetcher import DirectLinkFetcher, EnrichmentFetchError
+from src.enrichment.matcher import assess_match
 from src.enrichment.models import EnrichmentEvidence, EnrichmentQueueItem, utc_now_iso
 from src.enrichment.queue import evidence_id_for
 from src.enrichment.search import is_authoritative_candidate
@@ -236,6 +239,10 @@ def _evidence_type(observation: LifecycleObservation) -> str:
     return "unresolved"
 
 
+def _observation_date(value: str) -> str:
+    return str(parse_iso_date(value) or today_iso())
+
+
 def apply_lifecycle_observation(
     job: JobPosting,
     observation: LifecycleObservation,
@@ -267,18 +274,21 @@ def apply_lifecycle_observation(
 
     if observation.authoritative and observation.explicitly_closed:
         job.status = "confirmed_closed"
-        job.closed_date = str(parse_iso_date(observation.checked_at) or today_iso())
+        job.closed_date = _observation_date(observation.checked_at)
         job.lifecycle_miss_count = max(job.lifecycle_miss_count, rules.authoritative_misses_to_close)
+        job.lifecycle_last_authoritative_miss_date = _observation_date(observation.checked_at)
         job.missed_count = 0
         reason = "Authoritative posting explicitly reports the role is closed"
     elif observation.authoritative and _is_expired(observation.valid_through, observation.checked_at):
         expiry_date = str(parse_iso_date(observation.valid_through) or parse_iso_date(observation.checked_at) or today_iso())
         job.mark_expired(expiry_date)
         job.lifecycle_miss_count = max(job.lifecycle_miss_count, rules.authoritative_misses_to_close)
+        job.lifecycle_last_authoritative_miss_date = _observation_date(observation.checked_at)
         job.missed_count = 0
         reason = f"Structured validThrough expired on {expiry_date}"
     elif _is_authoritative_open(observation):
         job.lifecycle_miss_count = 0
+        job.lifecycle_last_authoritative_miss_date = ""
         job.missed_count = 0
         job.closed_date = ""
         if previous_status in TERMINAL_JOB_STATUSES or previous_status in {"likely_closed", "not_seen_once"}:
@@ -289,17 +299,25 @@ def apply_lifecycle_observation(
         else:
             job.status = "open"
             reason = "Authoritative posting remains available"
-        job.last_seen_date = str(parse_iso_date(observation.checked_at) or today_iso())
+        job.last_seen_date = _observation_date(observation.checked_at)
     elif _is_authoritative_absence(observation):
-        job.lifecycle_miss_count += 1
+        miss_date = _observation_date(observation.checked_at)
+        same_day_as_previous_miss = job.lifecycle_last_authoritative_miss_date == miss_date
         job.missed_count = 0
-        if job.lifecycle_miss_count >= rules.authoritative_misses_to_close:
-            job.status = "confirmed_closed"
-            job.closed_date = str(parse_iso_date(observation.checked_at) or today_iso())
-            reason = "Repeated authoritative absence confirms the posting is closed"
+        if same_day_as_previous_miss:
+            if job.status not in TERMINAL_JOB_STATUSES and job.lifecycle_miss_count > 0:
+                job.status = "likely_closed"
+            reason = "Additional same-day authoritative absence does not advance the closure threshold"
         else:
-            job.status = "likely_closed"
-            reason = "One authoritative absence requires confirmation before closure"
+            job.lifecycle_miss_count += 1
+            job.lifecycle_last_authoritative_miss_date = miss_date
+            if job.lifecycle_miss_count >= rules.authoritative_misses_to_close:
+                job.status = "confirmed_closed"
+                job.closed_date = miss_date
+                reason = "Repeated authoritative absence on a later date confirms the posting is closed"
+            else:
+                job.status = "likely_closed"
+                reason = "One authoritative absence requires confirmation on a later date before closure"
     elif _is_temporary_failure(observation):
         reason = "Temporary retrieval failure does not change posting status"
     elif (
@@ -368,6 +386,13 @@ def _looks_generic_redirect(requested_url: str, final_url: str) -> bool:
     return requested_path != final_path and final_path in GENERIC_PATHS
 
 
+def _visible_text(html: str) -> str:
+    soup = BeautifulSoup(str(html or ""), "html.parser")
+    for element in soup(["script", "style", "template", "noscript", "head"]):
+        element.decompose()
+    return soup.get_text(" ", strip=True)
+
+
 def _explicit_closed_text(text: str) -> bool:
     normalized = re.sub(r"\s+", " ", str(text or "").lower())
     return any(re.search(pattern, normalized) for pattern in CLOSED_TEXT_PATTERNS)
@@ -404,21 +429,43 @@ class DirectUrlLifecycleChecker:
                 enrichment_id=f"lifecycle_{job.job_key}",
                 retrieved_at=checked_at,
             )
-            explicit_closed = _explicit_closed_text(fetched.text)
+            visible_closed = _explicit_closed_text(_visible_text(fetched.text))
             generic_redirect = _looks_generic_redirect(requested_url, fetched.final_url)
             specific_posting = bool(extracted and extracted.source_title and extracted.description_text)
+            listed: bool | None = None
+            explicitly_closed = visible_closed
+            message = ""
+
+            if specific_posting and extracted is not None:
+                match = assess_match(job, extracted)
+                if match.accepted:
+                    listed = True
+                    generic_redirect = False
+                    if visible_closed:
+                        listed = None
+                        explicitly_closed = False
+                        message = "Matching posting conflicts with visible closure language; lifecycle state is unresolved"
+                    else:
+                        explicitly_closed = False
+                else:
+                    explicitly_closed = False
+                    reasons = "; ".join(match.reasons)
+                    message = f"Authoritative page did not match the tracked posting: {reasons}"[:1000]
+            elif not extracted:
+                message = "Authoritative page could not be parsed as a specific posting"
+
             return LifecycleObservation(
                 checked_at=checked_at,
                 source_type="direct_url",
                 source_url=fetched.final_url,
                 authoritative=True,
                 http_status=fetched.status_code,
-                listed=True if specific_posting else None,
-                explicitly_closed=explicit_closed,
+                listed=listed,
+                explicitly_closed=explicitly_closed,
                 redirected_to_generic=generic_redirect,
                 valid_through=extracted.valid_through if extracted else "",
-                supporting_absence=generic_redirect or explicit_closed,
-                message="Authoritative page could not be parsed as a specific posting" if not extracted else "",
+                supporting_absence=generic_redirect or explicitly_closed,
+                message=message,
             )
         except EnrichmentFetchError as exc:
             source_url = exc.final_url or requested_url
