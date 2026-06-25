@@ -150,3 +150,8 @@ def test_unconfigured_company_domain_requires_company_identity_and_career_marker
         None,
         company="Time Manufacturing",
     )
+    assert not is_authoritative_candidate(
+        "https://time.jobs.com/jobs/123",
+        None,
+        company="Time Manufacturing",
+    )
