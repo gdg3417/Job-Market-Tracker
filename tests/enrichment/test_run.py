@@ -5,6 +5,7 @@ import json
 import pytest
 
 from src.enrichment.fetcher import EnrichmentFetchError, FetchResult
+from src.enrichment.models import EnrichmentEvidence
 from src.enrichment.run import run_direct_link_enrichment
 from src.models import JobPosting
 
@@ -137,6 +138,71 @@ def test_repeated_run_is_idempotent():
     assert len(client.tables["Jobs"]) == 1
     assert len(client.tables["Enrichment_Queue"]) == 1
     assert len(client.tables["Enrichment_Evidence"]) == 1
+
+
+def test_replay_updates_existing_false_negative_without_duplicate_rows(monkeypatch):
+    url = "https://www.linkedin.com/jobs/view/4417965465"
+    client = FakeSheetClient(
+        [queued_job("linkedin-4417965465", "Topgolf", "Sr Manager, Strategic Planning", url, "Dallas, TX")]
+    )
+    fetched = FetchResult(
+        requested_url=url,
+        final_url=url,
+        status_code=200,
+        content_type="text/html",
+        text="same LinkedIn response body",
+    )
+    fetcher = FakeFetcher({url: fetched})
+
+    def extracted(company: str, location: str) -> EnrichmentEvidence:
+        return EnrichmentEvidence(
+            job_key="linkedin-4417965465",
+            source_url=url,
+            canonical_url=url,
+            source_title="Sr Manager, Strategic Planning",
+            source_company=company,
+            source_location=location,
+            description_text=(
+                "Responsibilities include leading enterprise strategic planning, growth initiatives, executive analysis, "
+                "and cross-functional execution. Qualifications include eight years of experience and strong leadership."
+            ),
+            raw_content_hash="same-content-hash",
+        )
+
+    monkeypatch.setattr(
+        "src.enrichment.run.extract_job_evidence",
+        lambda *_args, **_kwargs: extracted("", ""),
+    )
+    first = run_direct_link_enrichment(client, fetcher=fetcher, now=NOW, priority_rules={})
+    assert first.not_found == 1
+    assert len(client.tables["Enrichment_Queue"]) == 1
+    assert len(client.tables["Enrichment_Evidence"]) == 1
+
+    monkeypatch.setattr(
+        "src.enrichment.run.extract_job_evidence",
+        lambda *_args, **_kwargs: extracted("Topgolf", "Dallas, TX"),
+    )
+    replay = run_direct_link_enrichment(
+        client,
+        fetcher=fetcher,
+        now="2026-06-23T19:00:00Z",
+        priority_rules={},
+        job_key="linkedin-4417965465",
+        replay=True,
+        limit=1,
+    )
+
+    assert replay.jobs_evaluated == 1
+    assert replay.queue_existing == 1
+    assert replay.direct_attempts == 1
+    assert replay.enriched == 1
+    assert replay.evidence_written == 1
+    assert len(client.tables["Jobs"]) == 1
+    assert len(client.tables["Enrichment_Queue"]) == 1
+    assert len(client.tables["Enrichment_Evidence"]) == 1
+    assert client.tables["Enrichment_Queue"][0]["attempt_count"] == 2
+    assert client.tables["Enrichment_Evidence"][0]["accepted"] is True
+    assert client.tables["Jobs"][0]["enrichment_status"] == "enriched"
 
 
 def test_mismatched_posting_is_audited_but_not_merged():

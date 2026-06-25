@@ -80,6 +80,17 @@ def _role_family(value: str) -> set[str]:
     return {term for term in ROLE_FAMILY_TERMS if _token_present(text, term)}
 
 
+def _posting_id_variants(value: str) -> set[str]:
+    text = str(value or "").strip().lower()
+    if not text:
+        return set()
+    variants = {text}
+    tokens = re.findall(r"[a-z0-9]+", text)
+    if tokens and len(tokens[-1]) >= 6:
+        variants.add(tokens[-1])
+    return variants
+
+
 def location_similarity(left: str, right: str) -> int:
     left_normalized = _normalize(left)
     right_normalized = _normalize(right)
@@ -147,9 +158,8 @@ def assess_match(job: JobPosting, evidence: EnrichmentEvidence) -> MatchResult:
         score -= 15
         reasons.append("location conflict")
 
-    source_job_id = str(job.source_job_id or "").strip().lower()
     candidate_urls = " ".join([evidence.source_url, evidence.canonical_url]).lower()
-    if source_job_id and source_job_id in candidate_urls:
+    if any(posting_id in candidate_urls for posting_id in _posting_id_variants(job.source_job_id)):
         score += 10
         reasons.append("source posting id in URL")
 

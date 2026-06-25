@@ -15,6 +15,7 @@ from src.enrichment.models import EnrichmentEvidence, EnrichmentQueueItem, Enric
 from src.enrichment.queue import (
     due_for_processing,
     enqueue_eligible_jobs,
+    enrichment_id_for,
     evidence_id_for,
     job_is_direct_link_eligible,
     priority_sort_key,
@@ -24,6 +25,7 @@ from src.models import JobPosting
 DEFAULT_PRIORITY_RULES_PATH = Path(__file__).resolve().parents[2] / "config" / "potential_priority_rules.yml"
 MAX_DIRECT_ATTEMPTS = 3
 DIRECT_FALLBACK_ERROR_TYPES = {"not_found", "access_blocked"}
+REPLAYABLE_QUEUE_STATUSES = {"not_found", "ambiguous", "permanent_failure"}
 
 
 def _records_with_rows(sheet_client: Any, worksheet_name: str) -> list[tuple[int, dict[str, Any]]]:
@@ -126,6 +128,37 @@ def _record_failure_evidence(
     return evidence
 
 
+def _prepare_replay(
+    sheet_client: Any,
+    *,
+    queue_rows: list[tuple[int, EnrichmentQueueItem]],
+    job_by_key: dict[str, tuple[int, JobPosting]],
+    job_key: str,
+    timestamp: str,
+) -> tuple[int, EnrichmentQueueItem]:
+    if not job_key:
+        raise ValueError("Replay requires an exact job_key")
+    target = job_by_key.get(job_key)
+    if target is None:
+        raise ValueError(f"Replay job not found: {job_key}")
+    job_row_number, job = target
+    expected_id = enrichment_id_for(job.job_key, job.canonical_url)
+    queue_match = next((pair for pair in queue_rows if pair[1].enrichment_id == expected_id), None)
+    if queue_match is None:
+        raise ValueError(f"Replay requires an existing queue row for job_key={job_key}")
+    queue_row_number, item = queue_match
+    if item.status not in REPLAYABLE_QUEUE_STATUSES:
+        raise ValueError(f"Queue status {item.status!r} is not replayable for job_key={job_key}")
+
+    item.status = "pending"
+    item.next_attempt_at = ""
+    item.updated_at = timestamp
+    sheet_client.update_record("Enrichment_Queue", queue_row_number, item.to_dict())
+    job.enrichment_status = "pending"
+    _update_job(sheet_client, job_row_number, job)
+    return queue_row_number, item
+
+
 def run_direct_link_enrichment(
     sheet_client: Any,
     *,
@@ -134,6 +167,7 @@ def run_direct_link_enrichment(
     now: str | None = None,
     job_key: str = "",
     priority_rules: dict[str, Any] | None = None,
+    replay: bool = False,
 ) -> EnrichmentRunSummary:
     timestamp = now or utc_now_iso()
     fetcher = fetcher or DirectLinkFetcher()
@@ -149,6 +183,16 @@ def run_direct_link_enrichment(
     summary.jobs_evaluated = enqueue_summary.jobs_evaluated
     summary.jobs_enqueued = enqueue_summary.created
     summary.queue_existing = enqueue_summary.existing
+
+    if replay:
+        _prepare_replay(
+            sheet_client,
+            queue_rows=queue_rows,
+            job_by_key=job_by_key,
+            job_key=job_key,
+            timestamp=timestamp,
+        )
+        summary.queue_existing = max(1, summary.queue_existing)
 
     evidence_by_id = _existing_evidence(sheet_client)
     due = [pair for pair in queue_rows if pair[1].job_key in job_by_key and due_for_processing(pair[1], now=timestamp)]
@@ -330,6 +374,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="Show eligible jobs without changing the workbook")
     parser.add_argument("--limit", type=int, default=10, help="Maximum direct URLs to process")
     parser.add_argument("--job-key", default="", help="Restrict the run to one existing Jobs job_key")
+    parser.add_argument(
+        "--replay",
+        action="store_true",
+        help="Replay one existing terminal queue item after a parser or matcher fix; requires --run and --job-key",
+    )
     return parser.parse_args()
 
 
@@ -337,6 +386,8 @@ def main() -> None:
     args = parse_args()
     if not args.run and not args.dry_run:
         raise SystemExit("Choose --run or --dry-run")
+    if args.replay and (not args.run or not args.job_key):
+        raise SystemExit("--replay requires --run and an exact --job-key")
 
     from src.settings import load_settings
     from src.sheets import SheetClient
@@ -350,7 +401,12 @@ def main() -> None:
 
     migrate_trailing_headers(sheet_client)
     validate_workbook_or_raise(sheet_client)
-    summary = run_direct_link_enrichment(sheet_client, limit=args.limit, job_key=args.job_key)
+    summary = run_direct_link_enrichment(
+        sheet_client,
+        limit=args.limit,
+        job_key=args.job_key,
+        replay=args.replay,
+    )
     print(json.dumps(summary.to_dict(), indent=2))
 
 
