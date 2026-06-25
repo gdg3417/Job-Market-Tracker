@@ -143,23 +143,37 @@ def _authoritative_source_assessment(
 ) -> tuple[bool, str, str]:
     minimum_confidence = _minimum_match_confidence(rules)
     confidence = job.enrichment_match_confidence
-    enrichment_url = str(job.enrichment_source_url or "").strip()
+    candidate_urls = list(
+        dict.fromkeys(
+            str(value or "").strip()
+            for value in (job.enrichment_source_url, job.canonical_url)
+            if str(value or "").strip()
+        )
+    )
 
-    if enrichment_url or job.enrichment_status in {"partial", "enriched"}:
-        candidate_url = enrichment_url or job.canonical_url
+    if job.enrichment_source_url or job.enrichment_status in {"partial", "enriched"}:
         marker = _source_marker(job)
-        trusted_direct = any(term in marker for term in TRUSTED_DIRECT_SOURCE_MARKERS)
+        untrusted_source = _source_is_untrusted(job)
+        trusted_direct = any(term in marker for term in TRUSTED_DIRECT_SOURCE_MARKERS) and not untrusted_source
         if confidence is None:
-            if trusted_direct and not _source_is_untrusted(job) and is_safe_public_url(candidate_url):
-                return True, candidate_url, "trusted direct source"
+            trusted_url = next((url for url in candidate_urls if trusted_direct and is_safe_public_url(url)), "")
+            if trusted_url:
+                return True, trusted_url, "trusted direct source"
             return False, "", f"below {minimum_confidence}"
         if confidence < minimum_confidence:
             return False, "", f"below {minimum_confidence}"
-        if _source_is_untrusted(job) and not is_authoritative_posting_url(candidate_url, company_context):
-            return False, "", "authoritative domain not confirmed"
-        if not is_safe_public_url(candidate_url):
+        if untrusted_source:
+            authoritative_url = next(
+                (url for url in candidate_urls if is_authoritative_posting_url(url, company_context)),
+                "",
+            )
+            if not authoritative_url:
+                return False, "", "authoritative domain not confirmed"
+            return True, authoritative_url, f"accepted {confidence}"
+        safe_url = next((url for url in candidate_urls if is_safe_public_url(url)), "")
+        if not safe_url:
             return False, "", "authoritative URL invalid"
-        return True, candidate_url, f"accepted {confidence}"
+        return True, safe_url, f"accepted {confidence}"
 
     if _source_is_untrusted(job):
         return False, "", "not validated"
