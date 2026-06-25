@@ -582,6 +582,44 @@ def _lifecycle_evidence_id(job: JobPosting, observation: LifecycleObservation) -
     )
 
 
+def _pending_lifecycle_evidence_id(job: JobPosting) -> str:
+    evidence_key = str(job.lifecycle_last_evidence_key or "").strip()
+    if not job.job_key or not evidence_key:
+        return ""
+    return evidence_id_for(
+        _lifecycle_enrichment_id(job.job_key),
+        job.lifecycle_evidence_url,
+        evidence_key,
+    )
+
+
+def _recovered_lifecycle_evidence(job: JobPosting) -> EnrichmentEvidence:
+    enrichment_id = _lifecycle_enrichment_id(job.job_key)
+    evidence_key = str(job.lifecycle_last_evidence_key or "").strip()
+    source_url = str(job.lifecycle_evidence_url or "").strip()
+    evidence = EnrichmentEvidence(
+        job_key=job.job_key,
+        enrichment_id=enrichment_id,
+        source_type="lifecycle_recovery",
+        source_url=source_url,
+        retrieved_at=job.lifecycle_evidence_at or job.lifecycle_last_checked_at or utc_now_iso(),
+        canonical_url=source_url,
+        raw_content_hash=evidence_key,
+        accepted=False,
+        rejection_reason=json.dumps(
+            {
+                "status": job.status,
+                "reason": job.lifecycle_reason,
+                "evidence_type": job.lifecycle_evidence_type,
+                "recovered_after_partial_write": True,
+            },
+            sort_keys=True,
+        )[:1000],
+    )
+    evidence.evidence_id = _pending_lifecycle_evidence_id(job)
+    return evidence
+
+
 def _lifecycle_evidence(
     job: JobPosting,
     observation: LifecycleObservation,
@@ -865,7 +903,15 @@ def run_lifecycle_checks(
 
     _normalize_queue_retry_rows(sheet_client, queue_rows, now=timestamp, policy=rules, summary=summary)
 
-    due_jobs = [(row, job) for row, job in job_rows if _is_due(job, timestamp)]
+    due_jobs = [
+        (row, job)
+        for row, job in job_rows
+        if _is_due(job, timestamp)
+        or (
+            bool(_pending_lifecycle_evidence_id(job))
+            and _pending_lifecycle_evidence_id(job) not in evidence_by_id
+        )
+    ]
     due_jobs.sort(
         key=lambda pair: (
             pair[1].lifecycle_next_check_at or "",
@@ -876,6 +922,22 @@ def run_lifecycle_checks(
 
     for row_number, job in due_jobs[: max(0, limit)]:
         summary.jobs_checked += 1
+        job_queue_rows = queue_by_job.setdefault(job.job_key, [])
+        pending_evidence_id = _pending_lifecycle_evidence_id(job)
+        if pending_evidence_id and pending_evidence_id not in evidence_by_id:
+            _sync_queue_for_lifecycle(
+                sheet_client,
+                job_queue_rows,
+                job,
+                timestamp=timestamp,
+                all_queue_rows=all_queue_rows,
+                reset_target=False,
+            )
+            recovery_evidence = _recovered_lifecycle_evidence(job)
+            summary.evidence_written += int(_write_evidence(sheet_client, recovery_evidence, evidence_by_id))
+            summary.jobs_unchanged += 1
+            continue
+
         observation = lifecycle_checker(job, checked_at=timestamp)
         prospective_evidence_id = _lifecycle_evidence_id(job, observation)
         if prospective_evidence_id in evidence_by_id:
@@ -886,7 +948,6 @@ def run_lifecycle_checks(
         prior_key_duplicate = observation.evidence_key == job.lifecycle_last_evidence_key
         decision = apply_lifecycle_observation(job, observation, policy=rules)
         evidence = _lifecycle_evidence(job, observation, decision)
-        job_queue_rows = queue_by_job.setdefault(job.job_key, [])
 
         if not decision.changed:
             if prior_key_duplicate:
