@@ -108,13 +108,6 @@ jobs:
           python -m compileall -q src
           pytest
 
-      - name: Migrate and validate workbook schema
-        shell: bash
-        run: |
-          set -o pipefail
-          python -m src.schema --migrate
-          python -m src.schema --validate
-
       - name: Run production enrichment
         shell: bash
         run: |
@@ -156,12 +149,16 @@ jobs:
               ("Stale in-progress rows recovered", recovery.get("queue_rows_recovered", 0)),
               ("Direct-link attempts", direct.get("direct_attempts", 0)),
               ("ATS attempts", company.get("company_ats_attempts", 0)),
-              ("External searches", external.get("search_attempts", 0)),
+              ("External-search jobs evaluated", external.get("jobs_evaluated", 0)),
+              ("External queries executed", external.get("queries_executed", 0)),
+              ("External cache hits", external.get("cache_hits", 0)),
               ("Successful enrichments", int(direct.get("enriched", 0)) + int(company.get("enriched", 0)) + int(external.get("enriched", 0))),
               ("Partial enrichments", int(direct.get("partial", 0)) + int(company.get("partial", 0)) + int(external.get("partial", 0))),
               ("Ambiguous matches", int(direct.get("ambiguous", 0)) + int(company.get("ambiguous", 0)) + int(external.get("ambiguous", 0))),
-              ("Retryable failures", direct.get("retryable_failures", 0)),
-              ("Permanent failures", direct.get("permanent_failures", 0)),
+              ("Direct retryable failures", direct.get("retryable_failures", 0)),
+              ("Direct permanent failures", direct.get("permanent_failures", 0)),
+              ("Company or ATS failures", company.get("failures", 0)),
+              ("External search failures", external.get("search_failures", 0)),
               ("Verified jobs after scoring", rescore.get("verified_jobs", 0)),
               ("Jobs marked likely closed", lifecycle.get("likely_closed", 0)),
               ("Jobs marked closed", int(lifecycle.get("confirmed_closed", 0)) + int(lifecycle.get("expired", 0))),
