@@ -235,7 +235,7 @@ def run_company_ats_enrichment(
                 ranked = _rank(job, evidence_rows)
                 accepted = [pair for pair in ranked if pair[0].accepted]
                 plausible = [pair for pair in ranked if pair[0].confidence >= 60]
-                if len(accepted) == 1:
+                if len(accepted) == 1 and len(plausible) == 1:
                     match, evidence = accepted[0]
                     evidence.accepted = True
                     evidence.match_confidence = match.confidence
@@ -248,8 +248,8 @@ def run_company_ats_enrichment(
                     summary.enriched += int(item.status == "enriched")
                     summary.partial += int(item.status == "partial")
                     summary.jobs_updated += int(bool(changed) or item.status in {"enriched", "partial"})
-                elif len(accepted) > 1 or plausible:
-                    selections = (accepted if len(accepted) > 1 else plausible)[:5]
+                elif plausible:
+                    selections = plausible[:5]
                     for match, evidence in selections:
                         evidence.accepted = False
                         evidence.match_confidence = match.confidence
