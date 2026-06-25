@@ -13,7 +13,7 @@ class Summary:
         return {"stage": self.stage}
 
 
-def test_pipeline_runs_direct_link_before_company_ats(monkeypatch):
+def test_pipeline_runs_direct_link_then_company_ats_then_external_search(monkeypatch):
     calls = []
 
     def direct(*_args, **_kwargs):
@@ -24,13 +24,19 @@ def test_pipeline_runs_direct_link_before_company_ats(monkeypatch):
         calls.append("company_ats")
         return Summary("company_ats")
 
+    def external(*_args, **_kwargs):
+        calls.append("external_search")
+        return Summary("external_search")
+
     monkeypatch.setattr("src.enrichment.pipeline.run_direct_link_enrichment", direct)
     monkeypatch.setattr("src.enrichment.pipeline.run_company_ats_enrichment", company)
+    monkeypatch.setattr("src.enrichment.pipeline.run_external_search_enrichment", external)
 
-    result = run_enrichment_pipeline(object(), direct_limit=2, company_limit=3, job_key="job-1")
+    result = run_enrichment_pipeline(object(), direct_limit=2, company_limit=3, external_limit=4, job_key="job-1")
 
-    assert calls == ["direct_link", "company_ats"]
+    assert calls == ["direct_link", "company_ats", "external_search"]
     assert result == {
         "direct_link": {"stage": "direct_link"},
         "company_ats": {"stage": "company_ats"},
+        "external_search": {"stage": "external_search"},
     }
