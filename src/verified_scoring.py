@@ -102,7 +102,8 @@ def is_authoritative_posting_url(url: str, company_context: dict[str, Any] | Non
 
 
 def _meaningful_description(job: JobPosting, rules: dict[str, Any]) -> bool:
-    evidence_rules = rules.get("evidence_rules", {}) or {}
+    potential_rules = rules.get("potential_priority", {}) or {}
+    evidence_rules = potential_rules.get("evidence_rules", rules.get("evidence_rules", {})) or {}
     description = str(job.description_text or "")
     normalized = _normalize(description)
     prefixes = evidence_rules.get("generic_description_prefixes") or ["Extracted from Gmail job alert"]
@@ -147,7 +148,7 @@ def _authoritative_source_assessment(
         marker = _source_marker(job)
         trusted_direct = any(term in marker for term in TRUSTED_DIRECT_SOURCE_MARKERS)
         if confidence is None:
-            if trusted_direct and is_safe_public_url(candidate_url):
+            if trusted_direct and is_authoritative_posting_url(candidate_url, company_context):
                 return True, candidate_url, "trusted direct source"
             return False, "", f"below {minimum_confidence}"
         if confidence < minimum_confidence:
@@ -160,11 +161,8 @@ def _authoritative_source_assessment(
         return False, "", "not validated"
 
     candidate_url = str(job.canonical_url or "").strip()
-    marker = _source_marker(job)
-    trusted_direct = any(term in marker for term in TRUSTED_DIRECT_SOURCE_MARKERS)
     if not is_authoritative_posting_url(candidate_url, company_context):
-        if not trusted_direct or not is_safe_public_url(candidate_url):
-            return False, "", "authoritative domain not confirmed"
+        return False, "", "authoritative domain not confirmed"
     if confidence is not None and confidence < minimum_confidence:
         return False, "", f"below {minimum_confidence}"
     return True, candidate_url, "trusted direct source" if confidence is None else f"accepted {confidence}"
@@ -244,6 +242,14 @@ def finalize_verified_scoring(
         job.score_status = "provisional"
         job.verified_total_score = None
         job.verified_alert_tier = ""
+
+    if job.score_status in {"provisional", "partially_verified"} and job.potential_priority == "high":
+        if job.enrichment_status in {"", "not_required", "closed"}:
+            job.enrichment_status = "pending"
+            job.enrichment_priority = "high"
+    elif job.score_status in {"verified", "excluded"} and job.enrichment_status not in {"partial", "enriched"}:
+        job.enrichment_status = "not_required"
+        job.enrichment_priority = ""
 
     tags = [
         f"authoritative_source={source_url or 'pending'}",
