@@ -158,8 +158,6 @@ def company_config_from_row(row: dict[str, Any]) -> CompanyEnrichmentConfig:
     career_search_url = str(row.get("career_search_url") or row.get("source_url") or "").strip()
     career_domain = str(row.get("career_domain") or _domain_from_url(career_search_url)).strip().lower()
     active_value = row.get("enrichment_active")
-    if active_value in (None, ""):
-        active_value = row.get("active")
     return CompanyEnrichmentConfig(
         company_id=str(row.get("company_id") or "").strip(),
         company_name=company_name or canonical_name,
@@ -183,9 +181,8 @@ def _nonempty_values(row: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in row.items() if value not in (None, "")}
 
 
-def _row_identity(row: dict[str, Any]) -> set[str]:
+def _primary_identity(row: dict[str, Any]) -> set[str]:
     names = [row.get("canonical_company_name"), row.get("company_name")]
-    names.extend(_split_aliases(row.get("company_aliases")))
     return {normalize_company_name(name) for name in names if normalize_company_name(name)}
 
 
@@ -193,8 +190,8 @@ def merge_company_rows(default_rows: Iterable[dict[str, Any]], sheet_rows: Itera
     combined = [dict(row) for row in default_rows]
     for sheet_row in sheet_rows:
         row = dict(sheet_row)
-        identity = _row_identity(row)
-        match_index = next((index for index, current in enumerate(combined) if identity.intersection(_row_identity(current))), None)
+        identity = _primary_identity(row)
+        match_index = next((index for index, current in enumerate(combined) if identity.intersection(_primary_identity(current))), None)
         if match_index is None:
             combined.append(row)
             continue
