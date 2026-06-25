@@ -18,6 +18,7 @@ from src.enrichment.queue import (
     enrichment_id_for,
     evidence_id_for,
     job_is_direct_link_eligible,
+    normalize_lead_url,
     priority_sort_key,
 )
 from src.models import JobPosting
@@ -25,6 +26,7 @@ from src.models import JobPosting
 DEFAULT_PRIORITY_RULES_PATH = Path(__file__).resolve().parents[2] / "config" / "potential_priority_rules.yml"
 DIRECT_FALLBACK_ERROR_TYPES = {"not_found", "access_blocked"}
 REPLAYABLE_QUEUE_STATUSES = {"not_found", "ambiguous", "permanent_failure"}
+ACTIVE_DIRECT_QUEUE_STATUSES = {"pending", "retryable_failure", "in_progress"}
 
 
 def _records_with_rows(sheet_client: Any, worksheet_name: str) -> list[tuple[int, dict[str, Any]]]:
@@ -158,6 +160,39 @@ def _set_retry_state(item: EnrichmentQueueItem, job: JobPosting, *, timestamp: s
     job.enrichment_status = _job_error_status(item.status)
 
 
+def _preferred_queue_rows(
+    queue_rows: list[tuple[int, EnrichmentQueueItem]],
+    job_by_key: dict[str, tuple[int, JobPosting]],
+) -> list[tuple[int, EnrichmentQueueItem]]:
+    """Return at most one queue row per job, preferring the current canonical URL even when it is not due."""
+    grouped: dict[str, list[tuple[int, EnrichmentQueueItem]]] = {}
+    for pair in queue_rows:
+        item = pair[1]
+        if item.job_key in job_by_key:
+            grouped.setdefault(item.job_key, []).append(pair)
+
+    selected: list[tuple[int, EnrichmentQueueItem]] = []
+    for current_job_key, rows in grouped.items():
+        job = job_by_key[current_job_key][1]
+        expected_id = enrichment_id_for(job.job_key, job.canonical_url)
+        exact = [pair for pair in rows if pair[1].enrichment_id == expected_id]
+        if exact:
+            selected.append(min(exact, key=lambda pair: pair[0]))
+            continue
+
+        canonical_url = normalize_lead_url(job.canonical_url)
+        matching_url = [pair for pair in rows if normalize_lead_url(pair[1].lead_url) == canonical_url]
+        if matching_url:
+            selected.append(min(matching_url, key=lambda pair: pair[0]))
+            continue
+
+        active = [pair for pair in rows if pair[1].status in ACTIVE_DIRECT_QUEUE_STATUSES]
+        if active:
+            selected.append(min(active, key=lambda pair: pair[0]))
+
+    return selected
+
+
 def run_direct_link_enrichment(
     sheet_client: Any,
     *,
@@ -194,7 +229,8 @@ def run_direct_link_enrichment(
         summary.queue_existing = max(1, summary.queue_existing)
 
     evidence_by_id = _existing_evidence(sheet_client)
-    due = [pair for pair in queue_rows if pair[1].job_key in job_by_key and due_for_processing(pair[1], now=timestamp)]
+    preferred_rows = _preferred_queue_rows(queue_rows, job_by_key)
+    due = [pair for pair in preferred_rows if due_for_processing(pair[1], now=timestamp)]
     due.sort(key=lambda pair: priority_sort_key(pair[1]))
 
     for queue_row_number, item in due[: max(0, limit)]:
