@@ -5,18 +5,6 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 from urllib.parse import urlsplit
 
-LEGAL_COMPANY_TERMS = {
-    "inc",
-    "incorporated",
-    "llc",
-    "ltd",
-    "limited",
-    "corp",
-    "corporation",
-    "company",
-    "co",
-}
-
 DEFAULT_COMPANY_ROWS: tuple[dict[str, Any], ...] = (
     {
         "company_id": "topgolf",
@@ -48,8 +36,7 @@ DEFAULT_COMPANY_ROWS: tuple[dict[str, Any], ...] = (
 def normalize_company_name(value: Any) -> str:
     text = str(value or "").strip().lower().replace("&", " and ")
     text = re.sub(r"[^a-z0-9]+", " ", text)
-    tokens = [token for token in text.split() if token not in LEGAL_COMPANY_TERMS]
-    return " ".join(tokens)
+    return " ".join(text.split())
 
 
 def _truthy(value: Any, *, default: bool = True) -> bool:
