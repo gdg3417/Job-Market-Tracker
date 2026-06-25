@@ -376,4 +376,5 @@ def test_sprint26_jobs_fields_are_appended_after_legacy_columns():
         "lifecycle_evidence_url",
         "lifecycle_evidence_at",
         "lifecycle_reason",
+        "lifecycle_last_authoritative_miss_date",
     ]
