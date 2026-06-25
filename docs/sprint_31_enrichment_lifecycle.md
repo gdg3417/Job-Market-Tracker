@@ -22,32 +22,38 @@ Lifecycle closure and reopening decisions may use only an employer posting, a su
 
 Authority validation uses exact or suffix-safe hostname checks. A hostname that merely contains an ATS name, such as `greenhouse.io.example.com`, is not authoritative. The final redirect URL is revalidated before lifecycle evidence is accepted.
 
-An authoritative host is not sufficient to prove that a page represents the tracked job. A parsed posting must also pass the existing title, company, location, seniority, role-family, and posting-ID match assessment before it can confirm the role is open or reopen a terminal role. Ambiguous and rejected posting matches remain unresolved.
+An authoritative host is not sufficient to prove that a page represents the tracked job. A parsed posting must also pass the existing title, company, location, seniority, role-family, and posting-ID match assessment before it can confirm the role is open, contribute structured expiration evidence, or reopen a terminal role. Ambiguous and rejected posting matches remain unresolved, and their `validThrough` values are ignored.
+
+A stored enrichment URL is selected for lifecycle checking only when it belongs to a previously accepted match with at least 80 confidence and remains in a trusted enrichment state. Rejected, ambiguous, failed, and otherwise unverified enrichment URLs are ignored in favor of the canonical lead URL.
+
+A job-board or other untrusted lead may redirect to an employer or ATS posting and become authoritative after the final page successfully matches the tracked job. A redirect to an ATS error, missing, closed, or generic page cannot create closure evidence unless the original requested URL was already authoritative.
 
 General job boards, search engines, snippets, Gmail alerts, unrelated domains, and mismatched postings cannot confirm closure or reopening.
 
 ## Closure evidence priority
 
 1. An authoritative employer or ATS page visibly and unambiguously says the role is closed.
-2. Authoritative structured `validThrough` is earlier than the check date.
-3. An authoritative URL returns HTTP 404 or 410 on two distinct check dates.
-4. An authoritative posting consistently redirects to a generic careers or search page on two distinct check dates.
-5. An authoritative inventory source explicitly reports the posting absent on two distinct check dates.
+2. Authoritative structured `validThrough` from a matching posting is earlier than the check date.
+3. An authoritative URL returns HTTP 404 or 410 on two distinct, increasing check dates.
+4. An authoritative posting consistently redirects to a generic careers or search page on two distinct, increasing check dates.
+5. An authoritative inventory source explicitly reports the posting absent on two distinct, increasing check dates.
 6. An aged Gmail-only role has repeated supporting absence without an authoritative page.
 
-Closure language is evaluated only from visible page text. Script, style, template, metadata, and other hidden content are excluded. If a matching structured posting conflicts with visible closure language, the observation remains unresolved unless stronger evidence such as an expired `validThrough` value exists.
+Closure language is evaluated only from visible page text. Script, style, template, metadata, and other hidden content are excluded. If a matching structured posting conflicts with visible closure language, the observation remains unresolved unless stronger evidence such as an expired matching `validThrough` value exists.
 
 A successful HTTP 200 response that cannot be parsed as a specific matching job posting is unresolved evidence. It does not count as an authoritative absence or an authoritative open observation.
 
 A single temporary failure, HTTP 429, HTTP 5xx response, timeout, blocked page, parser failure, mismatched posting, or unresolved search does not close a job.
 
-## Separate evidence counters
+## Separate evidence counters and temporal ordering
 
 `lifecycle_miss_count` records only authoritative lifecycle absences. Weak Gmail and source-inventory absences use the existing `missed_count` field and can never satisfy the authoritative closure threshold.
 
-`lifecycle_last_authoritative_miss_date` records the calendar date of the most recent authoritative absence. Additional authoritative misses from other URLs or source types on that same date are audited but do not increase `lifecycle_miss_count`.
+`lifecycle_last_authoritative_miss_date` records the calendar date of the most recent authoritative absence. Additional authoritative misses from other URLs or source types on that same date are audited but do not increase `lifecycle_miss_count`. Older miss dates are also audited without advancing the counter or moving the recorded miss date backward.
 
-This prevents multiple weak misses followed by one authoritative 404, or multiple same-day authoritative URLs, from immediately confirming closure.
+An observation whose timestamp is older than `lifecycle_last_checked_at` is written to lifecycle evidence but cannot reverse or downgrade the newer job state, counters, audit pointer, or next-check schedule.
+
+This prevents multiple weak misses followed by one authoritative 404, multiple same-day authoritative URLs, and out-of-order backfill evidence from incorrectly confirming closure.
 
 ## Conservative transitions
 
@@ -57,7 +63,7 @@ open
   -> confirmed_closed after an authoritative absence on a later date
 ```
 
-An explicit authoritative closure statement can move directly to `confirmed_closed`. An expired authoritative `validThrough` value moves directly to `expired`.
+An explicit authoritative closure statement can move directly to `confirmed_closed`. An expired authoritative `validThrough` value from a matching posting moves directly to `expired`.
 
 Gmail-only unresolved roles remain visible. They can become `likely_closed` only after the configured age and repeated supporting absence. They do not become `confirmed_closed` from non-authoritative evidence.
 
@@ -65,7 +71,9 @@ Gmail-only unresolved roles remain visible. They can become `likely_closed` only
 
 Normal ingestion updates `last_seen_date` but does not reopen `confirmed_closed`, `closed`, or `expired` jobs. This prevents stale or repeated Gmail alerts from reversing an authoritative closure.
 
-A specific authoritative posting that passes match validation and is rediscovered after `likely_closed`, `confirmed_closed`, `closed`, or `expired` moves to `reopened`. The lifecycle miss counters, last authoritative miss date, and closed date are cleared. `Jobs.enrichment_status` is reset to `pending`, and every closed queue row for that job returns to the direct URL stage.
+A specific authoritative posting that passes match validation and is rediscovered after `likely_closed`, `confirmed_closed`, `closed`, or `expired` moves to `reopened`. The lifecycle miss counters, last authoritative miss date, and closed date are cleared. `Jobs.enrichment_status` is reset to `pending`.
+
+Every closed queue row for the reopened job returns to the direct URL stage as a fresh retry cycle. Its attempt count, retry timestamp, prior attempt timestamp, matched URL, match confidence, recovered fields, errors, and queue age are reset so an exhausted historical retry budget cannot immediately fail the reopened posting.
 
 ## Lifecycle audit fields
 
@@ -151,10 +159,10 @@ These values are included in lifecycle Runs notes for Sprint 32 workflow summari
 
 Topgolf `Sr Manager, Strategic Planning` and Toyota North America `National Manager, Product` remain permanent regression cases.
 
-Temporary retrieval failures, parser failures, mismatched postings, hidden closure labels, non-authoritative redirects, and unresolved searches must leave both roles visible, high potential, and provisional. They may close only through the same recorded authoritative thresholds as every other role.
+Temporary retrieval failures, parser failures, mismatched postings, hidden closure labels, untrusted redirects, rejected enrichment URLs, stale observations, and unresolved searches must leave both roles visible, high potential, and provisional. They may close only through the same recorded authoritative thresholds as every other role.
 
 ## Sprint boundary
 
-Sprint 31 provides the lifecycle engine, strict authority and posting-match validation, audit fields, retry policy, queue synchronization, health metrics, command-line runner, and regression coverage.
+Sprint 31 provides the lifecycle engine, strict authority and posting-match validation, source-trust rules, temporal ordering safeguards, audit fields, retry policy, queue synchronization, health metrics, command-line runner, and regression coverage.
 
 Sprint 32 remains responsible for scheduled production integration, controlled backfill, workflow concurrency, Dashboard presentation of the lifecycle health metrics, recent-closure display refinements for imported terminal aliases, manual lifecycle override tooling, and rollout monitoring.
