@@ -23,11 +23,24 @@ KNOWN_ATS_DOMAIN_SUFFIXES = {
 }
 AUTHORITY_SUBDOMAIN_PREFIXES = ("www.", "careers.", "jobs.")
 TRUSTED_DIRECT_SOURCE_MARKERS = {
+    "ashby",
     "ats",
+    "company_api",
     "company_site",
+    "company-specific",
+    "company_specific",
+    "greenhouse",
+    "icims",
+    "lever",
     "manual",
+    "oracle",
+    "phenom",
+    "smartrecruiters",
     "static",
+    "successfactors",
+    "taleo",
     "website",
+    "workday",
 }
 UNTRUSTED_SOURCE_MARKERS = {
     "gmail",
@@ -177,7 +190,7 @@ def _authoritative_source_assessment(
 
     if confidence is not None and confidence < minimum_confidence:
         return False, "", f"below {minimum_confidence}"
-    if untrusted_source and confidence is None:
+    if confidence is None and (untrusted_source or not trusted_direct):
         return False, "", "not validated"
 
     authoritative_url = next(
