@@ -228,13 +228,18 @@ def run_direct_link_enrichment(
         )
         summary.queue_existing = max(1, summary.queue_existing)
 
+    processable_job_by_key = {
+        current_job_key: value
+        for current_job_key, value in job_by_key.items()
+        if job_is_direct_link_eligible(value[1])
+    }
     evidence_by_id = _existing_evidence(sheet_client)
-    preferred_rows = _preferred_queue_rows(queue_rows, job_by_key)
+    preferred_rows = _preferred_queue_rows(queue_rows, processable_job_by_key)
     due = [pair for pair in preferred_rows if due_for_processing(pair[1], now=timestamp)]
     due.sort(key=lambda pair: priority_sort_key(pair[1]))
 
     for queue_row_number, item in due[: max(0, limit)]:
-        job_row_number, job = job_by_key[item.job_key]
+        job_row_number, job = processable_job_by_key[item.job_key]
         summary.direct_attempts += 1
         item.status = "in_progress"
         item.current_stage = "direct_url"
