@@ -53,7 +53,9 @@ A single temporary failure, HTTP 429, HTTP 5xx response, timeout, blocked page, 
 
 An observation whose timestamp is older than `lifecycle_last_checked_at` is written to lifecycle evidence but cannot reverse or downgrade the newer job state, counters, audit pointer, or next-check schedule.
 
-This prevents multiple weak misses followed by one authoritative 404, multiple same-day authoritative URLs, and out-of-order backfill evidence from incorrectly confirming closure.
+Before an observation can mutate Jobs or Enrichment_Queue, its prospective lifecycle evidence ID is compared with all existing `Enrichment_Evidence` rows. A previously recorded observation is skipped even when a different observation became the latest job-level evidence in between. This makes A-B-A observation sequences idempotent rather than only consecutive duplicates.
+
+This prevents multiple weak misses followed by one authoritative 404, multiple same-day authoritative URLs, out-of-order backfill evidence, and nonconsecutive duplicate evidence from incorrectly changing lifecycle state.
 
 ## Conservative transitions
 
@@ -73,7 +75,9 @@ Normal ingestion updates `last_seen_date` but does not reopen `confirmed_closed`
 
 A specific authoritative posting that passes match validation and is rediscovered after `likely_closed`, `confirmed_closed`, `closed`, or `expired` moves to `reopened`. The lifecycle miss counters, last authoritative miss date, and closed date are cleared. `Jobs.enrichment_status` is reset to `pending`.
 
-Every closed queue row for the reopened job returns to the direct URL stage as a fresh retry cycle. Its attempt count, retry timestamp, prior attempt timestamp, matched URL, match confidence, recovered fields, errors, and queue age are reset so an exhausted historical retry budget cannot immediately fail the reopened posting.
+Exactly one queue row owns the new enrichment cycle: the row whose deterministic enrichment ID corresponds to the job's current canonical URL. That row is reset to the direct URL stage with a fresh attempt budget, timestamps, prior match data, recovered fields, errors, and queue age. If the canonical row does not yet exist, it is created. Historical rows for older lead URLs remain closed.
+
+The direct enrichment runner independently selects at most one queue row per `job_key`, preferring the current canonical enrichment ID even when an obsolete historical row is also due. This prevents duplicate attempts from overwriting a stronger result for the same Jobs record.
 
 ## Lifecycle audit fields
 
@@ -159,10 +163,10 @@ These values are included in lifecycle Runs notes for Sprint 32 workflow summari
 
 Topgolf `Sr Manager, Strategic Planning` and Toyota North America `National Manager, Product` remain permanent regression cases.
 
-Temporary retrieval failures, parser failures, mismatched postings, hidden closure labels, untrusted redirects, rejected enrichment URLs, stale observations, and unresolved searches must leave both roles visible, high potential, and provisional. They may close only through the same recorded authoritative thresholds as every other role.
+Temporary retrieval failures, parser failures, mismatched postings, hidden closure labels, untrusted redirects, rejected enrichment URLs, stale observations, duplicate evidence, obsolete queue rows, and unresolved searches must leave both roles visible, high potential, and provisional. They may close only through the same recorded authoritative thresholds as every other role.
 
 ## Sprint boundary
 
-Sprint 31 provides the lifecycle engine, strict authority and posting-match validation, source-trust rules, temporal ordering safeguards, audit fields, retry policy, queue synchronization, health metrics, command-line runner, and regression coverage.
+Sprint 31 provides the lifecycle engine, strict authority and posting-match validation, source-trust rules, temporal ordering and evidence-idempotency safeguards, canonical queue ownership, retry policy, queue synchronization, health metrics, command-line runner, and regression coverage.
 
 Sprint 32 remains responsible for scheduled production integration, controlled backfill, workflow concurrency, Dashboard presentation of the lifecycle health metrics, recent-closure display refinements for imported terminal aliases, manual lifecycle override tooling, and rollout monitoring.
