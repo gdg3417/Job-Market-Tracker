@@ -135,7 +135,7 @@ def test_company_alias_resolves_full_context_without_blank_overwrite():
         ],
         [
             {
-                "company_name": "Toyota Motor North America",
+                "company_name": "Toyota North America",
                 "priority_tier": "Tier 1",
                 "industry_bucket": "",
             }
@@ -148,7 +148,7 @@ def test_company_alias_resolves_full_context_without_blank_overwrite():
     assert context["industry_bucket"] == "manufacturing"
     assert context["priority_tier"] == "Tier 1"
     assert context["resolved_canonical_company_name"] == "Toyota Motor North America"
-    assert context["context_match_type"] == "alias"
+    assert context["context_match_type"] == "company_name"
 
 
 def test_topgolf_and_toyota_sparse_leads_never_receive_verified_ignore_tier():
