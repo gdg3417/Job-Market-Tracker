@@ -192,8 +192,13 @@ def write_enrichment_health_section(
 ) -> int:
     if not hasattr(sheet_client, "get_worksheet"):
         return 0
+    from src.sheets import with_quota_backoff
+
     worksheet = sheet_client.get_worksheet("Dashboard")
-    existing = worksheet.get_all_values()
+    existing = with_quota_backoff(
+        lambda: worksheet.get_all_values(),
+        operation_name="read Dashboard before enrichment health write",
+    )
     start_row = max(1, len(existing) + 2)
     rows = [
         ["Enrichment and lifecycle health"],
@@ -208,10 +213,13 @@ def write_enrichment_health_section(
         ["Average enrichment attempts", health_metrics.get("average_enrichment_attempts", 0), "Average attempts across enrichment queue rows"],
         ["Enrichment success rate percent", health_metrics.get("enrichment_success_rate_percent", 0), "Share of attempted queue rows enriched or partially enriched"],
     ]
-    worksheet.update(
-        range_name=f"A{start_row}",
-        values=rows,
-        value_input_option="USER_ENTERED",
+    with_quota_backoff(
+        lambda: worksheet.update(
+            range_name=f"A{start_row}",
+            values=rows,
+            value_input_option="USER_ENTERED",
+        ),
+        operation_name="write Dashboard enrichment health section",
     )
     return len(rows)
 
