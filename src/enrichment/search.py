@@ -56,6 +56,7 @@ GENERIC_COMPANY_DOMAIN_TERMS = {
     "the",
 }
 COMPANY_COMPACT_IGNORED_TERMS = {"and", "the"}
+COMMON_COUNTRY_SECOND_LEVEL_SUFFIXES = {"ac", "co", "com", "edu", "gov", "net", "org"}
 CAREER_URL_MARKERS = ("career", "careers", "job", "jobs", "position", "positions", "opening", "openings")
 
 AUTHORITATIVE_ATS_HOST_SUFFIXES = (
@@ -280,13 +281,23 @@ def is_denied_automatic_candidate(url: str) -> bool:
     return any(_host_matches(host, suffix) for suffix in JOB_BOARD_HOST_SUFFIXES)
 
 
+def _registrable_identity_label(host: str) -> str:
+    labels = [label for label in host.lower().split(".") if label]
+    if not labels:
+        return ""
+    index = -2 if len(labels) >= 2 else -1
+    if len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in COMMON_COUNTRY_SECOND_LEVEL_SUFFIXES:
+        index = -3
+    return re.sub(r"[^a-z0-9]+", "", labels[index])
+
+
 def _company_domain_candidate(url: str, company: str) -> bool:
     normalized = normalize_candidate_url(url)
     if not normalized:
         return False
     parts = urlsplit(normalized)
     host = (parts.hostname or "").lower()
-    host_labels = [label for label in re.findall(r"[a-z0-9]+", host) if label]
+    registrable_identity = _registrable_identity_label(host)
     company_tokens = re.findall(r"[a-z0-9]+", clean_text(company).lower())
     all_identity_tokens = [token for token in company_tokens if token not in COMPANY_COMPACT_IGNORED_TERMS]
     distinctive_tokens = [
@@ -297,11 +308,9 @@ def _company_domain_candidate(url: str, company: str) -> bool:
     identity_variants = {
         "".join(all_identity_tokens),
         "".join(distinctive_tokens),
+        *distinctive_tokens,
     } - {""}
-    identity_match = any(label in identity_variants for label in host_labels) or any(
-        token == label for token in distinctive_tokens for label in host_labels
-    )
-    if not identity_match:
+    if registrable_identity not in identity_variants:
         return False
     career_text = f"{host} {parts.path}".lower()
     return any(marker in career_text for marker in CAREER_URL_MARKERS)
