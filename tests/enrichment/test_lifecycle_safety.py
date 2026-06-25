@@ -1,4 +1,10 @@
-from src.enrichment.lifecycle import LifecycleObservation, apply_lifecycle_observation, is_authoritative_lifecycle_url
+from src.enrichment.fetcher import FetchResult
+from src.enrichment.lifecycle import (
+    DirectUrlLifecycleChecker,
+    LifecycleObservation,
+    apply_lifecycle_observation,
+    is_authoritative_lifecycle_url,
+)
 from src.models import JobPosting
 
 
@@ -76,11 +82,13 @@ def test_same_day_duplicate_absence_does_not_confirm_closure():
     assert duplicate.changed is False
 
 
-def test_authority_requires_employer_or_verified_ats_evidence():
+def test_authority_requires_employer_or_verified_ats_evidence_and_rejects_spoofed_hosts():
     job = _job()
     assert is_authoritative_lifecycle_url(job.canonical_url, job) is False
     assert is_authoritative_lifecycle_url("https://boards.greenhouse.io/topgolf/jobs/123", job) is True
     assert is_authoritative_lifecycle_url("https://careers.topgolf.com/jobs/123", job) is True
+    assert is_authoritative_lifecycle_url("https://greenhouse.io.example.com/topgolf/jobs/123", job) is False
+    assert is_authoritative_lifecycle_url("https://not-topgolf.example.com/careers/123", job) is False
 
     verified = _job(
         enrichment_source_url="https://careers.example.com/jobs/123",
@@ -88,3 +96,51 @@ def test_authority_requires_employer_or_verified_ats_evidence():
         enrichment_match_confidence=90,
     )
     assert is_authoritative_lifecycle_url(verified.enrichment_source_url, verified) is True
+
+
+class StaticFetcher:
+    def __init__(self, result):
+        self.result = result
+
+    def fetch(self, _url):
+        return self.result
+
+
+def test_unparseable_http_200_page_is_unresolved_not_authoritative_absence():
+    job = _job(canonical_url="https://careers.topgolf.com/jobs/123")
+    checker = DirectUrlLifecycleChecker(
+        StaticFetcher(
+            FetchResult(
+                requested_url=job.canonical_url,
+                final_url=job.canonical_url,
+                status_code=200,
+                content_type="text/html",
+                text="<html><body>JavaScript required</body></html>",
+            )
+        )
+    )
+    observation = checker(job, checked_at="2026-06-25T10:00:00Z")
+    assert observation.authoritative is True
+    assert observation.listed is None
+    apply_lifecycle_observation(job, observation)
+    assert job.status == "open"
+    assert job.lifecycle_miss_count == 0
+
+
+def test_final_redirect_is_revalidated_before_authoritative_decision():
+    job = _job(canonical_url="https://careers.topgolf.com/jobs/123")
+    checker = DirectUrlLifecycleChecker(
+        StaticFetcher(
+            FetchResult(
+                requested_url=job.canonical_url,
+                final_url="https://example.com/jobs/123",
+                status_code=200,
+                content_type="text/html",
+                text="This job is no longer available",
+            )
+        )
+    )
+    observation = checker(job, checked_at="2026-06-25T10:00:00Z")
+    assert observation.authoritative is False
+    apply_lifecycle_observation(job, observation)
+    assert job.status == "open"
