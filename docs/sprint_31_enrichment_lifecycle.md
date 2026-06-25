@@ -77,7 +77,7 @@ A specific authoritative posting that passes match validation and is rediscovere
 
 Exactly one queue row owns the new enrichment cycle: the row whose deterministic enrichment ID corresponds to the job's current canonical URL. That row is reset to the direct URL stage with a fresh attempt budget, timestamps, prior match data, recovered fields, errors, and queue age. If the canonical row does not yet exist, it is created. Historical rows for older lead URLs remain closed.
 
-The direct enrichment runner independently selects at most one queue row per `job_key`, preferring the current canonical enrichment ID even when an obsolete historical row is also due. This prevents duplicate attempts from overwriting a stronger result for the same Jobs record.
+The direct enrichment runner independently selects at most one queue row per `job_key`, preferring the current canonical enrichment ID even when an obsolete historical row is also due. It also revalidates the parent job against the current direct-link eligibility rules, so stale pending rows cannot process terminal, verified, excluded, low-priority, or otherwise ineligible jobs. These controls prevent duplicate or obsolete attempts from overwriting a stronger Jobs result.
 
 ## Lifecycle audit fields
 
@@ -163,10 +163,10 @@ These values are included in lifecycle Runs notes for Sprint 32 workflow summari
 
 Topgolf `Sr Manager, Strategic Planning` and Toyota North America `National Manager, Product` remain permanent regression cases.
 
-Temporary retrieval failures, parser failures, mismatched postings, hidden closure labels, untrusted redirects, rejected enrichment URLs, stale observations, duplicate evidence, obsolete queue rows, and unresolved searches must leave both roles visible, high potential, and provisional. They may close only through the same recorded authoritative thresholds as every other role.
+Temporary retrieval failures, parser failures, mismatched postings, hidden closure labels, untrusted redirects, rejected enrichment URLs, stale observations, duplicate evidence, obsolete queue rows, ineligible parent jobs, and unresolved searches must leave both roles visible, high potential, and provisional. They may close only through the same recorded authoritative thresholds as every other role.
 
 ## Sprint boundary
 
-Sprint 31 provides the lifecycle engine, strict authority and posting-match validation, source-trust rules, temporal ordering and evidence-idempotency safeguards, canonical queue ownership, retry policy, queue synchronization, health metrics, command-line runner, and regression coverage.
+Sprint 31 provides the lifecycle engine, strict authority and posting-match validation, source-trust rules, temporal ordering and evidence-idempotency safeguards, canonical queue ownership, parent-job eligibility gates, retry policy, queue synchronization, health metrics, command-line runner, and regression coverage.
 
 Sprint 32 remains responsible for scheduled production integration, controlled backfill, workflow concurrency, Dashboard presentation of the lifecycle health metrics, recent-closure display refinements for imported terminal aliases, manual lifecycle override tooling, and rollout monitoring.
