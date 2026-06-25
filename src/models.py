@@ -284,15 +284,21 @@ class JobPosting:
     def refresh_updated_at(self) -> None:
         self.updated_at = utc_now_iso()
 
-    def mark_seen(self, seen_date: str | None = None) -> None:
+    def mark_seen(self, seen_date: str | None = None, *, allow_reopen: bool = False) -> None:
         previous_status = self.status
         self.last_seen_date = seen_date or today_iso()
         self.missed_count = 0
         if previous_status in TERMINAL_JOB_STATUSES:
-            self.status = "reopened"
+            if allow_reopen:
+                self.status = "reopened"
+                self.closed_date = ""
+            else:
+                self.days_open = days_between(self.first_seen_date, self.closed_date or self.last_seen_date)
+                self.refresh_updated_at()
+                return
         elif previous_status in {"not_seen_once", "likely_closed", "reopened"}:
             self.status = "open"
-        self.closed_date = ""
+            self.closed_date = ""
         self.days_open = days_between(self.first_seen_date, self.last_seen_date)
         self.refresh_updated_at()
 
