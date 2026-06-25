@@ -148,7 +148,7 @@ def _authoritative_source_assessment(
         marker = _source_marker(job)
         trusted_direct = any(term in marker for term in TRUSTED_DIRECT_SOURCE_MARKERS)
         if confidence is None:
-            if trusted_direct and is_safe_public_url(candidate_url):
+            if trusted_direct and not _source_is_untrusted(job) and is_safe_public_url(candidate_url):
                 return True, candidate_url, "trusted direct source"
             return False, "", f"below {minimum_confidence}"
         if confidence < minimum_confidence:
