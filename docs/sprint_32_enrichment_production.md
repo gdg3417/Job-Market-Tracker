@@ -22,6 +22,8 @@ Supported modes:
 | `weekly` | 10 | 10 | 5 | 50 |
 | `backfill` | 15 | 15 | 5 | 50 |
 
+The runner requires exactly one of `--run` or `--dry-run`. Dry-run validates the existing workbook and performs no schema migration or workbook writes. Run mode performs safe trailing-header and timezone migration before processing.
+
 Each cycle performs these steps:
 
 1. Recover stale queue rows left as `in_progress`.
@@ -62,7 +64,7 @@ The prior attempt count is retained. Recovery does not silently grant a fresh at
 
 One concurrency group prevents overlapping enrichment workflows. The job timeout is 45 minutes.
 
-The daily cycle performs only direct-link and company or ATS work. External discovery and lifecycle checks remain in the weekly cycle.
+The daily cycle performs only direct-link and company or ATS work. External discovery and lifecycle checks remain in the weekly cycle. The production runner owns schema migration and validation so the workflow does not repeat the same workbook-wide schema reads.
 
 ## Workflow summary
 
@@ -72,15 +74,14 @@ The GitHub Step Summary reports:
 * jobs enqueued
 * queue backlog
 * stale `in_progress` rows recovered
-* direct-link attempts
-* ATS attempts
-* external searches
+* direct-link and ATS attempts
+* external-search jobs evaluated, queries executed, and cache hits
 * successful and partial enrichments
 * ambiguous matches
-* retryable and permanent failures
-* verified scores created
+* direct, company or ATS, and external-search failures
+* verified jobs after scoring
 * likely closed and closed jobs
-* Dashboard and Digest rows written
+* Dashboard, Dashboard health, and Digest rows written
 
 ## Controlled rollout
 
