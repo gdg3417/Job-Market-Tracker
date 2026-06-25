@@ -55,7 +55,9 @@ An observation whose timestamp is older than `lifecycle_last_checked_at` is writ
 
 Before an observation can mutate Jobs or Enrichment_Queue, its prospective lifecycle evidence ID is compared with all existing `Enrichment_Evidence` rows. A previously recorded observation is skipped even when a different observation became the latest job-level evidence in between. This makes A-B-A observation sequences idempotent rather than only consecutive duplicates.
 
-This prevents multiple weak misses followed by one authoritative 404, multiple same-day authoritative URLs, out-of-order backfill evidence, and nonconsecutive duplicate evidence from incorrectly changing lifecycle state.
+Jobs and queue synchronization are committed before the final `Enrichment_Evidence` row. If a partial Sheets write leaves persisted lifecycle fields without their deterministic evidence ID, the next run detects the incomplete transition even when the next-check date is in the future. It reconciles queue state without resetting an active retry cycle, restores a `lifecycle_recovery` audit row from the persisted Jobs fields, and performs no new network request for that recovery.
+
+This prevents multiple weak misses followed by one authoritative 404, multiple same-day authoritative URLs, out-of-order backfill evidence, nonconsecutive duplicate evidence, and partial workbook writes from incorrectly changing or stranding lifecycle state.
 
 ## Conservative transitions
 
@@ -163,10 +165,10 @@ These values are included in lifecycle Runs notes for Sprint 32 workflow summari
 
 Topgolf `Sr Manager, Strategic Planning` and Toyota North America `National Manager, Product` remain permanent regression cases.
 
-Temporary retrieval failures, parser failures, mismatched postings, hidden closure labels, untrusted redirects, rejected enrichment URLs, stale observations, duplicate evidence, obsolete queue rows, ineligible parent jobs, and unresolved searches must leave both roles visible, high potential, and provisional. They may close only through the same recorded authoritative thresholds as every other role.
+Temporary retrieval failures, parser failures, mismatched postings, hidden closure labels, untrusted redirects, rejected enrichment URLs, stale observations, duplicate evidence, obsolete queue rows, ineligible parent jobs, partial workbook writes, and unresolved searches must leave both roles visible, high potential, and provisional. They may close only through the same recorded authoritative thresholds as every other role.
 
 ## Sprint boundary
 
-Sprint 31 provides the lifecycle engine, strict authority and posting-match validation, source-trust rules, temporal ordering and evidence-idempotency safeguards, canonical queue ownership, parent-job eligibility gates, retry policy, queue synchronization, health metrics, command-line runner, and regression coverage.
+Sprint 31 provides the lifecycle engine, strict authority and posting-match validation, source-trust rules, temporal ordering, evidence-idempotency and partial-write recovery safeguards, canonical queue ownership, parent-job eligibility gates, retry policy, queue synchronization, health metrics, command-line runner, and regression coverage.
 
 Sprint 32 remains responsible for scheduled production integration, controlled backfill, workflow concurrency, Dashboard presentation of the lifecycle health metrics, recent-closure display refinements for imported terminal aliases, manual lifecycle override tooling, and rollout monitoring.
