@@ -131,17 +131,18 @@ def recover_stale_in_progress(
         (row_number, EnrichmentQueueItem.from_dict(record))
         for row_number, record in _records_with_rows(sheet_client, "Enrichment_Queue")
     ]
+    eligible_queue_rows = [
+        pair for pair in queue_rows if not job_key or pair[1].job_key == job_key
+    ]
     jobs = {
         job.job_key: (row_number, job)
         for row_number, job in _jobs_with_rows(sheet_client)
         if job.job_key and (not job_key or job.job_key == job_key)
     }
-    summary = RecoverySummary(queue_rows_evaluated=len(queue_rows))
+    summary = RecoverySummary(queue_rows_evaluated=len(eligible_queue_rows))
     recovered_jobs: set[str] = set()
 
-    for row_number, item in queue_rows:
-        if job_key and item.job_key != job_key:
-            continue
+    for row_number, item in eligible_queue_rows:
         if item.status != "in_progress":
             continue
         last_change = _parse_timestamp(item.updated_at) or _parse_timestamp(item.last_attempted_at)
@@ -240,7 +241,7 @@ def _build_run_record(summary: ProductionRunSummary) -> dict[str, Any]:
     )
     evaluated = max(
         int(direct.get("jobs_evaluated") or 0),
-        int(summary.rescore.get("jobs_read") or 0),
+        int(summary.rescore.get("jobs_selected") or 0),
         int(lifecycle.get("jobs_evaluated") or 0),
     )
     return {
@@ -409,9 +410,7 @@ def main() -> None:
     sheet_client = SheetClient.from_settings(settings)
     limits = _overridden_limits(args)
 
-    migrate_trailing_headers(sheet_client)
     validate_workbook_or_raise(sheet_client)
-
     if args.dry_run:
         preview = {
             "mode": args.mode,
@@ -424,6 +423,8 @@ def main() -> None:
         print(json.dumps(preview, indent=2))
         return
 
+    migrate_trailing_headers(sheet_client)
+    validate_workbook_or_raise(sheet_client)
     scoring_rules = load_scoring_rules(settings.scoring_rules_path)
     summary = run_production_cycle(
         sheet_client,
