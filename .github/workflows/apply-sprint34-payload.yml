@@ -12,8 +12,10 @@ jobs:
   apply:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout sprint branch
         uses: actions/checkout@v4
+        with:
+          ref: codex/sprint-34-authoritative-posting-resolution
 
       - name: Apply implementation payload
         shell: bash
@@ -31,4 +33,4 @@ jobs:
             exit 0
           fi
           git commit -m "Implement Sprint 34 authoritative posting resolution"
-          git push
+          git push origin HEAD:codex/sprint-34-authoritative-posting-resolution
