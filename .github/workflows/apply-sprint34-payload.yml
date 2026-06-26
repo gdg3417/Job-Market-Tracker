@@ -1,9 +1,9 @@
 name: Apply Sprint 34 Payload
 
 on:
-  push:
+  pull_request:
     branches:
-      - codex/sprint-34-authoritative-posting-resolution
+      - main
 
 permissions:
   contents: write
