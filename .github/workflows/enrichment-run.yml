@@ -140,6 +140,7 @@ jobs:
           rescore = data.get("rescore") or {}
           dashboard = data.get("dashboard") or {}
           health = data.get("health_metrics") or {}
+          resolution = data.get("authoritative_resolution") or {}
 
           rows = [
               ("Mode", os.environ.get("RUN_MODE") or "not_resolved"),
@@ -149,6 +150,10 @@ jobs:
               ("Stale in-progress rows recovered", recovery.get("queue_rows_recovered", 0)),
               ("Direct-link attempts", direct.get("direct_attempts", 0)),
               ("ATS attempts", company.get("company_ats_attempts", 0)),
+              ("Authoritative resolution attempts", resolution.get("attempted", 0)),
+              ("Authoritative resolutions", resolution.get("resolved_authoritative", 0)),
+              ("Probable resolutions", resolution.get("resolved_probable", 0)),
+              ("Resolution manual interventions", resolution.get("manual_intervention_required", 0)),
               ("External-search jobs evaluated", external.get("jobs_evaluated", 0)),
               ("External queries executed", external.get("queries_executed", 0)),
               ("External cache hits", external.get("cache_hits", 0)),
