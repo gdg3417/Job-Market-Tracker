@@ -46,6 +46,8 @@ class HealthThresholds:
     lifecycle_stale_hours: int = 336
     verification_watch_breach_rate: float = 0.10
     verification_degraded_breach_rate: float = 0.25
+    verification_watch_conversion_rate: float = 0.50
+    verification_degraded_conversion_rate: float = 0.20
     source_watch_failure_rate: float = 0.10
     source_degraded_failure_rate: float = 0.25
     lifecycle_watch_stale_rate: float = 0.10
