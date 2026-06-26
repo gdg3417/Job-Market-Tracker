@@ -116,8 +116,25 @@ def latest_run(rows: list[dict[str, Any]], predicate: Callable[[dict[str, Any]],
     return max(matches, key=lambda row: row_timestamp(row, "finished_at", "started_at", "created_at"), default=None)
 
 
+def is_daily_completion_run(row: dict[str, Any]) -> bool:
+    return (
+        identity(row.get("run_type")) == "daily workflow completion"
+        or identity(row.get("source_name")) == "github actions daily run"
+    )
+
+
+def is_enrichment_run(row: dict[str, Any]) -> bool:
+    run_type = identity(row.get("run_type"))
+    source_name = identity(row.get("source_name"))
+    return run_type.startswith("sprint 32 enrichment ") or source_name == "production enrichment pipeline"
+
+
 def daily_run(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
-    return latest_run(rows, lambda row: "daily" in identity(row.get("run_type")) or "daily" in identity(row.get("source_name")))
+    return latest_run(rows, lambda row: is_daily_completion_run(row) or is_enrichment_run(row))
+
+
+def enrichment_run(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    return latest_run(rows, is_enrichment_run)
 
 
 def _host(url: Any) -> str:
