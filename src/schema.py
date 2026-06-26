@@ -148,12 +148,23 @@ def _metadata(sheet_client: Any) -> dict[str, Any]:
     return with_quota_backoff(lambda: sheet_client.workbook.fetch_sheet_metadata(), operation_name="fetch workbook metadata")
 
 
+def _read_header_row(worksheet: Any, spec: HeaderSpec) -> list[str]:
+    from src.sheets import with_quota_backoff
+
+    return with_quota_backoff(
+        lambda: worksheet.row_values(spec.header_row),
+        operation_name=f"read headers {spec.worksheet_name}",
+    )
+
+
 def _worksheet_or_empty(sheet_client: Any, spec: HeaderSpec) -> list[str]:
     try:
         worksheet = sheet_client.get_worksheet(spec.worksheet_name)
-    except Exception:
-        return []
-    return worksheet.row_values(spec.header_row)
+    except Exception as exc:
+        if exc.__class__.__name__ == "WorksheetNotFound":
+            return []
+        raise
+    return _read_header_row(worksheet, spec)
 
 
 def validate_workbook(sheet_client: Any) -> WorkbookValidationResult:
@@ -225,7 +236,7 @@ def migrate_trailing_headers(sheet_client: Any) -> WorkbookValidationResult:
             cols=required_cols,
             worksheet_name=spec.worksheet_name,
         )
-        current = _trim(worksheet.row_values(spec.header_row))
+        current = _trim(_read_header_row(worksheet, spec))
         final_headers = list(current)
         if current != spec.headers:
             if not current:
@@ -279,7 +290,7 @@ def repair_headers(sheet_client: Any) -> None:
             rows=required_rows,
             cols=len(spec.headers),
         )
-        current = _trim(worksheet.row_values(spec.header_row))
+        current = _trim(_read_header_row(worksheet, spec))
         width = max(len(current), len(spec.headers), 1)
         _ensure_grid_capacity(
             worksheet,
