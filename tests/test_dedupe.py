@@ -73,3 +73,46 @@ def test_merge_preserves_stronger_existing_record():
     assert merged.score_status == "partially_verified"
     assert merged.evidence_completeness_score == 80
     assert merged.enrichment_status == "enriched"
+
+
+def test_merge_allows_stronger_incoming_record_to_upgrade_sparse_existing():
+    existing = JobPosting(
+        job_key="record-2",
+        company="Acme",
+        title="Strategy Manager",
+        location="Dallas, TX",
+        source_primary="gmail_alert",
+        description_text="Extracted from Gmail job alert.",
+        remote_status="unknown",
+        work_model="unknown",
+        total_score=10,
+        alert_tier="ignore",
+        score_status="provisional",
+        evidence_completeness_score=10,
+        enrichment_status="pending",
+    )
+    incoming = JobPosting(
+        job_key="record-2",
+        company="Acme",
+        title="Strategy Manager",
+        location="Dallas, TX",
+        source_primary="greenhouse",
+        description_text="Detailed authoritative record with operating ownership.",
+        remote_status="hybrid",
+        work_model="hybrid",
+        total_score=72,
+        alert_tier="review",
+        score_status="partially_verified",
+        evidence_completeness_score=80,
+        enrichment_status="enriched",
+    )
+
+    merged = merge_job(existing, incoming, seen_date="2026-06-26")
+
+    assert merged.description_text == incoming.description_text
+    assert merged.remote_status == "hybrid"
+    assert merged.work_model == "hybrid"
+    assert merged.total_score == 72
+    assert merged.score_status == "partially_verified"
+    assert merged.evidence_completeness_score == 80
+    assert merged.enrichment_status == "enriched"
