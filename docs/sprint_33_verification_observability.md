@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Sprint 33 separates enrichment queue activity from portfolio verification health. An empty queue means that no queue item is pending. It does not prove that priority jobs are verified, within service level, or ready for a decision.
+Sprint 33 separates enrichment queue activity from portfolio verification health. An empty queue means no queue item is pending. It does not prove that priority jobs are verified, within service level, lifecycle-current, or ready for a decision.
 
 The implementation reads existing canonical workbook tabs, calculates a reproducible verification snapshot, appends one managed section to `Dashboard`, and upserts one historical row in `Runs`. It does not add a second job-state table or implement later roadmap features.
 
@@ -43,6 +43,21 @@ The calculation reads these existing canonical tabs:
 
 No worksheet or canonical header is added. Existing schema migration and validation remain the source of truth. Historical snapshots use structured JSON in the existing `Runs.notes` field.
 
+## Operational run selection
+
+Only these rows can anchor workflow freshness, default snapshot identifiers, or latest-run funnel windows:
+
+* `daily_workflow_completion`, written by the GitHub Actions daily workflow
+* `sprint_32_enrichment_*`, or rows whose source is `Production enrichment pipeline`
+
+Schema-validation rows, verification-health rows, and unrelated workflow rows are excluded.
+
+For a daily completion row, the latest-run funnel count covers the full `central_date` in `America/Chicago`. Daily completion rows are written only at the end of the workflow, so their zero-length timestamp pair is not used as the funnel window.
+
+For an enrichment run, the actual start and finish timestamps define the latest-run funnel window.
+
+Source-health attempts and failures always come from the latest enrichment run, even when a newer daily completion row exists.
+
 ## Verification funnel
 
 Funnel stages can overlap. The values do not imply a strict one-to-one sequence.
@@ -65,9 +80,9 @@ Funnel stages can overlap. The values do not imply a strict one-to-one sequence.
 | Dismissed | Jobs with a dismissal status or reason | Human reviewed |
 | Closed | Jobs with a confirmed closed, closed, or expired status | Jobs accepted |
 
-Every stage reports current count, count entering during the latest daily run, count entering during the latest seven days, conversion from the documented denominator, median age, and oldest unresolved age where applicable.
+Every stage reports current count, latest operational-run count, latest seven-day count, conversion from the documented denominator, median age, and oldest unresolved age where applicable.
 
-Conversions can exceed 100 percent when stages overlap or use different units. This is documented rather than hidden.
+Conversions can exceed 100 percent when stages overlap or use different units. This is exposed rather than hidden.
 
 ## Verification aging and service levels
 
@@ -115,7 +130,7 @@ Sprint 33 retains seven separate component scores. The overall score never repla
 
 ### Workflow reliability
 
-The score is 100 only when the latest daily or enrichment run succeeded and is within the configured freshness threshold. A missing, failed, or stale run scores 0 and creates a critical override.
+The score is 100 only when the latest qualifying daily completion or enrichment run succeeded and is within the configured freshness threshold. A missing, failed, or stale qualifying run scores 0 and creates a critical override.
 
 ### Ingestion health
 
@@ -129,7 +144,7 @@ When no ingestion values are logged, the component receives a neutral score of 5
 
 ### Source health
 
-The source failure rate uses attempts and failures recorded for direct-link, company or ATS, and external-search enrichment. Configured watch and degraded boundaries convert the rate to a 0 to 100 score. No logged attempts receive a neutral score of 70.
+The source failure rate uses attempts and failures from the latest enrichment run for direct-link, company or ATS, and external-search stages. Configured watch and degraded boundaries convert the rate to a 0 to 100 score. No logged enrichment attempts receive a neutral score of 70.
 
 ### Verification health
 
@@ -148,7 +163,11 @@ The average `evidence_completeness_score` for open high-potential and medium-pot
 
 ### Lifecycle health
 
-The stale lifecycle rate is calculated for open jobs that are verified or have a canonical URL. One timeout, blocked response, parser failure, rate limit, or nonauthoritative miss does not close a job.
+Lifecycle eligibility is limited to open jobs that are verified or have an authoritative posting match. Generic LinkedIn, Indeed, or other unverified lead URLs do not make a job lifecycle-eligible.
+
+A qualifying job is stale when its actual lifecycle check timestamp is missing or older than the configured threshold. General job `updated_at` timestamps are not treated as lifecycle checks.
+
+One timeout, blocked response, parser failure, rate limit, or nonauthoritative miss does not close a job.
 
 ### Decision-readiness health
 
@@ -180,13 +199,13 @@ The prior managed block is removed before replacement. Repeated runs do not dupl
 
 ## Historical `Runs` behavior
 
-The default run identifier is based on the latest daily or enrichment run:
+The default run identifier is based on the latest qualifying daily completion or enrichment run:
 
 ```text
-sprint33_verification_health_<latest daily run id>
+sprint33_verification_health_<latest operational run id>
 ```
 
-If no daily run exists, the UTC date is used. An explicit `--run-id` overrides the default.
+If no qualifying operational run exists, the UTC date is used. An explicit `--run-id` overrides the default.
 
 A repeated calculation for the same run identifier updates the existing `Runs` row rather than appending another row. The compact JSON in `notes` includes funnel metrics, aging metrics, component scores, blocker counts, the bounded high-potential blocker map, service-level breach count, thresholds, critical overrides, and workbook row counts.
 
@@ -194,7 +213,7 @@ A repeated calculation for the same run identifier updates the existing `Runs` r
 
 ### Workflow reliability is blocked
 
-Review the latest daily, enrichment, and workflow-validation runs. Confirm required secrets, schema validity, and workflow completion time.
+Review the latest daily completion and enrichment runs. Schema-validation success does not satisfy this component.
 
 ### Ingestion health is degraded
 
@@ -202,7 +221,7 @@ Review Gmail backlog, failed messages, and ingestion run notes. Do not weaken qu
 
 ### Source health is degraded
 
-Review structured failure categories. Distinguish blocked, timeout, parser, not-found, and unsupported-path failures.
+Review the latest enrichment run and distinguish blocked, timeout, parser, not-found, and unsupported-path failures.
 
 ### Verification health is degraded
 
@@ -214,7 +233,7 @@ Use blocker counts to identify missing description, location, compensation, or w
 
 ### Lifecycle health is degraded
 
-Review lifecycle timestamps and workflow execution. Preserve conservative closure safeguards.
+Review actual lifecycle timestamps and workflow execution. Preserve conservative closure safeguards.
 
 ### Decision-readiness health is degraded
 
@@ -230,50 +249,40 @@ A queue can be empty because jobs were never queued, retries were exhausted, a p
 
 ## Production validation
 
-Run from a new PowerShell window:
+Run from PowerShell:
 
 ```powershell
 cd "C:\Users\gdg34\OneDrive\Documents\GitHub\Job-Market-Tracker"
 
-git switch main
-git pull --ff-only origin main
-
-git fetch origin
 git switch codex/sprint-33-verification-observability
 git pull --ff-only origin codex/sprint-33-verification-observability
 
 .\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-
 pytest
-python -m src.schema --migrate
 python -m src.schema --validate
-python -m src.workflow_validation
-
 python -m src.verification_health --dry-run
 python -m src.verification_health --run --run-id "sprint33_controlled_production_validation"
 ```
 
 Review the output and workbook:
 
-1. Confirm the overall classification, seven component scores, and critical overrides are present.
-2. Confirm every unresolved high-potential job has a normalized blocker.
-3. Confirm the existing Dashboard action queue, Tracker health, Top roles, and Source cleanup sections remain.
-4. Confirm the new funnel, aging, service-level, blocker, and oldest-job sections appear once.
-5. Confirm the latest `Runs` row uses `sprint33_controlled_production_validation`.
-6. Rerun the same command with the same run ID.
-7. Confirm the existing `Runs` row is updated rather than duplicated.
+1. Confirm workflow reliability references a daily completion or enrichment run, not a Sprint 16 validation row.
+2. Confirm source health references the latest enrichment run and reports its attempt count.
+3. Confirm lifecycle eligibility excludes generic unverified job-board URLs.
+4. Confirm the existing Dashboard action queue, Tracker health, Top roles, and Source cleanup sections remain.
+5. Confirm the new funnel, aging, service-level, blocker, and oldest-job sections appear once.
+6. Confirm the `Runs` row uses `sprint33_controlled_production_validation`.
+7. Rerun the same command and confirm the existing row is updated rather than duplicated.
 8. Confirm no `Jobs`, `Dashboard`, `Digest`, or `Runs` rows are duplicated.
-9. Run one bounded production refresh:
+
+Run one bounded production refresh:
 
 ```powershell
 python -m src.enrichment.production --run --mode daily --direct-limit 3 --company-limit 3 --external-limit 0 --lifecycle-limit 0
 python -m src.verification_health --run
 ```
 
-10. Confirm the new health snapshot references the latest daily enrichment run.
-11. Confirm existing `Digest` content still refreshes normally.
+Confirm the new health snapshot references the latest enrichment run and existing `Digest` content remains functional.
 
 ## Rollback
 
