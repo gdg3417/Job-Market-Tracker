@@ -117,6 +117,11 @@ def test_daily_production_cycle_orders_pipeline_rescore_and_dashboard(monkeypatc
         "src.enrichment.production.recover_stale_in_progress",
         lambda *_args, **_kwargs: Summary({"queue_rows_recovered": 0}),
     )
+    monkeypatch.setattr(
+        "src.enrichment.production.run_posting_resolution",
+        lambda *_args, **kwargs: calls.append(("resolution", kwargs["limit"]))
+        or Summary({"jobs_evaluated": 4, "resolution_succeeded": 1, "jobs_updated": 1}),
+    )
 
     def pipeline(*_args, **kwargs):
         calls.append(("pipeline", kwargs["direct_limit"], kwargs["company_limit"], kwargs["external_limit"]))
@@ -155,6 +160,7 @@ def test_daily_production_cycle_orders_pipeline_rescore_and_dashboard(monkeypatc
     )
 
     assert calls == [
+        ("resolution", 10),
         ("pipeline", 10, 10, 0),
         ("rescore",),
         ("dashboard",),
@@ -173,6 +179,11 @@ def test_weekly_mode_runs_lifecycle_with_controlled_limits(monkeypatch):
     monkeypatch.setattr(
         "src.enrichment.production.recover_stale_in_progress",
         lambda *_args, **_kwargs: Summary({"queue_rows_recovered": 0}),
+    )
+    monkeypatch.setattr(
+        "src.enrichment.production.run_posting_resolution",
+        lambda *_args, **kwargs: calls.append(("resolution", kwargs["limit"]))
+        or Summary({"jobs_evaluated": 5, "resolution_succeeded": 1}),
     )
     monkeypatch.setattr(
         "src.enrichment.production.run_enrichment_pipeline",
@@ -216,6 +227,7 @@ def test_weekly_mode_runs_lifecycle_with_controlled_limits(monkeypatch):
     )
 
     assert calls == [
+        ("resolution", 15),
         ("pipeline", 10, 10, 5),
         ("lifecycle", 50),
     ]

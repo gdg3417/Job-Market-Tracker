@@ -1,0 +1,16 @@
+matching:
+  authoritative_threshold: 82
+  probable_threshold: 70
+  ambiguity_margin: 5
+  minimum_company_match: 75
+  minimum_title_match: 70
+
+limits:
+  maximum_candidates_per_job: 20
+  direct_url_budget: 8
+  career_search_link_budget: 8
+  ats_candidate_budget: 20
+  search_query_budget: 3
+  search_results_per_query: 5
+  external_page_budget: 3
+  timeout_seconds: 15

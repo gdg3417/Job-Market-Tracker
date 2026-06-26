@@ -83,6 +83,7 @@ def calculate_from_workbook(
         queue_rows=_read_optional(sheet_client, "Enrichment_Queue"),
         evidence_rows=_read_optional(sheet_client, "Enrichment_Evidence"),
         runs_rows=_read_optional(sheet_client, "Runs"),
+        resolution_rows=_read_optional(sheet_client, "Posting_Resolution"),
         target_company_rows=_read_optional(sheet_client, "Target_Companies"),
         config_company_rows=_read_optional(sheet_client, "Config_Companies"),
         thresholds=thresholds,

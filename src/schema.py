@@ -9,6 +9,7 @@ from typing import Any, Iterable
 from src.dedupe import SOURCE_FIELDS
 from src.enrichment.models import ENRICHMENT_EVIDENCE_FIELDS, ENRICHMENT_QUEUE_FIELDS
 from src.models import JOB_FIELDS
+from src.resolution.models import POSTING_RESOLUTION_FIELDS, RESOLUTION_CANDIDATE_FIELDS
 
 EXPECTED_TIMEZONE = "America/Chicago"
 RUNS_HEADERS = "run_id run_type source_type source_name status started_at finished_at duration_seconds records_found records_inserted records_updated records_failed rows_read config_companies_rows config_searches_rows companies_read searches_read error_message notes created_at updated_at".split()
@@ -23,6 +24,8 @@ REJECTED_JOBS_HEADERS = "rejected_id source message_id thread_id subject sender 
 GMAIL_MESSAGES_HEADERS = "message_id thread_id subject sender received_at status attempt_count alerts_parsed jobs_accepted jobs_rejected error_message first_processed_at last_processed_at".split()
 ENRICHMENT_QUEUE_HEADERS = list(ENRICHMENT_QUEUE_FIELDS)
 ENRICHMENT_EVIDENCE_HEADERS = list(ENRICHMENT_EVIDENCE_FIELDS)
+POSTING_RESOLUTION_HEADERS = list(POSTING_RESOLUTION_FIELDS)
+RESOLUTION_CANDIDATE_HEADERS = list(RESOLUTION_CANDIDATE_FIELDS)
 
 
 class SchemaValidationError(ValueError):
@@ -91,6 +94,8 @@ CANONICAL_SCHEMA = {
     "Gmail_Messages": HeaderSpec("Gmail_Messages", GMAIL_MESSAGES_HEADERS),
     "Enrichment_Queue": HeaderSpec("Enrichment_Queue", ENRICHMENT_QUEUE_HEADERS),
     "Enrichment_Evidence": HeaderSpec("Enrichment_Evidence", ENRICHMENT_EVIDENCE_HEADERS),
+    "Posting_Resolution": HeaderSpec("Posting_Resolution", POSTING_RESOLUTION_HEADERS),
+    "Resolution_Candidates": HeaderSpec("Resolution_Candidates", RESOLUTION_CANDIDATE_HEADERS),
 }
 
 

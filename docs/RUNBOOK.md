@@ -44,11 +44,13 @@ Review these worksheets:
 * `Job_Sources`
 * `Enrichment_Queue`
 * `Enrichment_Evidence`
+* `Posting_Resolution`
+* `Resolution_Candidates`
 * `Runs`
 * `Dashboard`
 * `Digest`
 
-For a confident merge, confirm the accepted evidence URL is authoritative, match confidence is at least 80, and the evidence title, company, and location describe the tracked role.
+For a confident merge, confirm the selected resolution is `resolved_authoritative` or `manual_override`, the accepted evidence URL is authoritative, confidence meets the configured threshold, and the evidence title, company, location, and requisition identifiers describe the tracked role.
 
 ## Recovery from a failed workflow
 
@@ -62,6 +64,6 @@ Stale `in_progress` rows older than 90 minutes are recovered automatically on th
 
 ## Cost control
 
-The daily cycle does not perform external search. The weekly and backfill defaults allow five external-search jobs. Search results are cached in evidence, and only authoritative candidate pages are fetched for scoring.
+The daily cycle performs bounded authoritative resolution without external search, followed by the existing enrichment stages. The weekly and backfill modes allow controlled resolver search fallback. The daily cycle does not perform external search. The weekly and backfill defaults allow five external-search jobs. Search results are cached in evidence, and only authoritative candidate pages are fetched for scoring.
 
 No paid search provider is required.

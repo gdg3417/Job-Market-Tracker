@@ -144,7 +144,17 @@ def _host(url: Any) -> str:
         return ""
 
 
-def authoritative(job: dict[str, Any], queue: dict[str, Any] | None, thresholds: HealthThresholds) -> bool:
+def authoritative(
+    job: dict[str, Any],
+    queue: dict[str, Any] | None,
+    thresholds: HealthThresholds,
+    resolution: dict[str, Any] | None = None,
+) -> bool:
+    resolution = resolution or {}
+    resolution_state = identity(resolution.get("resolution_state"))
+    if resolution_state in {"resolved authoritative", "manual override"}:
+        confidence = safe_int(resolution.get("match_confidence"), 100 if resolution_state == "manual override" else 0)
+        return bool(str(resolution.get("authoritative_url") or "").strip()) and confidence >= thresholds.authoritative_match_min_confidence
     queue = queue or {}
     url = str(queue.get("matched_url") or job.get("enrichment_source_url") or job.get("canonical_url") or "").strip()
     if not url:

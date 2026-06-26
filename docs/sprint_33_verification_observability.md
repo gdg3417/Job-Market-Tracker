@@ -38,10 +38,11 @@ The calculation reads these existing canonical tabs:
 * `Enrichment_Queue`
 * `Enrichment_Evidence`
 * `Runs`
+* `Posting_Resolution`
 * `Target_Companies`
 * `Config_Companies`
 
-No worksheet or canonical header is added. Existing schema migration and validation remain the source of truth. Historical snapshots use structured JSON in the existing `Runs.notes` field.
+Sprint 33 originally added no worksheet. Sprint 34 adds `Posting_Resolution`, which Sprint 33 now reads as an additional authoritative-attempt and blocker source. Historical snapshots still use structured JSON in the existing `Runs.notes` field.
 
 ## Operational run selection
 

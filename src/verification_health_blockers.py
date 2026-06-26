@@ -11,11 +11,27 @@ def classify_blocker(
     job: dict[str, Any],
     queue_row: dict[str, Any] | None,
     evidence_rows: list[dict[str, Any]],
+    resolution_row: dict[str, Any] | None = None,
     *,
     as_of: datetime,
     thresholds: HealthThresholds,
 ) -> Blocker:
     queue = queue_row or {}
+    resolution = resolution_row or {}
+    resolution_state = identity(resolution.get("resolution_state"))
+    resolution_error = str(resolution.get("error_message") or "").strip()
+    if resolution_state == "retryable failure":
+        return Blocker("retry_scheduled", resolution_error or "Resolver retry is required")
+    if resolution_state == "blocked":
+        return Blocker("source_blocked", resolution_error)
+    if resolution_state == "unsupported":
+        return Blocker("no_supported_enrichment_path", resolution_error)
+    if resolution_state == "ambiguous":
+        return Blocker("manual_review_required", resolution_error or "Authoritative candidates are ambiguous")
+    if resolution_state == "resolved probable":
+        return Blocker("authoritative_match_below_threshold", resolution_error or "Resolver candidate is below the authoritative threshold")
+    if resolution_state == "not found" and str(resolution.get("attempted_at") or "").strip():
+        return Blocker("no_authoritative_url", resolution_error or "Resolver did not find an authoritative posting")
     status = identity(queue.get("status") or job.get("enrichment_status"))
     error_type = identity(queue.get("error_type"))
     error_message = str(queue.get("error_message") or job.get("enrichment_error_message") or "").strip()
@@ -43,7 +59,7 @@ def classify_blocker(
         return Blocker("no_supported_enrichment_path", error_message)
     if attempts <= 0 and not row_timestamp(job, "enrichment_last_attempted_at"):
         return Blocker("enrichment_not_attempted", "No successful or failed attempt is recorded")
-    if not authoritative(job, queue, thresholds):
+    if not authoritative(job, queue, thresholds, resolution):
         return Blocker("no_authoritative_url", "No accepted employer or ATS URL")
 
     accepted = [row for row in evidence_rows if truthy(row.get("accepted"))]

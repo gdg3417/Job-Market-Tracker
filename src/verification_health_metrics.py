@@ -29,6 +29,7 @@ def calculate_verification_health(
     queue_rows: list[dict[str, Any]],
     evidence_rows: list[dict[str, Any]],
     runs_rows: list[dict[str, Any]],
+    resolution_rows: list[dict[str, Any]] | None = None,
     target_company_rows: list[dict[str, Any]] | None = None,
     config_company_rows: list[dict[str, Any]] | None = None,
     thresholds: HealthThresholds | None = None,
@@ -42,6 +43,7 @@ def calculate_verification_health(
     now = now.astimezone(UTC)
 
     queues = latest_by_job(queue_rows, "updated_at", "last_attempted_at", "created_at")
+    resolutions = latest_by_job(resolution_rows or [], "updated_at", "attempted_at", "created_at")
     evidence_by_job: dict[str, list[dict[str, Any]]] = {}
     for row in evidence_rows:
         evidence_by_job.setdefault(str(row.get("job_key") or ""), []).append(row)
@@ -55,15 +57,16 @@ def calculate_verification_health(
             job,
             queues.get(key),
             evidence_by_job.get(key, []),
+            resolutions.get(key),
             as_of=now,
             thresholds=limits,
         )
         blockers[key] = blocker if blocker.reason in BLOCKER_REASONS else Blocker("other", blocker.detail)
 
     company_keys = target_keys(target_company_rows or [], config_company_rows or [])
-    funnel = calculate_funnel(jobs, job_sources, queues, evidence_rows, runs_rows, now, limits)
-    aging, breaches = calculate_aging(jobs, queues, blockers, company_keys, now, limits)
-    components, overrides = calculate_components(jobs, runs_rows, queues, evidence_rows, breaches, now, limits)
+    funnel = calculate_funnel(jobs, job_sources, queues, resolutions, evidence_rows, runs_rows, now, limits)
+    aging, breaches = calculate_aging(jobs, queues, resolutions, blockers, company_keys, now, limits)
+    components, overrides = calculate_components(jobs, runs_rows, queues, resolutions, evidence_rows, breaches, now, limits)
 
     average = round(sum(item.score for item in components) / max(1, len(components)))
     score = min(average, min(item.score for item in components) + 20)
@@ -113,6 +116,6 @@ def calculate_verification_health(
         thresholds=limits,
         records_read={
             "jobs": len(jobs), "job_sources": len(job_sources), "queue": len(queue_rows),
-            "evidence": len(evidence_rows), "runs": len(runs_rows),
+            "evidence": len(evidence_rows), "resolutions": len(resolution_rows or []), "runs": len(runs_rows),
         },
     )

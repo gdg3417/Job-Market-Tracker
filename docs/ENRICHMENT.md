@@ -8,14 +8,15 @@ Potential priority is not a final fit score. Missing salary or description reduc
 
 ## Stage order
 
-1. Direct lead URL
-2. Configured company career site or ATS
-3. External search discovery
-4. Authoritative candidate fetch
-5. Match validation
-6. Evidence merge
-7. Verified scoring
-8. Lifecycle monitoring
+1. Authoritative posting resolution
+2. Direct lead URL enrichment for unresolved jobs
+3. Configured company career site or ATS enrichment
+4. External search discovery
+5. Authoritative candidate fetch
+6. Match validation
+7. Evidence merge
+8. Verified scoring
+9. Lifecycle monitoring
 
 Search-result titles and snippets are discovery data only. They never award verified score points.
 
@@ -42,9 +43,9 @@ python -m src.enrichment.production --run --mode backfill --job-key "<job_key>"
 
 ## Ambiguous matches
 
-An ambiguous match remains visible on Dashboard and in the queue. Review the candidate URL, title, company, location, and confidence before changing the job.
+An ambiguous match remains visible on Dashboard, in `Posting_Resolution`, and in `Resolution_Candidates`. Review the observed URL, canonical URL, title, company, location, requisition ID, component scores, and rejection reason.
 
-Do not copy search snippets into Jobs. Supply the authoritative posting URL in `Jobs.canonical_url`, keep the original lead in `Job_Sources`, then run the exact job through the production runner.
+Do not copy search snippets into Jobs. Enter a validated employer or ATS posting in `Posting_Resolution.manual_authoritative_url`, complete the reviewer and review-date fields, set the decision to `accept` or `replace`, then rerun the exact job. The resolver validates the posting before merging it.
 
 ## Force re-enrichment
 

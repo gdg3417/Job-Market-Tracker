@@ -12,3 +12,12 @@ def test_production_workflow_has_bounded_modes_and_nonoverlapping_concurrency():
     assert "python -m src.enrichment.production" in text
     assert "--mode" in text
     assert "timeout-minutes: 45" in text
+
+
+def test_production_workflow_summary_exposes_resolution_metrics():
+    text = Path(".github/workflows/enrichment-run.yml").read_text(encoding="utf-8")
+
+    assert 'resolution = data.get("authoritative_resolution") or {}' in text
+    assert "Authoritative resolution attempts" in text
+    assert "Authoritative resolutions" in text
+    assert "Resolution manual interventions" in text

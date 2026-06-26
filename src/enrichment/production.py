@@ -13,10 +13,12 @@ from src.enrichment.pipeline import run_enrichment_pipeline
 from src.enrichment.search import DisabledSearchProvider, DuckDuckGoHtmlSearchProvider, SearchProvider
 from src.models import JobPosting
 from src.rescore_jobs import rescore_jobs
+from src.resolution.run import preview_posting_resolution, run_posting_resolution
 
 
 @dataclass(frozen=True, slots=True)
 class ProductionLimits:
+    resolution_limit: int
     direct_limit: int
     company_limit: int
     external_limit: int
@@ -26,11 +28,11 @@ class ProductionLimits:
     def for_mode(cls, mode: str) -> "ProductionLimits":
         normalized = str(mode or "").strip().lower()
         if normalized == "daily":
-            return cls(direct_limit=10, company_limit=10, external_limit=0, lifecycle_limit=0)
+            return cls(resolution_limit=10, direct_limit=10, company_limit=10, external_limit=0, lifecycle_limit=0)
         if normalized == "weekly":
-            return cls(direct_limit=10, company_limit=10, external_limit=5, lifecycle_limit=50)
+            return cls(resolution_limit=15, direct_limit=10, company_limit=10, external_limit=5, lifecycle_limit=50)
         if normalized == "backfill":
-            return cls(direct_limit=15, company_limit=15, external_limit=5, lifecycle_limit=50)
+            return cls(resolution_limit=20, direct_limit=15, company_limit=15, external_limit=5, lifecycle_limit=50)
         raise ValueError(f"Unsupported production mode: {mode!r}")
 
 
@@ -54,6 +56,7 @@ class ProductionRunSummary:
     started_at: str
     finished_at: str = ""
     recovery: dict[str, Any] = field(default_factory=dict)
+    authoritative_resolution: dict[str, Any] = field(default_factory=dict)
     direct_link: dict[str, Any] = field(default_factory=dict)
     company_ats: dict[str, Any] = field(default_factory=dict)
     external_search: dict[str, Any] = field(default_factory=dict)
@@ -229,25 +232,30 @@ def _build_run_record(summary: ProductionRunSummary) -> dict[str, Any]:
     finished = _parse_timestamp(summary.finished_at)
     duration = max(0, int((finished - started).total_seconds())) if started and finished else 0
     run_timestamp = summary.finished_at.replace(":", "").replace("-", "").replace("+00:00", "Z")
+    resolution = summary.authoritative_resolution
     direct = summary.direct_link
     company = summary.company_ats
     external = summary.external_search
     lifecycle = summary.lifecycle
     failures = (
-        int(direct.get("retryable_failures") or 0)
+        int(resolution.get("retryable_failures") or 0)
+        + int(resolution.get("blocked") or 0)
+        + int(direct.get("retryable_failures") or 0)
         + int(direct.get("permanent_failures") or 0)
         + int(company.get("failures") or 0)
         + int(external.get("search_failures") or 0)
         + int(lifecycle.get("temporary_failures") or 0)
     )
     updated = (
-        int(direct.get("jobs_updated") or 0)
+        int(resolution.get("jobs_updated") or 0)
+        + int(direct.get("jobs_updated") or 0)
         + int(company.get("jobs_updated") or 0)
         + int(external.get("jobs_updated") or 0)
         + int(lifecycle.get("jobs_updated") or 0)
         + int(summary.rescore.get("jobs_updated") or 0)
     )
     evaluated = max(
+        int(resolution.get("jobs_evaluated") or 0),
         int(direct.get("jobs_evaluated") or 0),
         int(summary.rescore.get("jobs_selected") or 0),
         int(lifecycle.get("jobs_evaluated") or 0),
@@ -264,7 +272,8 @@ def _build_run_record(summary: ProductionRunSummary) -> dict[str, Any]:
         "duration_seconds": duration,
         "records_found": evaluated,
         "records_inserted": (
-            int(direct.get("evidence_written") or 0)
+            int(resolution.get("evidence_written") or 0)
+            + int(direct.get("evidence_written") or 0)
             + int(company.get("evidence_written") or 0)
             + int(external.get("evidence_written") or 0)
             + int(lifecycle.get("evidence_written") or 0)
@@ -314,6 +323,15 @@ def run_production_cycle(
         job_key=job_key,
     )
     result.recovery = recovery.to_dict()
+
+    resolution = run_posting_resolution(
+        sheet_client,
+        limit=selected_limits.resolution_limit,
+        job_key=job_key,
+        now=started_at if now is not None else None,
+        search_provider=provider if selected_limits.external_limit > 0 else DisabledSearchProvider(),
+    )
+    result.authoritative_resolution = resolution.to_dict()
 
     pipeline = run_enrichment_pipeline(
         sheet_client,
@@ -383,6 +401,7 @@ def parse_args() -> argparse.Namespace:
     execution.add_argument("--dry-run", action="store_true")
     parser.add_argument("--mode", choices=("daily", "weekly", "backfill"), default="daily")
     parser.add_argument("--job-key", default="")
+    parser.add_argument("--resolution-limit", type=int)
     parser.add_argument("--direct-limit", type=int)
     parser.add_argument("--company-limit", type=int)
     parser.add_argument("--external-limit", type=int)
@@ -395,6 +414,7 @@ def parse_args() -> argparse.Namespace:
 def _overridden_limits(args: argparse.Namespace) -> ProductionLimits:
     defaults = ProductionLimits.for_mode(args.mode)
     return ProductionLimits(
+        resolution_limit=defaults.resolution_limit if args.resolution_limit is None else max(0, args.resolution_limit),
         direct_limit=defaults.direct_limit if args.direct_limit is None else max(0, args.direct_limit),
         company_limit=defaults.company_limit if args.company_limit is None else max(0, args.company_limit),
         external_limit=defaults.external_limit if args.external_limit is None else max(0, args.external_limit),
@@ -423,6 +443,7 @@ def main() -> None:
         preview = {
             "mode": args.mode,
             "limits": asdict(limits),
+            "authoritative_resolution": preview_posting_resolution(sheet_client, job_key=args.job_key, limit=limits.resolution_limit),
             "direct_link": preview_direct_link_queue(sheet_client, job_key=args.job_key),
             "company_ats": preview_company_ats_queue(sheet_client, job_key=args.job_key),
             "external_search": preview_external_search_queue(sheet_client, job_key=args.job_key),

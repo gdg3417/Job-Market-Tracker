@@ -6,7 +6,7 @@ The tracker is intentionally not a generic finance job scraper. It prioritizes r
 
 ## Current status
 
-Sprints 1 through 32 are implemented in code.
+Sprints 1 through 34 are implemented in code.
 
 The system now supports:
 
@@ -15,16 +15,17 @@ The system now supports:
 3. Normalization, deduplication, and source provenance
 4. Potential priority separated from verified fit
 5. Evidence completeness and score-state tracking
-6. Direct-link, company, ATS, and controlled external-search enrichment
-7. Authoritative match validation and safe evidence merging
-8. Verified scoring with company context
-9. Enrichment retries and posting lifecycle monitoring
-10. Production daily and weekly enrichment workflows
-11. Stale `in_progress` recovery after interrupted workflows
-12. Dashboard, Digest, and weekly email presentation
-13. Workbook schema migration and validation
-14. Gmail message and rejected-job ledgers
-15. Source quality auditing and static inventory cleanup
+6. Dedicated authoritative posting resolution with URL canonicalization and ATS recognition
+7. Direct-link, company, ATS, and controlled external-search enrichment
+8. Authoritative match validation and safe evidence merging
+9. Verified scoring with company context
+10. Enrichment retries and posting lifecycle monitoring
+11. Production daily and weekly enrichment workflows
+12. Stale `in_progress` recovery after interrupted workflows
+13. Dashboard, Digest, and weekly email presentation
+14. Workbook schema migration and validation
+15. Gmail message and rejected-job ledgers
+16. Source quality auditing and static inventory cleanup
 
 Topgolf `Sr Manager, Strategic Planning` and Toyota North America `National Manager, Product` are permanent regression cases.
 
@@ -37,7 +38,9 @@ Normalize and deduplicate
         |
 Assign potential priority
         |
-Queue high-potential sparse jobs
+Assign verification service level
+        |
+Resolve canonical employer or ATS posting
         |
 Direct URL enrichment
         |
@@ -71,13 +74,15 @@ Rejected_Jobs
 Gmail_Messages
 Enrichment_Queue
 Enrichment_Evidence
+Posting_Resolution
+Resolution_Candidates
 Snapshots
 Runs
 Digest
 Dashboard
 ```
 
-`Enrichment_Queue` records deterministic work items. `Enrichment_Evidence` stores extracted evidence, match confidence, acceptance status, source URL, retrieval time, and content hash without storing full raw HTML.
+`Enrichment_Queue` records deterministic work items. `Enrichment_Evidence` stores extracted evidence, match confidence, acceptance status, source URL, retrieval time, and content hash without storing full raw HTML. `Posting_Resolution` stores one current authoritative-resolution state per job. `Resolution_Candidates` preserves the candidate-level audit trail and visible score components.
 
 ## Local setup
 
@@ -159,11 +164,11 @@ python -m src.enrichment.production --run --mode backfill --job-key "<job_key>"
 
 Default limits:
 
-| Mode | Direct | Company or ATS | External search | Lifecycle |
-| --- | ---: | ---: | ---: | ---: |
-| Daily | 10 | 10 | 0 | 0 |
-| Weekly | 10 | 10 | 5 | 50 |
-| Backfill | 15 | 15 | 5 | 50 |
+| Mode | Resolution | Direct | Company or ATS | External search | Lifecycle |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Daily | 10 | 10 | 10 | 0 | 0 |
+| Weekly | 15 | 10 | 10 | 5 | 50 |
+| Backfill | 20 | 15 | 15 | 5 | 50 |
 
 A production cycle recovers stale queue work, runs permitted enrichment stages, re-scores jobs, refreshes Dashboard and Digest, writes health metrics, and records one `Runs` row.
 
@@ -221,6 +226,8 @@ The production enrichment cycle appends current queue and lifecycle health metri
 * `docs/sprint_30_verified_scoring.md`
 * `docs/sprint_31_enrichment_lifecycle.md`
 * `docs/sprint_32_enrichment_production.md`
+* `docs/sprint_33_verification_observability.md`
+* `docs/sprint_34_authoritative_posting_resolution.md`
 
 ## Sprint implementation status
 
@@ -236,3 +243,5 @@ The production enrichment cycle appends current queue and lifecycle health metri
 | 30 | Complete | Company context and verified scoring |
 | 31 | Complete | Enrichment retry and posting lifecycle |
 | 32 | Complete | Production hardening, controlled rollout, monitoring, and documentation |
+| 33 | Complete | Verification funnel, aging, blockers, and component health |
+| 34 | Complete | Authoritative posting resolver, candidate audit, and manual overrides |
