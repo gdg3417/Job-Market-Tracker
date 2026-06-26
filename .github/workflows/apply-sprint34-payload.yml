@@ -30,9 +30,8 @@ jobs:
           PY
             cat .sprint34-payload/chunk-* | base64 --decode > "$RUNNER_TEMP/sprint34.tar.gz"
             tar -xzf "$RUNNER_TEMP/sprint34.tar.gz" -C .
+            git checkout -- .github/workflows/enrichment-run.yml .github/workflows/apply-sprint34-payload.yml .github/workflows/sprint34-source-export.yml
             rm -rf .sprint34-payload
-            rm -f .github/workflows/apply-sprint34-payload.yml
-            rm -f .github/workflows/sprint34-source-export.yml
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add -A
