@@ -82,6 +82,16 @@ ENRICHMENT_STATUS_RANK = {
     "permanent_failure": 4,
     "closed": 5,
 }
+WEAK_TEXT_VALUES = {
+    "",
+    "unknown",
+    "unspecified",
+    "not specified",
+    "n/a",
+    "na",
+    "none",
+}
+GENERIC_GMAIL_DESCRIPTION_PREFIX = "extracted from gmail job alert"
 
 
 @dataclass(slots=True)
@@ -125,6 +135,75 @@ def _has_value(value: Any) -> bool:
         return False
     if isinstance(value, str):
         return bool(value.strip())
+    return True
+
+
+def _normalized_text(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _is_weak_job_value(field_name: str, value: Any) -> bool:
+    if not _has_value(value):
+        return True
+    if not isinstance(value, str):
+        return False
+    normalized = _normalized_text(value)
+    if normalized in WEAK_TEXT_VALUES:
+        return True
+    return field_name == "description_text" and normalized.startswith(
+        GENERIC_GMAIL_DESCRIPTION_PREFIX
+    )
+
+
+def _incoming_evidence_is_weaker(existing: JobPosting, incoming: JobPosting) -> bool:
+    existing_score_rank = SCORE_STATUS_RANK.get(existing.score_status, 0)
+    incoming_score_rank = SCORE_STATUS_RANK.get(incoming.score_status, 0)
+    if existing_score_rank != incoming_score_rank:
+        return existing_score_rank > incoming_score_rank
+    if existing.evidence_completeness_score != incoming.evidence_completeness_score:
+        return existing.evidence_completeness_score > incoming.evidence_completeness_score
+    existing_enrichment_rank = ENRICHMENT_STATUS_RANK.get(existing.enrichment_status, 0)
+    incoming_enrichment_rank = ENRICHMENT_STATUS_RANK.get(incoming.enrichment_status, 0)
+    return existing_enrichment_rank > incoming_enrichment_rank
+
+
+def _should_overwrite_job_field(
+    existing: JobPosting,
+    incoming: JobPosting,
+    field_name: str,
+) -> bool:
+    incoming_value = getattr(incoming, field_name)
+    if _is_weak_job_value(field_name, incoming_value):
+        return False
+
+    existing_value = getattr(existing, field_name)
+    existing_is_weak = _is_weak_job_value(field_name, existing_value)
+    if existing_is_weak:
+        return True
+
+    incoming_is_gmail = normalize_key_part(incoming.source_primary) == "gmail-alert"
+    if incoming_is_gmail and field_name in {
+        "remote_status",
+        "work_model",
+        "commute_estimate_minutes",
+        "salary_min",
+        "salary_max",
+        "currency",
+        "total_comp_estimate",
+        "description_text",
+        "role_family",
+        "role_level",
+    }:
+        if field_name == "description_text":
+            return len(str(incoming_value)) > len(str(existing_value))
+        return False
+
+    if field_name in {"description_text", "role_family", "role_level"}:
+        if _incoming_evidence_is_weaker(existing, incoming):
+            return False
+        if field_name == "description_text":
+            return len(str(incoming_value)) > len(str(existing_value))
+
     return True
 
 
@@ -385,26 +464,20 @@ def merge_job(existing: JobPosting, incoming: JobPosting, seen_date: str | None 
     merged = JobPosting.from_dict(existing.to_dict())
 
     incoming_is_scored = incoming.total_score > 0 or incoming.alert_tier != "unscored"
-    protect_existing_score = (
-        existing.score_status == "excluded" and incoming.score_status != "excluded"
-    ) or (
-        existing.score_status == "verified"
-        and (
-            incoming.score_status not in {"verified", "excluded"}
-            or (
-                incoming.score_status == "verified"
-                and incoming.evidence_completeness_score < existing.evidence_completeness_score
-            )
-        )
+    existing_score_rank = SCORE_STATUS_RANK.get(existing.score_status, 0)
+    incoming_score_rank = SCORE_STATUS_RANK.get(incoming.score_status, 0)
+    protect_existing_score = existing_score_rank > incoming_score_rank or (
+        existing_score_rank == incoming_score_rank
+        and existing.evidence_completeness_score > incoming.evidence_completeness_score
     )
+
     for field_name in JOB_OVERWRITE_FIELDS:
         if field_name in POTENTIAL_FIELDS:
             continue
         if field_name in SCORE_FIELDS and (not incoming_is_scored or protect_existing_score):
             continue
-        incoming_value = getattr(incoming, field_name)
-        if _has_value(incoming_value):
-            setattr(merged, field_name, incoming_value)
+        if _should_overwrite_job_field(existing, incoming, field_name):
+            setattr(merged, field_name, getattr(incoming, field_name))
 
     _merge_priority_and_evidence(merged, incoming, incoming_is_scored=incoming_is_scored)
 
