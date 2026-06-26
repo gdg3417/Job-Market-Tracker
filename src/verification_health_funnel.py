@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, Callable
+from zoneinfo import ZoneInfo
 
 from src.verification_health_models import (
     FunnelMetric,
@@ -19,6 +20,7 @@ from src.verification_health_state import (
     daily_run,
     is_applied,
     is_closed,
+    is_daily_completion_run,
     is_dismissed,
     is_excluded,
     is_high,
@@ -28,7 +30,10 @@ from src.verification_health_state import (
     is_reviewed,
     is_verified,
     job_timestamp,
+    parse_notes,
 )
+
+CENTRAL_TIMEZONE = ZoneInfo("America/Chicago")
 
 FUNNEL_STAGES = [
     ("leads_received", "Leads received", ""),
@@ -52,6 +57,31 @@ FUNNEL_STAGES = [
 def _within(value: Any, start: datetime | None, end: datetime) -> bool:
     parsed = parse_datetime(value)
     return bool(parsed and (start is None or parsed >= start) and parsed <= end)
+
+
+def _daily_window(run: dict[str, Any] | None, as_of: datetime) -> tuple[datetime | None, datetime]:
+    if not run:
+        return None, as_of
+    if is_daily_completion_run(run):
+        notes = parse_notes(run)
+        day_text = str(notes.get("central_date") or "").strip()
+        selected_date: date | None = None
+        if day_text:
+            try:
+                selected_date = date.fromisoformat(day_text[:10])
+            except ValueError:
+                selected_date = None
+        if selected_date is None:
+            finished = parse_datetime(row_timestamp(run, "finished_at", "started_at", "created_at"))
+            if finished is not None:
+                selected_date = finished.astimezone(CENTRAL_TIMEZONE).date()
+        if selected_date is not None:
+            start = datetime.combine(selected_date, time.min, tzinfo=CENTRAL_TIMEZONE).astimezone(UTC)
+            end = datetime.combine(selected_date, time.max, tzinfo=CENTRAL_TIMEZONE).astimezone(UTC)
+            return start, min(end, as_of)
+    start = parse_datetime(row_timestamp(run, "started_at"))
+    end = parse_datetime(row_timestamp(run, "finished_at")) or as_of
+    return start, min(end, as_of)
 
 
 def _stage_timestamp(stage: str, row: dict[str, Any]) -> str:
@@ -102,8 +132,7 @@ def calculate_funnel(
         "closed": is_closed,
     }
     latest = daily_run(runs)
-    daily_start = parse_datetime(row_timestamp(latest or {}, "started_at"))
-    daily_end = parse_datetime(row_timestamp(latest or {}, "finished_at")) or as_of
+    daily_start, daily_end = _daily_window(latest, as_of)
     seven_start = as_of - timedelta(days=7)
     selected = {stage: [] for stage, _, _ in FUNNEL_STAGES}
     selected["leads_received"] = sources
