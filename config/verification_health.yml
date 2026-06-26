@@ -1,0 +1,30 @@
+service_levels:
+  high_potential_hours: 24
+  target_company_hours: 24
+  medium_high_signal_hours: 72
+  enrichment_failure_hours: 48
+  provisional_without_attempt_hours: 168
+
+health:
+  stale_daily_run_hours: 36
+  lifecycle_stale_hours: 336
+  verification_watch_breach_rate: 0.10
+  verification_degraded_breach_rate: 0.25
+  verification_watch_conversion_rate: 0.50
+  verification_degraded_conversion_rate: 0.20
+  source_watch_failure_rate: 0.10
+  source_degraded_failure_rate: 0.25
+  lifecycle_watch_stale_rate: 0.10
+  lifecycle_degraded_stale_rate: 0.25
+  evidence_watch_score: 65
+  evidence_degraded_score: 40
+  decision_watch_ready_rate: 0.15
+  decision_degraded_ready_rate: 0.05
+
+matching:
+  authoritative_match_min_confidence: 70
+  strong_fit_score: 75
+
+presentation:
+  dashboard_job_limit: 15
+  run_history_blocker_limit: 100
