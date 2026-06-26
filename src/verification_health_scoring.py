@@ -4,7 +4,17 @@ from datetime import datetime
 from typing import Any
 
 from src.verification_health_models import HealthComponent, HealthThresholds, age_hours, identity, row_timestamp, safe_int, truthy
-from src.verification_health_state import daily_run, is_high, is_medium_signal, is_open, is_verified, latest_run, parse_notes
+from src.verification_health_state import (
+    authoritative,
+    daily_run,
+    enrichment_run,
+    is_high,
+    is_medium_signal,
+    is_open,
+    is_verified,
+    latest_run,
+    parse_notes,
+)
 
 SEVERITY = {"Healthy": 0, "Watch": 1, "Degraded": 2, "Blocked": 3}
 
@@ -66,18 +76,24 @@ def calculate_components(
         overrides.append("No successful recent daily or enrichment run")
     components.append(_component(
         "workflow_reliability", "Workflow reliability", 0 if critical else 100,
-        {"latest_status": latest_status or "not_logged", "latest_age_hours": latest_age, "stale_after_hours": thresholds.stale_daily_run_hours},
+        {
+            "latest_run_id": str((latest or {}).get("run_id") or ""),
+            "latest_run_type": str((latest or {}).get("run_type") or ""),
+            "latest_status": latest_status or "not_logged",
+            "latest_age_hours": latest_age,
+            "stale_after_hours": thresholds.stale_daily_run_hours,
+        },
         critical,
     ))
 
-    notes = parse_notes(latest)
+    operational_notes = parse_notes(latest)
     gmail_run = latest_run(
         runs,
         lambda row: "gmail" in identity(row.get("run_type")) or "gmail" in identity(row.get("source_name")),
     )
     gmail_notes = parse_notes(gmail_run)
     ingestion_source = gmail_run or latest or {}
-    ingestion_notes = gmail_notes or notes
+    ingestion_notes = gmail_notes or operational_notes
     inserted = max(0, safe_int(
         ingestion_notes.get("gmail_messages_newly_processed")
         or ingestion_notes.get("gmail_jobs_accepted")
@@ -96,9 +112,11 @@ def calculate_components(
         {"records_inserted": inserted, "records_failed": failed, "gmail_backlog": backlog, "status": "measured" if ingestion_total else "not_logged"},
     ))
 
-    direct = notes.get("direct_link") or {}
-    company = notes.get("company_ats") or {}
-    external = notes.get("external_search") or {}
+    latest_enrichment = enrichment_run(runs)
+    enrichment_notes = parse_notes(latest_enrichment)
+    direct = enrichment_notes.get("direct_link") or {}
+    company = enrichment_notes.get("company_ats") or {}
+    external = enrichment_notes.get("external_search") or {}
     attempts = sum(safe_int(value, 0) for value in (
         direct.get("direct_attempts"), company.get("company_ats_attempts"), external.get("queries_executed"),
     ))
@@ -109,7 +127,13 @@ def calculate_components(
     source_score = _inverse_score(source_rate, thresholds.source_watch_failure_rate, thresholds.source_degraded_failure_rate) if attempts else 70
     components.append(_component(
         "source_health", "Source health", source_score,
-        {"attempts": attempts, "failures": failures, "failure_rate": round(source_rate, 4), "status": "measured" if attempts else "no_attempts_logged"},
+        {
+            "latest_enrichment_run_id": str((latest_enrichment or {}).get("run_id") or ""),
+            "attempts": attempts,
+            "failures": failures,
+            "failure_rate": round(source_rate, 4),
+            "status": "measured" if attempts else "no_attempts_logged",
+        },
     ))
 
     priority_open = [job for job in jobs if is_open(job) and (is_high(job) or is_medium_signal(job))]
@@ -146,16 +170,32 @@ def calculate_components(
         {"average_priority_evidence_score": average_evidence, "accepted_evidence_rows": sum(1 for row in evidence if truthy(row.get("accepted")))},
     ))
 
-    lifecycle = [job for job in jobs if is_open(job) and (is_verified(job) or bool(str(job.get("canonical_url") or "").strip()))]
-    stale = sum(
-        1 for job in lifecycle
-        if (age_hours(row_timestamp(job, "lifecycle_last_checked_at", "last_authoritative_observation", "updated_at"), as_of) or 0) > thresholds.lifecycle_stale_hours
-    )
+    lifecycle = [
+        job for job in jobs
+        if is_open(job) and (
+            is_verified(job)
+            or authoritative(job, queues.get(str(job.get("job_key") or "")), thresholds)
+        )
+    ]
+    lifecycle_ages = [
+        age_hours(
+            row_timestamp(job, "lifecycle_last_checked_at", "lifecycle_evidence_at", "last_authoritative_observation"),
+            as_of,
+        )
+        for job in lifecycle
+    ]
+    unchecked = sum(1 for value in lifecycle_ages if value is None)
+    stale = sum(1 for value in lifecycle_ages if value is None or value > thresholds.lifecycle_stale_hours)
     stale_rate = stale / max(1, len(lifecycle))
     components.append(_component(
         "lifecycle_health", "Lifecycle health",
         _inverse_score(stale_rate, thresholds.lifecycle_watch_stale_rate, thresholds.lifecycle_degraded_stale_rate),
-        {"eligible_jobs": len(lifecycle), "stale_jobs": stale, "stale_rate": round(stale_rate, 4)},
+        {
+            "eligible_jobs": len(lifecycle),
+            "unchecked_jobs": unchecked,
+            "stale_jobs": stale,
+            "stale_rate": round(stale_rate, 4),
+        },
     ))
 
     ready = [
