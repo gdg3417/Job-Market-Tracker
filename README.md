@@ -6,7 +6,7 @@ The tracker is intentionally not a generic finance job scraper. It prioritizes r
 
 ## Current status
 
-Sprints 1 through 34 are implemented in code.
+Sprints 1 through 35 are implemented in code.
 
 The system now supports:
 
@@ -16,16 +16,18 @@ The system now supports:
 4. Potential priority separated from verified fit
 5. Evidence completeness and score-state tracking
 6. Dedicated authoritative posting resolution with URL canonicalization and ATS recognition
-7. Direct-link, company, ATS, and controlled external-search enrichment
-8. Authoritative match validation and safe evidence merging
-9. Verified scoring with company context
-10. Enrichment retries and posting lifecycle monitoring
-11. Production daily and weekly enrichment workflows
-12. Stale `in_progress` recovery after interrupted workflows
-13. Dashboard, Digest, and weekly email presentation
-14. Workbook schema migration and validation
-15. Gmail message and rejected-job ledgers
-16. Source quality auditing and static inventory cleanup
+7. Structured connector contracts for priority ATS platforms
+8. Source reliability state and priority platform inventory
+9. Direct-link, company, ATS, and controlled external-search enrichment
+10. Authoritative match validation and safe evidence merging
+11. Verified scoring with company context
+12. Enrichment retries and posting lifecycle monitoring
+13. Production daily and weekly enrichment workflows
+14. Stale `in_progress` recovery after interrupted workflows
+15. Dashboard, Digest, and weekly email presentation
+16. Workbook schema migration and validation
+17. Gmail message and rejected-job ledgers
+18. Source quality auditing and static inventory cleanup
 
 Topgolf `Sr Manager, Strategic Planning` and Toyota North America `National Manager, Product` are permanent regression cases.
 
@@ -41,6 +43,8 @@ Assign potential priority
 Assign verification service level
         |
 Resolve canonical employer or ATS posting
+        |
+Run structured connector or bounded enrichment path
         |
 Direct URL enrichment
         |
@@ -76,13 +80,14 @@ Enrichment_Queue
 Enrichment_Evidence
 Posting_Resolution
 Resolution_Candidates
+Source_Health
 Snapshots
 Runs
 Digest
 Dashboard
 ```
 
-`Enrichment_Queue` records deterministic work items. `Enrichment_Evidence` stores extracted evidence, match confidence, acceptance status, source URL, retrieval time, and content hash without storing full raw HTML. `Posting_Resolution` stores one current authoritative-resolution state per job. `Resolution_Candidates` preserves the candidate-level audit trail and visible score components.
+`Enrichment_Queue` records deterministic work items. `Enrichment_Evidence` stores extracted evidence, match confidence, acceptance status, source URL, retrieval time, and content hash without storing full raw HTML. `Posting_Resolution` stores one current authoritative-resolution state per job. `Resolution_Candidates` preserves the candidate-level audit trail and visible score components. `Source_Health` stores one current reliability row per company, platform, and source URL.
 
 ## Local setup
 
@@ -108,6 +113,7 @@ python -m src.schema --migrate
 python -m src.schema --validate
 python -m src.workflow_validation
 python -m src.source_audit
+python -m src.connectors.inventory --dry-run
 ```
 
 Use header repair only when the workbook structure is incorrect:
@@ -172,6 +178,16 @@ Default limits:
 
 A production cycle recovers stale queue work, runs permitted enrichment stages, re-scores jobs, refreshes Dashboard and Digest, writes health metrics, and records one `Runs` row.
 
+## Connector inventory and source reliability
+
+Preview priority platform scope:
+
+```powershell
+python -m src.connectors.inventory --dry-run
+```
+
+Structured connector platforms currently include Greenhouse, Lever, Ashby, and SmartRecruiters. Configured-only platforms remain visible for resolver routing and manual review without broad scraping.
+
 ## Lifecycle
 
 Preview lifecycle work:
@@ -228,6 +244,7 @@ The production enrichment cycle appends current queue and lifecycle health metri
 * `docs/sprint_32_enrichment_production.md`
 * `docs/sprint_33_verification_observability.md`
 * `docs/sprint_34_authoritative_posting_resolution.md`
+* `docs/sprint_35_ats_connectors_source_reliability.md`
 
 ## Sprint implementation status
 
@@ -245,3 +262,4 @@ The production enrichment cycle appends current queue and lifecycle health metri
 | 32 | Complete | Production hardening, controlled rollout, monitoring, and documentation |
 | 33 | Complete | Verification funnel, aging, blockers, and component health |
 | 34 | Complete | Authoritative posting resolver, candidate audit, and manual overrides |
+| 35 | Complete | Priority ATS connector contract, platform inventory, and source reliability state |
