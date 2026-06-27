@@ -113,6 +113,17 @@ Default behavior:
 - Successful observations reset consecutive failures and clear temporary pause reasons.
 - Disabled is reserved for explicit manual or configuration action.
 
+## Dashboard presentation
+
+Use the source reliability renderer to preview or append platform health metrics:
+
+```powershell
+python -m src.source_reliability_dashboard --dry-run
+python -m src.source_reliability_dashboard --write-dashboard
+```
+
+The section reports requests, successes, failures, jobs returned, jobs accepted, average latency, rate-limit events, paused sources, invalid configurations, and failure categories by platform.
+
 ## Resolver and lifecycle compatibility
 
 The Sprint 34 resolver already discovers candidates through configured ATS boards via the shared ATS discovery path. Sprint 35 wraps this behavior with a normalized connector contract and inventory layer so later production runs can compare platform reliability without changing match thresholds.
@@ -155,10 +166,12 @@ python -m src.schema --validate
 python -m src.workflow_validation
 
 python -m src.connectors.inventory --dry-run
+python -m src.source_reliability_dashboard --dry-run
 python -m src.resolution.run --dry-run --limit 10
 python -m src.enrichment.pipeline --dry-run --company-limit 10 --external-limit 0
 python -m src.enrichment.production --dry-run --mode daily --resolution-limit 5 --company-limit 5 --external-limit 0
 python -m src.enrichment.production --run --mode daily --resolution-limit 5 --company-limit 5 --direct-limit 5 --external-limit 0 --lifecycle-limit 0
+python -m src.source_reliability_dashboard --write-dashboard
 python -m src.schema --validate
 ```
 
@@ -170,8 +183,9 @@ Review in the workbook:
 4. Configured-only platforms are not treated as generic posting scrapers.
 5. No source is disabled from a single transient failure.
 6. Repeated connector observations update one current source-health row per source.
-7. `Posting_Resolution`, `Resolution_Candidates`, `Enrichment_Evidence`, `Job_Sources`, `Dashboard`, `Digest`, and `Runs` do not duplicate rows from a rerun.
-8. No connector failure marks a job closed.
+7. Dashboard includes the ATS platform source reliability section.
+8. `Posting_Resolution`, `Resolution_Candidates`, `Enrichment_Evidence`, `Job_Sources`, `Dashboard`, `Digest`, and `Runs` do not duplicate rows from a rerun.
+9. No connector failure marks a job closed.
 
 ## Intentionally deferred
 
