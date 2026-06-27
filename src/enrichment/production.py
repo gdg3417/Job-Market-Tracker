@@ -14,6 +14,7 @@ from src.enrichment.search import DisabledSearchProvider, DuckDuckGoHtmlSearchPr
 from src.models import JobPosting
 from src.rescore_jobs import rescore_jobs
 from src.resolution.run import preview_posting_resolution, run_posting_resolution
+from src.source_reliability_resolution import refresh_source_health_from_resolutions
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +58,7 @@ class ProductionRunSummary:
     finished_at: str = ""
     recovery: dict[str, Any] = field(default_factory=dict)
     authoritative_resolution: dict[str, Any] = field(default_factory=dict)
+    source_reliability: dict[str, Any] = field(default_factory=dict)
     direct_link: dict[str, Any] = field(default_factory=dict)
     company_ats: dict[str, Any] = field(default_factory=dict)
     external_search: dict[str, Any] = field(default_factory=dict)
@@ -328,10 +330,16 @@ def run_production_cycle(
         sheet_client,
         limit=selected_limits.resolution_limit,
         job_key=job_key,
-        now=started_at if now is not None else None,
+        now=started_at,
         search_provider=provider if selected_limits.external_limit > 0 else DisabledSearchProvider(),
     )
     result.authoritative_resolution = resolution.to_dict()
+    result.source_reliability = refresh_source_health_from_resolutions(
+        sheet_client,
+        observed_at=started_at,
+        attempted_at=started_at,
+        job_key=job_key,
+    ).to_dict()
 
     pipeline = run_enrichment_pipeline(
         sheet_client,
