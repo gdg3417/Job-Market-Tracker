@@ -11,10 +11,10 @@ NOW = "2026-06-26T12:00:00Z"
 
 
 class FakeSheetClient:
-    def __init__(self, jobs, queue_items, company_rows=None, resolutions=None):
+    def __init__(self, jobs, queue_items, company_rows=None, resolutions=None, source_rows=None):
         self.tables = {
             "Jobs": [job.to_dict() for job in jobs],
-            "Job_Sources": [],
+            "Job_Sources": [dict(row) for row in (source_rows or [])],
             "Enrichment_Queue": [item.to_dict() for item in queue_items],
             "Enrichment_Evidence": [],
             "Config_Companies": [dict(row) for row in (company_rows or [])],
@@ -115,6 +115,82 @@ def ats_candidate(company, title, location, url, posting_id):
         ),
         posting_date="2026-06-20",
     )
+
+
+def test_mismatched_source_rows_are_ignored_before_direct_resolution():
+    topgolf_url = "https://www.linkedin.com/jobs/view/4417965465"
+    oatly_url = "https://careers.oatly.com/job/4411969584/integrated-business-planning-lead"
+    job = sparse_job(
+        "job-a4f80647216b",
+        "Topgolf",
+        "Sr Manager, Strategic Planning",
+        "Dallas, TX",
+        topgolf_url,
+        source_job_id="linkedin-4417965465",
+    )
+    source_rows = [
+        {
+            "source_key": "src-topgolf",
+            "job_key": job.job_key,
+            "company": "Topgolf",
+            "title": "Sr Manager, Strategic Planning",
+            "source_primary": "gmail_alert",
+            "source_type": "gmail_alert",
+            "source_job_id": "linkedin-4417965465",
+            "canonical_url": topgolf_url,
+            "source_url": topgolf_url,
+            "status": "active",
+        },
+        {
+            "source_key": "src-oatly",
+            "job_key": job.job_key,
+            "company": "Oatly",
+            "title": "Integrated Business Planning Lead",
+            "source_primary": "gmail_alert",
+            "source_type": "gmail_alert",
+            "source_job_id": "linkedin-4411969584",
+            "canonical_url": oatly_url,
+            "source_url": oatly_url,
+            "status": "active",
+        },
+    ]
+    client = FakeSheetClient(
+        [job],
+        [queue_for(job)],
+        [config_row("Topgolf", "", "careers.topgolf.com")],
+        source_rows=source_rows,
+    )
+
+    class RecordingFetcher:
+        def __init__(self):
+            self.requested = []
+
+        def fetch(self, url):
+            self.requested.append(url)
+            if url == oatly_url:
+                raise AssertionError("mismatched source row should not be fetched for Topgolf")
+            raise EnrichmentFetchError("not_found", "missing test page", retryable=False, status_code=404, final_url=url)
+
+    fetcher = RecordingFetcher()
+    result = run_posting_resolution(
+        client,
+        now=NOW,
+        fetcher=fetcher,
+        ats_discovery=lambda *_args, **_kwargs: AtsDiscoveryResult("phenom", "empty"),
+        settings=ResolutionSettings(
+            direct_url_budget=10,
+            career_search_link_budget=0,
+            search_query_budget=0,
+            external_page_budget=0,
+        ),
+        priority_rules={},
+    )
+
+    assert result.not_found == 1
+    assert oatly_url not in fetcher.requested
+    assert client.tables["Posting_Resolution"][0]["resolution_state"] == "not_found"
+    assert client.tables["Enrichment_Evidence"] == []
+    assert client.tables["Resolution_Candidates"] == []
 
 
 def test_topgolf_and_toyota_regressions_resolve_without_job_duplication():

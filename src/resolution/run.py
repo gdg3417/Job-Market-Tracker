@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from time import perf_counter
@@ -10,6 +11,7 @@ from typing import Any, Callable, Iterable
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
+from rapidfuzz import fuzz
 
 from src.dedupe import SOURCE_FIELDS
 from src.enrichment.ats import AtsCandidate, AtsDiscoveryResult, discover_ats_candidates
@@ -112,6 +114,29 @@ def _truthy(value: Any) -> bool:
         return value
     return str(value or "").strip().lower() in {"1", "true", "yes", "y", "accepted"}
 
+
+
+def _match_text(value: Any) -> str:
+    text = str(value or "").lower().replace("&", " and ")
+    text = re.sub(r"\bsr\.?\b", "senior", text)
+    text = re.sub(r"\bmgr\.?\b", "manager", text)
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return " ".join(text.split())
+
+
+def _metadata_similarity(left: Any, right: Any) -> int:
+    a, b = _match_text(left), _match_text(right)
+    return int(fuzz.token_set_ratio(a, b)) if a and b else 0
+
+
+def _source_row_matches_job(job: JobPosting, row: dict[str, Any]) -> bool:
+    source_company = str(row.get("company") or "").strip()
+    source_title = str(row.get("title") or "").strip()
+    if source_company and _metadata_similarity(job.company, source_company) < 75:
+        return False
+    if source_title and _metadata_similarity(job.title, source_title) < 70:
+        return False
+    return True
 
 
 def _priority(job: JobPosting, *, target: bool, has_partial_evidence: bool) -> tuple[int, int, str]:
@@ -568,13 +593,14 @@ def run_posting_resolution(
             if _truthy(evidence.accepted) and (evidence.canonical_url or evidence.source_url):
                 add_evidence_candidate(evidence, 1, "existing_authoritative_evidence")
 
+        job_sources = [row for row in sources_by_job.get(job.job_key, []) if _source_row_matches_job(job, row)]
         direct_urls: list[tuple[str, str]] = []
         queue_item = queue_by_job.get(job.job_key, (0, None))[1]
         for observed in [
             job.canonical_url,
             queue_item.matched_url if queue_item else "",
             queue_item.lead_url if queue_item else "",
-            *[row.get("canonical_url") or row.get("source_url") for row in sources_by_job.get(job.job_key, [])],
+            *[row.get("canonical_url") or row.get("source_url") for row in job_sources],
         ]:
             canonical = canonicalize_url(observed)
             if canonical and canonical not in {value for _, value in direct_urls}:
@@ -674,7 +700,7 @@ def run_posting_resolution(
                 discovered.append(candidate)
                 candidate_evidence[candidate.candidate_id] = evidence
 
-        for row in sources_by_job.get(job.job_key, []):
+        for row in job_sources:
             url = canonicalize_url(row.get("canonical_url") or row.get("source_url"))
             identity = recognize_ats(url)
             if not url or not identity.platform or url in seen_urls:
