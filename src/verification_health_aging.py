@@ -23,6 +23,7 @@ def job_summary(job: dict[str, Any], blocker: Blocker, age: float | None) -> dic
 def calculate_aging(
     jobs: list[dict[str, Any]],
     queues: dict[str, dict[str, Any]],
+    resolutions: dict[str, dict[str, Any]],
     blockers: dict[str, Blocker],
     company_keys: set[str],
     as_of: datetime,
@@ -34,8 +35,8 @@ def calculate_aging(
         ("target_company_provisional", "Target-company provisional jobs", thresholds.target_company_hours, lambda j, b: is_open(j) and is_target(j, company_keys) and identity(j.get("score_status")) == "provisional"),
         ("medium_potential_high_signal", "Medium-potential high-signal jobs", thresholds.medium_high_signal_hours, lambda j, b: is_open(j) and is_medium_signal(j) and not is_verified(j)),
         ("enrichment_failure", "Jobs with an enrichment failure", thresholds.enrichment_failure_hours, lambda j, b: b.reason in {"source_blocked", "source_timeout", "source_not_found", "parser_failure", "no_supported_enrichment_path"}),
-        ("no_authoritative_url", "Jobs with no authoritative URL", thresholds.provisional_without_attempt_hours, lambda j, b: is_open(j) and not is_verified(j) and not authoritative(j, queues.get(str(j.get("job_key") or "")), thresholds)),
-        ("no_successful_enrichment_attempt", "Jobs with no successful enrichment attempt", thresholds.provisional_without_attempt_hours, lambda j, b: is_open(j) and not is_verified(j) and safe_int((queues.get(str(j.get("job_key") or "")) or {}).get("attempt_count"), 0) <= 0 and not row_timestamp(j, "enrichment_last_attempted_at")),
+        ("no_authoritative_url", "Jobs with no authoritative URL", thresholds.provisional_without_attempt_hours, lambda j, b: is_open(j) and not is_verified(j) and not authoritative(j, queues.get(str(j.get("job_key") or "")), thresholds, resolutions.get(str(j.get("job_key") or "")))),
+        ("no_successful_enrichment_attempt", "Jobs with no successful enrichment attempt", thresholds.provisional_without_attempt_hours, lambda j, b: is_open(j) and not is_verified(j) and safe_int((queues.get(str(j.get("job_key") or "")) or {}).get("attempt_count"), 0) <= 0 and not row_timestamp(j, "enrichment_last_attempted_at") and not row_timestamp(resolutions.get(str(j.get("job_key") or "")) or {}, "attempted_at")),
         ("awaiting_retry", "Jobs awaiting retry", thresholds.enrichment_failure_hours, lambda j, b: b.reason == "retry_scheduled"),
         ("manually_deferred", "Jobs manually deferred", None, lambda j, b: is_deferred(j, as_of)),
     ]

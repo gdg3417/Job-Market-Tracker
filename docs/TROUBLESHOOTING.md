@@ -49,3 +49,21 @@ Do not delete a row until `Job_Sources` and posting IDs have been reviewed.
 ## Workflow fails before summary output
 
 The likely causes are invalid secrets, schema failure, dependency failure, or an unhandled workbook error. Individual job retrieval failures should not terminate the workflow.
+
+## Authoritative posting resolution
+
+Preview one job before writing:
+
+```powershell
+python -m src.resolution.run --dry-run --limit 1 --job-key "<job_key>"
+```
+
+Common states:
+
+* `resolved_probable`: inspect visible score components. Confirm company, title, location, and requisition evidence before using a manual override.
+* `ambiguous`: compare all rows for the job in `Resolution_Candidates`. Do not delete the losing candidates.
+* `blocked`: confirm the URL is an employer or ATS posting rather than a job-board page. A block does not mean the job is closed.
+* `unsupported`: verify `Config_Companies` has the correct career domain, career search URL, ATS platform, and ATS identifier. Structured connector expansion belongs in Sprint 35.
+* `retryable_failure`: rerun later. Do not replace the URL solely because of one timeout, rate limit, or server failure.
+
+For a validated manual URL, enter the manual fields in `Posting_Resolution` and rerun the exact job. Use `remove` to clear an override while preserving an audit row.

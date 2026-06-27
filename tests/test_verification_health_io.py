@@ -74,7 +74,7 @@ def test_calculate_from_workbook_uses_only_existing_canonical_tabs():
     assert result.records_read["jobs"] == 0
     assert set(client.read_names) == {
         "Jobs", "Job_Sources", "Enrichment_Queue", "Enrichment_Evidence",
-        "Runs", "Target_Companies", "Config_Companies",
+        "Runs", "Posting_Resolution", "Target_Companies", "Config_Companies",
     }
 
 

@@ -56,6 +56,7 @@ def calculate_components(
     jobs: list[dict[str, Any]],
     runs: list[dict[str, Any]],
     queues: dict[str, dict[str, Any]],
+    resolutions: dict[str, dict[str, Any]],
     evidence: list[dict[str, Any]],
     breaches: list[dict[str, Any]],
     as_of: datetime,
@@ -114,14 +115,15 @@ def calculate_components(
 
     latest_enrichment = enrichment_run(runs)
     enrichment_notes = parse_notes(latest_enrichment)
+    resolution = enrichment_notes.get("authoritative_resolution") or {}
     direct = enrichment_notes.get("direct_link") or {}
     company = enrichment_notes.get("company_ats") or {}
     external = enrichment_notes.get("external_search") or {}
     attempts = sum(safe_int(value, 0) for value in (
-        direct.get("direct_attempts"), company.get("company_ats_attempts"), external.get("queries_executed"),
+        resolution.get("resolution_attempts"), direct.get("direct_attempts"), company.get("company_ats_attempts"), external.get("queries_executed"),
     ))
     failures = sum(safe_int(value, 0) for value in (
-        direct.get("retryable_failures"), direct.get("permanent_failures"), company.get("failures"), external.get("search_failures"),
+        resolution.get("retryable_failures"), resolution.get("blocked"), direct.get("retryable_failures"), direct.get("permanent_failures"), company.get("failures"), external.get("search_failures"),
     ))
     source_rate = failures / max(1, attempts)
     source_score = _inverse_score(source_rate, thresholds.source_watch_failure_rate, thresholds.source_degraded_failure_rate) if attempts else 70
@@ -174,7 +176,7 @@ def calculate_components(
         job for job in jobs
         if is_open(job) and (
             is_verified(job)
-            or authoritative(job, queues.get(str(job.get("job_key") or "")), thresholds)
+            or authoritative(job, queues.get(str(job.get("job_key") or "")), thresholds, resolutions.get(str(job.get("job_key") or "")))
         )
     ]
     lifecycle_ages = [
