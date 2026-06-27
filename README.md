@@ -114,6 +114,7 @@ python -m src.schema --validate
 python -m src.workflow_validation
 python -m src.source_audit
 python -m src.connectors.inventory --dry-run
+python -m src.source_reliability_dashboard --dry-run
 ```
 
 Use header repair only when the workbook structure is incorrect:
@@ -180,10 +181,11 @@ A production cycle recovers stale queue work, runs permitted enrichment stages, 
 
 ## Connector inventory and source reliability
 
-Preview priority platform scope:
+Preview priority platform scope and Dashboard rows:
 
 ```powershell
 python -m src.connectors.inventory --dry-run
+python -m src.source_reliability_dashboard --dry-run
 ```
 
 Structured connector platforms currently include Greenhouse, Lever, Ashby, and SmartRecruiters. Configured-only platforms remain visible for resolver routing and manual review without broad scraping.
@@ -230,8 +232,9 @@ Dashboard separates:
 * target-company watchlist
 * enrichment failures
 * recently closed roles
+* ATS platform source reliability
 
-The production enrichment cycle appends current queue and lifecycle health metrics after each refresh.
+The production enrichment cycle appends current queue and lifecycle health metrics after each refresh. Source reliability rows can be appended with `python -m src.source_reliability_dashboard --write-dashboard`.
 
 ## Documentation
 
