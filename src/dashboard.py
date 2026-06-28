@@ -7,6 +7,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
+from src.decision_evidence import build_move_value_dashboard_sections
 from src.models import JobPosting, parse_iso_date, today_iso, utc_now_iso
 from src.settings import load_settings
 from src.sheets import SheetClient, with_quota_backoff
@@ -17,31 +18,11 @@ SPARSE_GMAIL_REVIEW_REASON = "sparse_gmail_high_signal_title"
 ENRICHMENT_FAILURE_STATUSES = {"ambiguous", "not_found", "retryable_failure", "permanent_failure"}
 DIGEST_HEADERS = "digest_section company title location remote_status work_model commute_estimate_minutes role_family role_level total_score alert_tier salary_min salary_max total_comp_estimate days_open first_seen_date last_seen_date canonical_url score_explanation potential_priority_score potential_priority evidence_completeness_score score_status verified_total_score verified_alert_tier enrichment_status".split()
 PNL_PATH_TERMS = [
-    "p&l",
-    "profit and loss",
-    "general manager",
-    "business unit",
-    "segment strategy",
-    "product line",
-    "category management",
-    "commercial strategy",
-    "revenue strategy",
-    "revenue growth",
-    "margin expansion",
+    "p&l", "profit and loss", "general manager", "business unit", "segment strategy", "product line",
+    "category management", "commercial strategy", "revenue strategy", "revenue growth", "margin expansion",
     "value creation",
 ]
-SOURCE_AUDIT_REJECTION_TERMS = [
-    "source",
-    "search page",
-    "category page",
-    "landing page",
-    "near-me",
-    "job board",
-    "navigation",
-    "generic",
-    "alert metadata",
-    "tracking url",
-]
+SOURCE_AUDIT_REJECTION_TERMS = ["source", "search page", "category page", "landing page", "near-me", "job board", "navigation", "generic", "alert metadata", "tracking url"]
 TARGET_PRIORITY_TERMS = {"tier 1", "tier 2", "target", "watchlist", "high"}
 DIGEST_SECTION_LIMITS = {
     "Immediate review": 10,
@@ -60,16 +41,9 @@ DIGEST_SECTION_LIMITS = {
     "Rejected source audit": 5,
 }
 TOP_ROLE_SECTIONS = [
-    "Immediate review",
-    "Verified strong fits",
-    "High-potential roles awaiting enrichment",
-    "High-potential roles with partial evidence",
-    "Enrichment failures requiring review",
-    "Strong fit",
-    "High-signal titles needing review",
-    "Target company watchlist",
-    "P&L pathway",
-    "Needs salary research",
+    "Immediate review", "Verified strong fits", "High-potential roles awaiting enrichment",
+    "High-potential roles with partial evidence", "Enrichment failures requiring review", "Strong fit",
+    "High-signal titles needing review", "Target company watchlist", "P&L pathway", "Needs salary research",
 ]
 
 
@@ -156,7 +130,7 @@ def _verified_tier(job: JobPosting) -> str:
 
 
 def _has_salary(job: JobPosting) -> bool:
-    return job.salary_min is not None or job.salary_max is not None or job.total_comp_estimate is not None
+    return any(value is not None for value in [job.salary_min, job.salary_max, job.total_comp_estimate, job.base_salary_min, job.base_salary_max, job.estimated_total_comp_min, job.estimated_total_comp_max])
 
 
 def _is_recent(value: str, *, as_of: str, days: int = WEEKLY_LOOKBACK_DAYS) -> bool:
@@ -199,20 +173,11 @@ def _is_sparse_gmail_review_job(job: JobPosting, *, as_of: str) -> bool:
 
 
 def _is_high_potential_pending(job: JobPosting) -> bool:
-    return (
-        _is_open(job)
-        and job.potential_priority == "high"
-        and job.score_status == "provisional"
-        and job.enrichment_status in {"pending", "in_progress"}
-    )
+    return _is_open(job) and job.potential_priority == "high" and job.score_status == "provisional" and job.enrichment_status in {"pending", "in_progress"}
 
 
 def _is_high_potential_partial(job: JobPosting) -> bool:
-    return (
-        _is_open(job)
-        and job.potential_priority == "high"
-        and (job.score_status == "partially_verified" or job.enrichment_status == "partial")
-    )
+    return _is_open(job) and job.potential_priority == "high" and (job.score_status == "partially_verified" or job.enrichment_status == "partial")
 
 
 def _is_enrichment_failure(job: JobPosting) -> bool:
@@ -241,12 +206,7 @@ def _target_company_keys(*row_groups: list[dict[str, Any]] | None) -> set[str]:
 def _is_target_company_job(job: JobPosting, target_keys: set[str]) -> bool:
     visible_score = _verified_score(job)
     potential_visible = job.potential_priority in {"high", "medium"}
-    return (
-        bool(target_keys)
-        and _is_open(job)
-        and _identity(job.company) in target_keys
-        and (potential_visible or (visible_score is not None and visible_score >= 50))
-    )
+    return bool(target_keys) and _is_open(job) and _identity(job.company) in target_keys and (potential_visible or (visible_score is not None and visible_score >= 50))
 
 
 def _job_identity(job: JobPosting) -> str:
@@ -326,32 +286,13 @@ def _rejected_to_digest_row(row: dict[str, Any]) -> list[Any]:
     source = _row_value(row, "source")
     subject = _row_value(row, "subject")
     notes = _row_value(row, "extraction_notes", "raw_evidence")
-    explanation = "; ".join(
-        part
-        for part in [
-            f"rejected={reason}" if reason else "rejected=true",
-            f"source={source}" if source else "",
-            f"subject={subject}" if subject else "",
-            notes,
-        ]
-        if part
-    )
+    explanation = "; ".join(part for part in [f"rejected={reason}" if reason else "rejected=true", f"source={source}" if source else "", f"subject={subject}" if subject else "", notes] if part)
     values = [
         "Rejected source audit",
         _row_value(row, "company"),
         _row_value(row, "title"),
         _row_value(row, "location"),
-        "",
-        "",
-        "",
-        "",
-        "",
-        "",
-        "rejected",
-        "",
-        "",
-        "",
-        "",
+        "", "", "", "", "", "", "rejected", "", "", "", "",
         _row_value(row, "received_date"),
         _row_value(row, "created_at", "updated_at"),
         _row_value(row, "url"),
@@ -368,98 +309,38 @@ def build_digest_rows(
     config_company_rows: list[dict[str, Any]] | None = None,
     rejected_job_rows: list[dict[str, Any]] | None = None,
 ) -> list[list[Any]]:
+    del config_company_rows
     as_of_date = as_of or today_iso()
-    target_keys = _target_company_keys(target_company_rows, config_company_rows)
+    target_keys = _target_company_keys(target_company_rows)
     rows: list[list[Any]] = []
     seen: set[str] = set()
     sections: list[tuple[str, list[JobPosting], int]] = [
-        (
-            "Immediate review",
-            [job for job in jobs if _is_open(job) and _is_verified(job) and (_verified_tier(job) == "immediate_review" or (_verified_score(job) or 0) >= 85)],
-            DIGEST_SECTION_LIMITS["Immediate review"],
-        ),
-        (
-            "Verified strong fits",
-            [job for job in jobs if _is_open(job) and _is_verified(job) and 75 <= (_verified_score(job) or 0) < 85],
-            DIGEST_SECTION_LIMITS["Verified strong fits"],
-        ),
-        (
-            "High-potential roles awaiting enrichment",
-            [job for job in jobs if _is_high_potential_pending(job)],
-            DIGEST_SECTION_LIMITS["High-potential roles awaiting enrichment"],
-        ),
-        (
-            "High-potential roles with partial evidence",
-            [job for job in jobs if _is_high_potential_partial(job)],
-            DIGEST_SECTION_LIMITS["High-potential roles with partial evidence"],
-        ),
-        (
-            "Enrichment failures requiring review",
-            [job for job in jobs if _is_enrichment_failure(job)],
-            DIGEST_SECTION_LIMITS["Enrichment failures requiring review"],
-        ),
-        (
-            "Strong fit",
-            [job for job in jobs if _is_open(job) and _is_verified(job) and 75 <= (_verified_score(job) or 0) < 85],
-            DIGEST_SECTION_LIMITS["Strong fit"],
-        ),
-        (
-            "High-signal titles needing review",
-            [job for job in jobs if _is_sparse_gmail_review_job(job, as_of=as_of_date)],
-            DIGEST_SECTION_LIMITS["High-signal titles needing review"],
-        ),
-        (
-            "Target company watchlist",
-            [job for job in jobs if _is_target_company_job(job, target_keys)],
-            DIGEST_SECTION_LIMITS["Target company watchlist"],
-        ),
-        (
-            "Needs salary research",
-            [job for job in jobs if _is_open(job) and not _has_salary(job) and ((_verified_score(job) or 0) >= 60 or job.potential_priority == "high")],
-            DIGEST_SECTION_LIMITS["Needs salary research"],
-        ),
-        (
-            "Remote or short commute",
-            [job for job in jobs if _is_remote_or_short_commute(job) and ((_verified_score(job) or 0) >= 60 or job.potential_priority == "high")],
-            DIGEST_SECTION_LIMITS["Remote or short commute"],
-        ),
-        (
-            "P&L pathway",
-            [job for job in jobs if _is_pnl_pathway_job(job) and ((_verified_score(job) or 0) >= 60 or job.potential_priority == "high")],
-            DIGEST_SECTION_LIMITS["P&L pathway"],
-        ),
-        (
-            "New this week",
-            [job for job in jobs if _is_open(job) and _is_recent(job.first_seen_date, as_of=as_of_date) and ((_verified_score(job) or 0) >= 60 or job.potential_priority == "high")],
-            DIGEST_SECTION_LIMITS["New this week"],
-        ),
+        ("Immediate review", [job for job in jobs if _is_open(job) and _is_verified(job) and (_verified_tier(job) == "immediate_review" or (_verified_score(job) or 0) >= 85)], DIGEST_SECTION_LIMITS["Immediate review"]),
+        ("Verified strong fits", [job for job in jobs if _is_open(job) and _is_verified(job) and 75 <= (_verified_score(job) or 0) < 85], DIGEST_SECTION_LIMITS["Verified strong fits"]),
+        ("High-potential roles awaiting enrichment", [job for job in jobs if _is_high_potential_pending(job)], DIGEST_SECTION_LIMITS["High-potential roles awaiting enrichment"]),
+        ("High-potential roles with partial evidence", [job for job in jobs if _is_high_potential_partial(job)], DIGEST_SECTION_LIMITS["High-potential roles with partial evidence"]),
+        ("Enrichment failures requiring review", [job for job in jobs if _is_enrichment_failure(job)], DIGEST_SECTION_LIMITS["Enrichment failures requiring review"]),
+        ("Strong fit", [job for job in jobs if _is_open(job) and _is_verified(job) and 75 <= (_verified_score(job) or 0) < 85], DIGEST_SECTION_LIMITS["Strong fit"]),
+        ("High-signal titles needing review", [job for job in jobs if _is_sparse_gmail_review_job(job, as_of=as_of_date)], DIGEST_SECTION_LIMITS["High-signal titles needing review"]),
+        ("Target company watchlist", [job for job in jobs if _is_target_company_job(job, target_keys)], DIGEST_SECTION_LIMITS["Target company watchlist"]),
+        ("Needs salary research", [job for job in jobs if _is_open(job) and not _has_salary(job) and ((_verified_score(job) or 0) >= 60 or job.potential_priority == "high")], DIGEST_SECTION_LIMITS["Needs salary research"]),
+        ("Remote or short commute", [job for job in jobs if _is_remote_or_short_commute(job) and ((_verified_score(job) or 0) >= 60 or job.potential_priority == "high")], DIGEST_SECTION_LIMITS["Remote or short commute"]),
+        ("P&L pathway", [job for job in jobs if _is_pnl_pathway_job(job) and ((_verified_score(job) or 0) >= 60 or job.potential_priority == "high")], DIGEST_SECTION_LIMITS["P&L pathway"]),
+        ("New this week", [job for job in jobs if _is_open(job) and _is_recent(job.first_seen_date, as_of=as_of_date) and ((_verified_score(job) or 0) >= 60 or job.potential_priority == "high")], DIGEST_SECTION_LIMITS["New this week"]),
         (
             "Closed or likely closed this week",
             [
-                job
-                for job in jobs
+                job for job in jobs
                 if (job.status == "confirmed_closed" and _is_recent(job.closed_date, as_of=as_of_date))
-                or (
-                    job.status == "likely_closed"
-                    and (
-                        _is_recent(job.closed_date, as_of=as_of_date)
-                        or _is_recent(job.updated_at, as_of=as_of_date)
-                        or _is_recent(job.last_seen_date, as_of=as_of_date)
-                    )
-                )
+                or (job.status == "likely_closed" and (_is_recent(job.closed_date, as_of=as_of_date) or _is_recent(job.updated_at, as_of=as_of_date) or _is_recent(job.last_seen_date, as_of=as_of_date)))
             ],
             DIGEST_SECTION_LIMITS["Closed or likely closed this week"],
         ),
     ]
     for section, selected_jobs, limit in sections:
         _append_job_section(rows, seen, section, selected_jobs, limit)
-
     rejected_rows = [row for row in rejected_job_rows or [] if _looks_like_source_audit_rejection(row)]
-    for rejected_row in sorted(
-        rejected_rows,
-        key=lambda row: _row_value(row, "created_at", "updated_at", "received_date", "subject"),
-        reverse=True,
-    )[: DIGEST_SECTION_LIMITS["Rejected source audit"]]:
+    for rejected_row in sorted(rejected_rows, key=lambda row: _row_value(row, "created_at", "updated_at", "received_date", "subject"), reverse=True)[: DIGEST_SECTION_LIMITS["Rejected source audit"]]:
         rows.append(_rejected_to_digest_row(rejected_row))
     return rows
 
@@ -504,12 +385,7 @@ def _format_comp_from_digest(row: dict[str, Any]) -> str:
 
 
 def _rejection_reason_counts(rejected_job_rows: list[dict[str, Any]] | None) -> Counter[str]:
-    reasons = [
-        _row_value(row, "rejection_reason") or "Unknown"
-        for row in rejected_job_rows or []
-        if _looks_like_source_audit_rejection(row)
-    ]
-    return Counter(reasons)
+    return Counter(_row_value(row, "rejection_reason") or "Unknown" for row in rejected_job_rows or [] if _looks_like_source_audit_rejection(row))
 
 
 def _top_rejection_reason(rejected_job_rows: list[dict[str, Any]] | None) -> str:
@@ -542,8 +418,7 @@ def _is_static_source(row: dict[str, Any]) -> bool:
 
 
 def _source_health_counts(config_company_rows: list[dict[str, Any]] | None) -> dict[str, int]:
-    rows = config_company_rows or []
-    static_rows = [row for row in rows if _is_static_source(row)]
+    static_rows = [row for row in config_company_rows or [] if _is_static_source(row)]
     return {
         "static_sources_active": sum(1 for row in static_rows if not _is_disabled_source(row)),
         "static_sources_disabled": sum(1 for row in static_rows if _is_disabled_source(row)),
@@ -639,22 +514,12 @@ def _top_role_rows(digest_rows: list[list[Any]], limit: int = 20) -> list[list[A
         if not row or row[0] not in TOP_ROLE_SECTIONS:
             continue
         record = _digest_record(row)
-        rows.append(
-            [
-                record.get("digest_section", ""),
-                record.get("company", ""),
-                record.get("title", ""),
-                record.get("location", ""),
-                record.get("verified_total_score", ""),
-                f"{record.get('potential_priority', '')} ({record.get('potential_priority_score', '')})".strip(),
-                record.get("evidence_completeness_score", ""),
-                record.get("score_status", ""),
-                record.get("enrichment_status", ""),
-                _format_comp_from_digest(record),
-                record.get("canonical_url", ""),
-                record.get("score_explanation", ""),
-            ]
-        )
+        rows.append([
+            record.get("digest_section", ""), record.get("company", ""), record.get("title", ""), record.get("location", ""),
+            record.get("verified_total_score", ""), f"{record.get('potential_priority', '')} ({record.get('potential_priority_score', '')})".strip(),
+            record.get("evidence_completeness_score", ""), record.get("score_status", ""), record.get("enrichment_status", ""),
+            _format_comp_from_digest(record), record.get("canonical_url", ""), record.get("score_explanation", ""),
+        ])
         added += 1
         if added >= limit:
             break
@@ -666,21 +531,9 @@ def _top_role_rows(digest_rows: list[list[Any]], limit: int = 20) -> list[list[A
 def _source_cleanup_rows(rejected_job_rows: list[dict[str, Any]] | None, limit: int = 15) -> list[list[Any]]:
     rows = [["Source", "Rejected title", "Rejected company", "Reason", "Recommended action"]]
     rejected_rows = [row for row in rejected_job_rows or [] if _looks_like_source_audit_rejection(row)]
-    for row in sorted(
-        rejected_rows,
-        key=lambda item: _row_value(item, "created_at", "updated_at", "received_date", "subject"),
-        reverse=True,
-    )[:limit]:
+    for row in sorted(rejected_rows, key=lambda item: _row_value(item, "created_at", "updated_at", "received_date", "subject"), reverse=True)[:limit]:
         reason = _row_value(row, "rejection_reason") or "Unknown"
-        rows.append(
-            [
-                _row_value(row, "source"),
-                _row_value(row, "title", "subject"),
-                _row_value(row, "company", "sender"),
-                reason,
-                _recommended_source_action(reason),
-            ]
-        )
+        rows.append([_row_value(row, "source"), _row_value(row, "title", "subject"), _row_value(row, "company", "sender"), reason, _recommended_source_action(reason)])
     if len(rows) == 1:
         rows.append(["No source cleanup rows", "", "", "", ""])
     return rows
@@ -747,6 +600,8 @@ def build_dashboard_values(
         ["Top roles to review"],
         *_top_role_rows(digest_rows),
         [],
+        *build_move_value_dashboard_sections(jobs),
+        [],
         ["Source cleanup queue"],
         *_source_cleanup_rows(rejected_job_rows),
     ]
@@ -761,13 +616,7 @@ def build_digest_values(
     rejected_job_rows: list[dict[str, Any]] | None = None,
 ) -> list[list[Any]]:
     generated_at = utc_now_iso()
-    rows = build_digest_rows(
-        jobs,
-        as_of=as_of,
-        target_company_rows=target_company_rows,
-        config_company_rows=config_company_rows,
-        rejected_job_rows=rejected_job_rows,
-    )
+    rows = build_digest_rows(jobs, as_of=as_of, target_company_rows=target_company_rows, config_company_rows=config_company_rows, rejected_job_rows=rejected_job_rows)
     return [
         ["Job Market Tracker Weekly Digest"],
         ["Generated at", generated_at],
@@ -783,10 +632,7 @@ def write_values(sheet_client: SheetClient, worksheet_name: str, values: list[li
     with_quota_backoff(lambda: worksheet.clear(), operation_name=f"clear worksheet {worksheet_name}")
     if not values:
         return
-    with_quota_backoff(
-        lambda: worksheet.update(range_name="A1", values=values, value_input_option="USER_ENTERED"),
-        operation_name=f"write worksheet {worksheet_name}",
-    )
+    with_quota_backoff(lambda: worksheet.update(range_name="A1", values=values, value_input_option="USER_ENTERED"), operation_name=f"write worksheet {worksheet_name}")
 
 
 def build_dashboard_run_record(result: DashboardDigestResult) -> dict[str, Any]:
@@ -840,22 +686,9 @@ def apply_dashboard_and_digest(sheet_client: SheetClient, *, as_of: str | None =
     config_company_rows = _read_optional_records(sheet_client, "Config_Companies")
     rejected_job_rows = _read_optional_records(sheet_client, "Rejected_Jobs")
     runs_rows = _read_optional_records(sheet_client, "Runs")
-    digest_values = build_digest_values(
-        jobs,
-        as_of=as_of,
-        target_company_rows=target_company_rows,
-        config_company_rows=config_company_rows,
-        rejected_job_rows=rejected_job_rows,
-    )
+    digest_values = build_digest_values(jobs, as_of=as_of, target_company_rows=target_company_rows, config_company_rows=config_company_rows, rejected_job_rows=rejected_job_rows)
     digest_rows_only = digest_values[5:]
-    dashboard_values = build_dashboard_values(
-        jobs,
-        digest_rows=digest_rows_only,
-        target_company_rows=target_company_rows,
-        config_company_rows=config_company_rows,
-        rejected_job_rows=rejected_job_rows,
-        runs_rows=runs_rows,
-    )
+    dashboard_values = build_dashboard_values(jobs, digest_rows=digest_rows_only, target_company_rows=target_company_rows, config_company_rows=config_company_rows, rejected_job_rows=rejected_job_rows, runs_rows=runs_rows)
     digest_rows = max(0, len(digest_values) - 5)
     write_values(sheet_client, "Dashboard", dashboard_values)
     write_values(sheet_client, "Digest", digest_values)
