@@ -17,6 +17,8 @@ TERMINAL_STATUSES = {"confirmed_closed", "closed", "expired"}
 REVIEWED_STATUSES = {"reviewing", "interested", "watch", "deferred", "dismissed", "applied", "interviewing", "offer", "rejected", "withdrawn", "closed"}
 INTEREST_OR_APPLICATION_STATUSES = {"interested", "applied", "interviewing", "offer"}
 QUEUE_OPEN_STATUSES = {"pending", "in_progress", "retryable_failure"}
+HIGH_PRIORITY_BLOCKER_ENRICHMENT_STATUSES = {"partial", "ambiguous", "not_found", "retryable_failure", "permanent_failure", "closed"}
+HIGH_PRIORITY_ACTIVE_ENRICHMENT_STATUSES = {"pending", "in_progress"}
 TRANSIENT_CLOSURE_BLOCKERS = {
     "timeout",
     "source_timeout",
@@ -640,7 +642,7 @@ def evaluate_readiness(metrics: Mapping[str, Any], thresholds: ReadinessThreshol
             critical=True,
             observed=metrics.get("high_priority_sla_breaches"),
             threshold=f"<= {limits.high_priority_sla_breaches_max}",
-            message="High-potential jobs should not remain unresolved beyond service level",
+            message="High-potential jobs should not remain unresolved beyond service level without a clear blocker",
         ),
         _gate(
             "resolution_success",
@@ -657,7 +659,7 @@ def evaluate_readiness(metrics: Mapping[str, Any], thresholds: ReadinessThreshol
             critical=False,
             observed=metrics.get("verification_conversion_rate"),
             threshold=f">= {limits.minimum_verification_conversion_rate}",
-            message="High-potential roles should convert to verified reviewable rows",
+            message="High-potential roles should convert to verified reviewable rows when sufficient evidence is available",
             warning=True,
         ),
         _gate(
@@ -727,7 +729,7 @@ def build_alerts(
             continue
         if gate.status == "warn" and gate.name not in {"resolution_success", "verification_conversion", "source_failure_rate"}:
             continue
-        severity = "critical" if gate.critical or readiness.classification == "not_ready" else "warning"
+        severity = "critical" if gate.critical else "warning"
         dedupe_key = f"{gate.name}:{gate.status}:{gate.observed}:{gate.threshold}"
         alert_id = f"sprint38:{dedupe_key}"
         if alert_id in prior:
@@ -750,12 +752,13 @@ def _alert_action_for_gate(gate: ReadinessGate) -> str:
     return {
         "daily_workflow_freshness": "Run workflow validation and inspect the latest daily run before relying on workbook state",
         "gmail_backlog": "Run Gmail ingestion or inspect Gmail_Messages errors",
-        "high_priority_service_level": "Review unresolved high-potential jobs and blocker reasons",
+        "high_priority_service_level": "Review unresolved high-potential jobs that lack a blocker reason",
         "source_failure_rate": "Review Source_Health by platform and pause only chronically failing sources",
         "lifecycle_false_closure_protection": "Inspect lifecycle evidence before accepting any closure update",
         "regression_pass_rate": "Run the regression evaluation and inspect failing cases",
         "dashboard_refresh_success": "Refresh Dashboard and check schema validity",
         "digest_refresh_success": "Refresh Digest and check schema validity",
+        "verification_conversion": "Review high-potential partial and failed rows, then verify or keep the blocker visible",
     }.get(gate.name, "Inspect the gate details and supporting workbook metrics")
 
 
@@ -806,7 +809,10 @@ def build_metrics_from_workbook(
     high_potential = [job for job in open_jobs if job.potential_priority == "high"]
     verified_high = [job for job in high_potential if job.score_status == "verified"]
     unresolved_high = [job for job in high_potential if job.score_status != "verified"]
-    high_sla_breaches = sum(1 for job in unresolved_high if _days_since(job.first_seen_date, timestamp) > 1)
+    unresolved_high_aged = [job for job in unresolved_high if _days_since(job.first_seen_date, timestamp) > 1]
+    blocked_high = [job for job in unresolved_high_aged if _has_high_priority_blocker(job)]
+    active_high = [job for job in unresolved_high_aged if str(job.enrichment_status or "").strip().lower() in HIGH_PRIORITY_ACTIVE_ENRICHMENT_STATUSES]
+    high_sla_breaches = len(unresolved_high_aged) - len(blocked_high) - len(active_high)
     resolved_jobs = [job for job in open_jobs if str(job.canonical_url or job.enrichment_source_url or "").strip()]
     source_failure_rate = _source_failure_rate(source_health_rows or [])
     regression = dict(regression_metrics or {})
@@ -816,7 +822,10 @@ def build_metrics_from_workbook(
         "schema_valid": bool(latest_workflow and str(latest_workflow.get("status") or "").lower() == "success"),
         "gmail_backlog": _latest_note_metric(runs or [], "gmail", ("gmail_backlog_remaining", "backlog_remaining"), default=0),
         "enrichment_backlog": sum(1 for row in queue_rows or [] if str(row.get("status") or "").strip().lower() in QUEUE_OPEN_STATUSES),
-        "high_priority_sla_breaches": high_sla_breaches,
+        "high_priority_unresolved_aged": len(unresolved_high_aged),
+        "high_priority_blocked": len(blocked_high),
+        "high_priority_active_enrichment": len(active_high),
+        "high_priority_sla_breaches": max(0, high_sla_breaches),
         "resolution_success_rate": round(len(resolved_jobs) / len(open_jobs), 4) if open_jobs else 1.0,
         "verification_conversion_rate": round(len(verified_high) / len(high_potential), 4) if high_potential else 1.0,
         "source_failure_rate": source_failure_rate,
@@ -825,6 +834,23 @@ def build_metrics_from_workbook(
         "dashboard_refresh_success": bool(latest_dashboard and str(latest_dashboard.get("status") or "").lower() == "success"),
         "digest_refresh_success": bool(latest_dashboard and str(latest_dashboard.get("status") or "").lower() == "success"),
     }
+
+
+def _has_high_priority_blocker(job: JobPosting) -> bool:
+    enrichment_status = str(job.enrichment_status or "").strip().lower()
+    if enrichment_status in HIGH_PRIORITY_BLOCKER_ENRICHMENT_STATUSES:
+        return True
+    if job.score_status == "partially_verified":
+        return True
+    if str(job.lifecycle_reason or "").strip():
+        return True
+    if str(job.manual_decision_conflict or "").strip():
+        return True
+    if str(job.decision_evidence_conflict_notes or "").strip():
+        return True
+    if str(job.review_status or "").strip().lower() in REVIEWED_STATUSES - {"not_reviewed"}:
+        return True
+    return False
 
 
 def _row_value(row: Mapping[str, Any] | None, *keys: str) -> str:
