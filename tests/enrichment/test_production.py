@@ -119,8 +119,13 @@ def test_daily_production_cycle_orders_pipeline_rescore_and_dashboard(monkeypatc
     )
     monkeypatch.setattr(
         "src.enrichment.production.run_posting_resolution",
-        lambda *_args, **kwargs: calls.append(("resolution", kwargs["limit"]))
+        lambda *_args, **kwargs: calls.append(("resolution", kwargs["limit"], kwargs["now"]))
         or Summary({"jobs_evaluated": 4, "resolution_succeeded": 1, "jobs_updated": 1}),
+    )
+    monkeypatch.setattr(
+        "src.enrichment.production.refresh_source_health_from_resolutions",
+        lambda *_args, **kwargs: calls.append(("source_reliability", kwargs["attempted_at"]))
+        or Summary({"source_health_rows_observed": 1}),
     )
 
     def pipeline(*_args, **kwargs):
@@ -160,11 +165,13 @@ def test_daily_production_cycle_orders_pipeline_rescore_and_dashboard(monkeypatc
     )
 
     assert calls == [
-        ("resolution", 10),
+        ("resolution", 10, "2026-06-25T12:00:00Z"),
+        ("source_reliability", "2026-06-25T12:00:00Z"),
         ("pipeline", 10, 10, 0),
         ("rescore",),
         ("dashboard",),
     ]
+    assert result.source_reliability["source_health_rows_observed"] == 1
     assert result.lifecycle["jobs_checked"] == 0
     assert result.health_metrics["enrichment_backlog"] == 3
     assert result.health_rows_written == 11
@@ -182,8 +189,13 @@ def test_weekly_mode_runs_lifecycle_with_controlled_limits(monkeypatch):
     )
     monkeypatch.setattr(
         "src.enrichment.production.run_posting_resolution",
-        lambda *_args, **kwargs: calls.append(("resolution", kwargs["limit"]))
+        lambda *_args, **kwargs: calls.append(("resolution", kwargs["limit"], kwargs["now"]))
         or Summary({"jobs_evaluated": 5, "resolution_succeeded": 1}),
+    )
+    monkeypatch.setattr(
+        "src.enrichment.production.refresh_source_health_from_resolutions",
+        lambda *_args, **kwargs: calls.append(("source_reliability", kwargs["attempted_at"]))
+        or Summary({"source_health_rows_observed": 1}),
     )
     monkeypatch.setattr(
         "src.enrichment.production.run_enrichment_pipeline",
@@ -227,7 +239,8 @@ def test_weekly_mode_runs_lifecycle_with_controlled_limits(monkeypatch):
     )
 
     assert calls == [
-        ("resolution", 15),
+        ("resolution", 15, "2026-06-25T12:00:00Z"),
+        ("source_reliability", "2026-06-25T12:00:00Z"),
         ("pipeline", 10, 10, 5),
         ("lifecycle", 50),
     ]
