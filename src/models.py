@@ -7,6 +7,87 @@ from typing import Any
 
 import yaml
 
+SPRINT_36_REVIEW_JOB_FIELDS = [
+    "review_status",
+    "reviewed_date",
+    "reviewer",
+    "interest_decision",
+    "manual_priority",
+    "manual_fit_rating",
+    "manual_authoritative_url",
+    "review_notes",
+    "follow_up_date",
+    "dismissal_reason",
+    "dismissal_detail",
+    "application_status",
+    "application_date",
+    "application_url",
+    "resume_version",
+    "cover_letter_version",
+    "referral_or_contact",
+    "interview_stage",
+    "last_application_update",
+    "next_action",
+    "next_action_date",
+    "manual_decision_conflict",
+]
+
+SPRINT_37_DECISION_JOB_FIELDS = [
+    "base_salary_min",
+    "base_salary_max",
+    "salary_currency",
+    "bonus_target_percent",
+    "bonus_max_percent",
+    "commission_estimate",
+    "equity_or_lti_estimate",
+    "sign_on_bonus",
+    "estimated_total_comp_min",
+    "estimated_total_comp_max",
+    "compensation_source_type",
+    "compensation_source_url",
+    "compensation_observed_date",
+    "compensation_confidence",
+    "compensation_notes",
+    "required_office_days_per_week",
+    "travel_percentage",
+    "relocation_required",
+    "geographic_eligibility",
+    "work_model_source",
+    "work_model_confidence",
+    "work_model_notes",
+    "office_name",
+    "office_street_address",
+    "office_city",
+    "office_state",
+    "office_postal_code",
+    "location_confidence",
+    "estimated_one_way_distance",
+    "estimated_one_way_travel_time",
+    "commute_bucket",
+    "commute_calculation_date",
+    "commute_method",
+    "commute_notes",
+    "benefit_401k_match",
+    "health_insurance_indicators",
+    "paid_parental_leave",
+    "pto",
+    "pension",
+    "tuition_reimbursement",
+    "other_material_benefits",
+    "benefits_source",
+    "benefits_confidence",
+    "benefits_notes",
+    "compensation_improvement",
+    "total_compensation_improvement",
+    "work_model_improvement",
+    "commute_improvement",
+    "benefits_confidence_summary",
+    "scope_p_and_l_modifier",
+    "move_value_classification",
+    "move_value_notes",
+    "move_value_updated_at",
+    "decision_evidence_conflict_notes",
+]
 
 JOB_FIELDS = [
     "job_key", "company", "title", "location", "remote_status", "work_model",
@@ -27,97 +108,58 @@ JOB_FIELDS = [
     "lifecycle_miss_count", "lifecycle_last_evidence_key", "lifecycle_evidence_type",
     "lifecycle_evidence_url", "lifecycle_evidence_at", "lifecycle_reason",
     "lifecycle_last_authoritative_miss_date",
-    "review_status", "reviewed_date", "reviewer", "interest_decision",
-    "manual_priority", "manual_fit_rating", "manual_authoritative_url",
-    "review_notes", "follow_up_date", "dismissal_reason", "dismissal_detail",
-    "application_status", "application_date", "application_url",
-    "resume_version", "cover_letter_version", "referral_or_contact",
-    "interview_stage", "last_application_update", "next_action",
-    "next_action_date", "manual_decision_conflict",
+    *SPRINT_36_REVIEW_JOB_FIELDS,
+    *SPRINT_37_DECISION_JOB_FIELDS,
 ]
 
 VALID_JOB_STATUSES = {
-    "open",
-    "not_seen_once",
-    "likely_closed",
-    "confirmed_closed",
-    "closed",
-    "reopened",
-    "expired",
+    "open", "not_seen_once", "likely_closed", "confirmed_closed", "closed", "reopened", "expired",
 }
 VALID_POTENTIAL_PRIORITIES = {"high", "medium", "low", "excluded"}
 VALID_SCORE_STATUSES = {"provisional", "partially_verified", "verified", "excluded"}
 VALID_ENRICHMENT_STATUSES = {
-    "not_required",
-    "pending",
-    "in_progress",
-    "partial",
-    "enriched",
-    "ambiguous",
-    "not_found",
-    "retryable_failure",
-    "permanent_failure",
-    "closed",
+    "not_required", "pending", "in_progress", "partial", "enriched", "ambiguous", "not_found",
+    "retryable_failure", "permanent_failure", "closed",
 }
 VALID_REVIEW_STATUSES = {
-    "not_reviewed",
-    "review_now",
-    "reviewing",
-    "interested",
-    "watch",
-    "deferred",
-    "dismissed",
-    "applied",
-    "interviewing",
-    "offer",
-    "rejected",
-    "withdrawn",
-    "closed",
+    "not_reviewed", "review_now", "reviewing", "interested", "watch", "deferred", "dismissed",
+    "applied", "interviewing", "offer", "rejected", "withdrawn", "closed",
 }
 VALID_APPLICATION_STATUSES = {
-    "",
-    "not_started",
-    "drafting",
-    "applied",
-    "interviewing",
-    "offer",
-    "rejected",
-    "withdrawn",
-    "closed",
+    "", "not_started", "drafting", "applied", "interviewing", "offer", "rejected", "withdrawn", "closed",
 }
 VALID_INTEREST_DECISIONS = {"", "interested", "watch", "deferred", "dismissed", "not_interested", "applied"}
 VALID_DISMISSAL_REASONS = {
-    "",
-    "compensation_too_low",
-    "commute_too_long",
-    "on_site_requirement",
-    "wrong_seniority",
-    "role_too_junior",
-    "role_too_senior",
-    "too_much_fp_and_a",
-    "weak_p_and_l_path",
-    "weak_operating_scope",
-    "industry_excluded",
-    "company_not_attractive",
-    "benefits_not_compelling",
-    "role_closed",
-    "duplicate",
-    "recruiting_intermediary",
-    "insufficient_improvement",
-    "not_interested",
-    "other",
+    "", "compensation_too_low", "commute_too_long", "on_site_requirement", "wrong_seniority",
+    "role_too_junior", "role_too_senior", "too_much_fp_and_a", "weak_p_and_l_path",
+    "weak_operating_scope", "industry_excluded", "company_not_attractive", "benefits_not_compelling",
+    "role_closed", "duplicate", "recruiting_intermediary", "insufficient_improvement",
+    "not_interested", "other",
 }
+VALID_COMPENSATION_SOURCE_TYPES = {
+    "employer_posted", "recruiter_provided", "application_form", "government_disclosure",
+    "trusted_external_estimate", "inferred_from_title", "user_entered", "unknown",
+}
+CONFIRMED_COMPENSATION_SOURCE_TYPES = {
+    "employer_posted", "recruiter_provided", "application_form", "government_disclosure", "user_entered",
+}
+VALID_WORK_MODEL_VALUES = {"remote", "hybrid", "on_site", "unknown"}
+VALID_EVIDENCE_CONFIDENCE = {"confirmed", "high", "medium", "low", "estimated", "unknown", "conflicting"}
+VALID_COMMUTE_BUCKETS = {"", "under_15_minutes", "15_to_30_minutes", "30_to_45_minutes", "over_45_minutes", "unknown"}
+VALID_MOVE_VALUE_CLASSIFICATIONS = {"clearly_better", "potentially_better", "lateral_or_uncertain", "worse", "insufficient_evidence"}
 TERMINAL_JOB_STATUSES = {"confirmed_closed", "closed", "expired"}
 OPTIONAL_INT_FIELDS = {
     "commute_estimate_minutes", "salary_min", "salary_max", "total_comp_estimate",
-    "verified_total_score", "enrichment_match_confidence", "manual_priority",
-    "manual_fit_rating",
+    "verified_total_score", "enrichment_match_confidence", "manual_priority", "manual_fit_rating",
+    "base_salary_min", "base_salary_max", "bonus_target_percent", "bonus_max_percent",
+    "commission_estimate", "equity_or_lti_estimate", "sign_on_bonus",
+    "estimated_total_comp_min", "estimated_total_comp_max", "required_office_days_per_week",
+    "travel_percentage", "estimated_one_way_distance", "estimated_one_way_travel_time",
 }
 INT_FIELDS = {
-    "missed_count", "days_open", "fit_score", "p_and_l_path_score",
-    "growth_ownership_score", "executive_exposure_score", "operating_cadence_score",
-    "comp_score", "location_score", "industry_match_score", "total_score",
-    "potential_priority_score", "evidence_completeness_score",
+    "missed_count", "days_open", "fit_score", "p_and_l_path_score", "growth_ownership_score",
+    "executive_exposure_score", "operating_cadence_score", "comp_score", "location_score",
+    "industry_match_score", "total_score", "potential_priority_score", "evidence_completeness_score",
     "lifecycle_check_count", "lifecycle_miss_count",
 }
 
@@ -170,6 +212,20 @@ def _coerce_int(value: Any, default: int = 0) -> int:
 
 def _normalize_choice(value: Any) -> str:
     return str(value or "").strip().lower()
+
+
+def _normalize_work_model(value: Any) -> str:
+    text = _normalize_choice(value).replace("-", "_").replace(" ", "_")
+    if text in {"onsite", "on_site", "in_office", "in_office_5_days", "office"}:
+        return "on_site"
+    if text in {"remote", "hybrid", "unknown"}:
+        return text
+    return "unknown" if not text else text
+
+
+def _normalize_confidence(value: Any, default: str = "unknown") -> str:
+    text = _normalize_choice(value)
+    return text if text in VALID_EVIDENCE_CONFIDENCE else default
 
 
 def normalize_key_part(value: Any) -> str:
@@ -314,6 +370,60 @@ class JobPosting:
     next_action: str = ""
     next_action_date: str = ""
     manual_decision_conflict: str = ""
+    base_salary_min: int | None = None
+    base_salary_max: int | None = None
+    salary_currency: str = "USD"
+    bonus_target_percent: int | None = None
+    bonus_max_percent: int | None = None
+    commission_estimate: int | None = None
+    equity_or_lti_estimate: int | None = None
+    sign_on_bonus: int | None = None
+    estimated_total_comp_min: int | None = None
+    estimated_total_comp_max: int | None = None
+    compensation_source_type: str = "unknown"
+    compensation_source_url: str = ""
+    compensation_observed_date: str = ""
+    compensation_confidence: str = "unknown"
+    compensation_notes: str = ""
+    required_office_days_per_week: int | None = None
+    travel_percentage: int | None = None
+    relocation_required: str = "unknown"
+    geographic_eligibility: str = ""
+    work_model_source: str = ""
+    work_model_confidence: str = "unknown"
+    work_model_notes: str = ""
+    office_name: str = ""
+    office_street_address: str = ""
+    office_city: str = ""
+    office_state: str = ""
+    office_postal_code: str = ""
+    location_confidence: str = "unknown"
+    estimated_one_way_distance: int | None = None
+    estimated_one_way_travel_time: int | None = None
+    commute_bucket: str = ""
+    commute_calculation_date: str = ""
+    commute_method: str = ""
+    commute_notes: str = ""
+    benefit_401k_match: str = ""
+    health_insurance_indicators: str = ""
+    paid_parental_leave: str = ""
+    pto: str = ""
+    pension: str = ""
+    tuition_reimbursement: str = ""
+    other_material_benefits: str = ""
+    benefits_source: str = ""
+    benefits_confidence: str = "unknown"
+    benefits_notes: str = ""
+    compensation_improvement: str = ""
+    total_compensation_improvement: str = ""
+    work_model_improvement: str = ""
+    commute_improvement: str = ""
+    benefits_confidence_summary: str = ""
+    scope_p_and_l_modifier: str = ""
+    move_value_classification: str = "insufficient_evidence"
+    move_value_notes: str = ""
+    move_value_updated_at: str = ""
+    decision_evidence_conflict_notes: str = ""
 
     def __post_init__(self) -> None:
         for field_name in OPTIONAL_INT_FIELDS:
@@ -324,6 +434,18 @@ class JobPosting:
             self.status = "open"
         if not self.currency:
             self.currency = "USD"
+        if not self.salary_currency:
+            self.salary_currency = self.currency or "USD"
+        if self.salary_currency:
+            self.salary_currency = str(self.salary_currency).strip().upper()
+        if self.base_salary_min is None and self.salary_min is not None:
+            self.base_salary_min = self.salary_min
+        if self.base_salary_max is None and self.salary_max is not None:
+            self.base_salary_max = self.salary_max
+        if self.estimated_total_comp_min is None and self.total_comp_estimate is not None:
+            self.estimated_total_comp_min = self.total_comp_estimate
+        if self.estimated_total_comp_max is None and self.total_comp_estimate is not None:
+            self.estimated_total_comp_max = self.total_comp_estimate
 
         explanation = str(self.score_explanation or "").lower()
         if self.potential_priority not in VALID_POTENTIAL_PRIORITIES:
@@ -366,6 +488,24 @@ class JobPosting:
             self.application_status = ""
         if not self.application_status and self.review_status in {"applied", "interviewing", "offer", "rejected", "withdrawn", "closed"}:
             self.application_status = self.review_status
+
+        self.work_model = _normalize_work_model(self.work_model)
+        self.remote_status = _normalize_choice(self.remote_status) or "unknown"
+        if self.remote_status in {"onsite", "on-site", "in_office", "in office"}:
+            self.remote_status = "on_site"
+        self.compensation_source_type = _normalize_choice(self.compensation_source_type) or "unknown"
+        if self.compensation_source_type not in VALID_COMPENSATION_SOURCE_TYPES:
+            self.compensation_source_type = "unknown"
+        self.compensation_confidence = _normalize_confidence(self.compensation_confidence)
+        self.work_model_confidence = _normalize_confidence(self.work_model_confidence)
+        self.location_confidence = _normalize_confidence(self.location_confidence)
+        self.benefits_confidence = _normalize_confidence(self.benefits_confidence)
+        self.commute_bucket = _normalize_choice(self.commute_bucket)
+        if self.commute_bucket not in VALID_COMMUTE_BUCKETS:
+            self.commute_bucket = "unknown"
+        self.move_value_classification = _normalize_choice(self.move_value_classification) or "insufficient_evidence"
+        if self.move_value_classification not in VALID_MOVE_VALUE_CLASSIFICATIONS:
+            self.move_value_classification = "insufficient_evidence"
         self.days_open = days_between(self.first_seen_date, self.closed_date or self.last_seen_date)
 
     @property
