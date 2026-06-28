@@ -236,6 +236,16 @@ def test_readiness_warnings_do_not_become_ready():
     assert any(gate.name == "source_failure_rate" and gate.status == "warn" for gate in readiness.gates)
 
 
+def test_warning_alerts_keep_warning_severity_when_overall_not_ready():
+    readiness = evaluate_readiness(ready_metrics(daily_workflow_age_hours=99, verification_conversion_rate=0.0))
+    alerts = build_alerts(readiness, created_at="2026-06-27T12:00:00Z")
+    severity_by_category = {alert.category: alert.severity for alert in alerts}
+
+    assert readiness.classification == "not_ready"
+    assert severity_by_category["daily_workflow_freshness"] == "critical"
+    assert severity_by_category["verification_conversion"] == "warning"
+
+
 def test_alert_generation_is_low_noise_and_deduplicated():
     readiness = evaluate_readiness(ready_metrics(daily_workflow_age_hours=99, source_failure_rate=0.4))
     alerts = build_alerts(readiness, created_at="2026-06-27T12:00:00Z")
@@ -256,7 +266,7 @@ def test_readiness_run_record_is_idempotent_for_same_timestamp():
     assert first["records_failed"] == 0
 
 
-def test_build_metrics_from_workbook_flags_stale_high_priority_jobs():
+def test_build_metrics_from_workbook_flags_stale_high_priority_jobs_without_blockers():
     jobs = [
         make_job(potential_priority="high", score_status="provisional", first_seen_date="2026-06-24"),
         make_job(job_key="verified", potential_priority="high", score_status="verified", first_seen_date="2026-06-26"),
@@ -277,3 +287,26 @@ def test_build_metrics_from_workbook_flags_stale_high_priority_jobs():
     assert metrics["schema_valid"] is True
     assert metrics["enrichment_backlog"] == 1
     assert metrics["high_priority_sla_breaches"] == 1
+
+
+def test_build_metrics_from_workbook_does_not_count_blocked_high_priority_jobs_as_breaches():
+    jobs = [
+        make_job(job_key="partial", potential_priority="high", score_status="partially_verified", first_seen_date="2026-06-24"),
+        make_job(job_key="failure", potential_priority="high", score_status="provisional", enrichment_status="not_found", first_seen_date="2026-06-24"),
+        make_job(job_key="active", potential_priority="high", score_status="provisional", enrichment_status="pending", first_seen_date="2026-06-24"),
+    ]
+    metrics = build_metrics_from_workbook(
+        jobs=jobs,
+        runs=[
+            {"run_type": "daily production", "status": "success", "finished_at": "2026-06-27T10:00:00Z"},
+            {"run_type": "workflow_validation", "status": "success", "finished_at": "2026-06-27T10:00:00Z"},
+            {"run_type": "dashboard_digest", "status": "success", "finished_at": "2026-06-27T10:00:00Z"},
+        ],
+        now="2026-06-27T12:00:00Z",
+        regression_metrics={"regression_pass_rate": 1.0},
+    )
+
+    assert metrics["high_priority_unresolved_aged"] == 3
+    assert metrics["high_priority_blocked"] == 2
+    assert metrics["high_priority_active_enrichment"] == 1
+    assert metrics["high_priority_sla_breaches"] == 0
