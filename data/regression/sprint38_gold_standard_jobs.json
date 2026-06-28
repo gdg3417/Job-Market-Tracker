@@ -1,0 +1,557 @@
+{
+  "version": "sprint38.1",
+  "description": "Sanitized gold-standard cases for lifecycle maturity, decision evidence, resolution, ranking, duplicate handling, and closure protections.",
+  "cases": [
+    {
+      "case_id": "topgolf_sr_manager_strategy",
+      "category": "Topgolf permanent regression",
+      "company": "Topgolf",
+      "title": "Sr Manager, Strategic Planning",
+      "expected": {
+        "should_ingest": true,
+        "requires_authoritative_resolution": true,
+        "authoritative_match_correct": true,
+        "evidence_should_be_accepted": true,
+        "should_be_high_potential": true,
+        "verified_strong_fit": true,
+        "should_be_closed": false,
+        "duplicate_group_correct": true
+      },
+      "actual": {
+        "ingested": true,
+        "resolved_authoritative": true,
+        "authoritative_match_accepted": true,
+        "evidence_accepted": true,
+        "high_potential": true,
+        "verified_strong_fit": true,
+        "marked_closed": false,
+        "duplicate_collapsed_correct": true,
+        "reviewed": true,
+        "applied": false,
+        "regression_passed": true
+      }
+    },
+    {
+      "case_id": "toyota_national_manager_product",
+      "category": "Toyota permanent regression",
+      "company": "Toyota North America",
+      "title": "National Manager, Product",
+      "expected": {
+        "should_ingest": true,
+        "requires_authoritative_resolution": true,
+        "authoritative_match_correct": true,
+        "evidence_should_be_accepted": true,
+        "should_be_high_potential": true,
+        "verified_strong_fit": true,
+        "should_be_closed": false,
+        "duplicate_group_correct": true
+      },
+      "actual": {
+        "ingested": true,
+        "resolved_authoritative": true,
+        "authoritative_match_accepted": true,
+        "evidence_accepted": true,
+        "high_potential": true,
+        "verified_strong_fit": true,
+        "marked_closed": false,
+        "duplicate_collapsed_correct": true,
+        "reviewed": true,
+        "applied": false,
+        "regression_passed": true
+      }
+    },
+    {
+      "case_id": "director_commercial_strategy_remote",
+      "category": "Strong strategy remote role",
+      "company": "Sanitized Manufacturing Co",
+      "title": "Director, Commercial Strategy",
+      "expected": {
+        "should_ingest": true,
+        "requires_authoritative_resolution": true,
+        "authoritative_match_correct": true,
+        "evidence_should_be_accepted": true,
+        "should_be_high_potential": true,
+        "verified_strong_fit": true,
+        "should_be_closed": false,
+        "duplicate_group_correct": true
+      },
+      "actual": {
+        "ingested": true,
+        "resolved_authoritative": true,
+        "authoritative_match_accepted": true,
+        "evidence_accepted": true,
+        "high_potential": true,
+        "verified_strong_fit": true,
+        "marked_closed": false,
+        "duplicate_collapsed_correct": true,
+        "reviewed": false,
+        "applied": false,
+        "regression_passed": true
+      }
+    },
+    {
+      "case_id": "sr_manager_business_operations",
+      "category": "Strong business operations role",
+      "company": "Sanitized Industrial Co",
+      "title": "Senior Manager, Business Operations",
+      "expected": {
+        "should_ingest": true,
+        "requires_authoritative_resolution": true,
+        "authoritative_match_correct": true,
+        "evidence_should_be_accepted": true,
+        "should_be_high_potential": true,
+        "verified_strong_fit": true,
+        "should_be_closed": false,
+        "duplicate_group_correct": true
+      },
+      "actual": {
+        "ingested": true,
+        "resolved_authoritative": true,
+        "authoritative_match_accepted": true,
+        "evidence_accepted": true,
+        "high_potential": true,
+        "verified_strong_fit": true,
+        "marked_closed": false,
+        "duplicate_collapsed_correct": true,
+        "reviewed": false,
+        "applied": false,
+        "regression_passed": true
+      }
+    },
+    {
+      "case_id": "category_management_pnl_path",
+      "category": "Product or category P&L path",
+      "company": "Sanitized Consumer Products Co",
+      "title": "Category Manager, Product Line Strategy",
+      "expected": {
+        "should_ingest": true,
+        "requires_authoritative_resolution": true,
+        "authoritative_match_correct": true,
+        "evidence_should_be_accepted": true,
+        "should_be_high_potential": true,
+        "verified_strong_fit": true,
+        "should_be_closed": false,
+        "duplicate_group_correct": true
+      },
+      "actual": {
+        "ingested": true,
+        "resolved_authoritative": true,
+        "authoritative_match_accepted": true,
+        "evidence_accepted": true,
+        "high_potential": true,
+        "verified_strong_fit": true,
+        "marked_closed": false,
+        "duplicate_collapsed_correct": true,
+        "reviewed": false,
+        "applied": false,
+        "regression_passed": true
+      }
+    },
+    {
+      "case_id": "pure_fpa_budget_forecast",
+      "category": "Pure FP&A lower priority",
+      "company": "Sanitized Services Co",
+      "title": "Finance Manager, Budget and Forecast",
+      "expected": {
+        "should_ingest": true,
+        "requires_authoritative_resolution": false,
+        "authoritative_match_correct": false,
+        "evidence_should_be_accepted": true,
+        "should_be_high_potential": false,
+        "verified_strong_fit": false,
+        "should_be_closed": false,
+        "duplicate_group_correct": true
+      },
+      "actual": {
+        "ingested": true,
+        "resolved_authoritative": false,
+        "authoritative_match_accepted": false,
+        "evidence_accepted": true,
+        "high_potential": false,
+        "verified_strong_fit": false,
+        "marked_closed": false,
+        "duplicate_collapsed_correct": true,
+        "reviewed": false,
+        "applied": false,
+        "regression_passed": true
+      }
+    },
+    {
+      "case_id": "duplicate_linkedin_gmail_same_req",
+      "category": "Duplicate from multiple sources",
+      "company": "Sanitized Platform Co",
+      "title": "Director, Revenue Operations Strategy",
+      "expected": {
+        "should_ingest": true,
+        "requires_authoritative_resolution": true,
+        "authoritative_match_correct": true,
+        "evidence_should_be_accepted": true,
+        "should_be_high_potential": true,
+        "verified_strong_fit": true,
+        "should_be_closed": false,
+        "duplicate_group_correct": true
+      },
+      "actual": {
+        "ingested": true,
+        "resolved_authoritative": true,
+        "authoritative_match_accepted": true,
+        "evidence_accepted": true,
+        "high_potential": true,
+        "verified_strong_fit": true,
+        "marked_closed": false,
+        "duplicate_collapsed_correct": true,
+        "reviewed": false,
+        "applied": false,
+        "regression_passed": true
+      }
+    },
+    {
+      "case_id": "recruiting_intermediary_strategy_post",
+      "category": "Recruiting intermediary post",
+      "company": "Confidential Client",
+      "title": "Strategy Manager",
+      "expected": {
+        "should_ingest": false,
+        "requires_authoritative_resolution": false,
+        "authoritative_match_correct": false,
+        "evidence_should_be_accepted": false,
+        "should_be_high_potential": false,
+        "verified_strong_fit": false,
+        "should_be_closed": false,
+        "duplicate_group_correct": true
+      },
+      "actual": {
+        "ingested": false,
+        "resolved_authoritative": false,
+        "authoritative_match_accepted": false,
+        "evidence_accepted": false,
+        "high_potential": false,
+        "verified_strong_fit": false,
+        "marked_closed": false,
+        "duplicate_collapsed_correct": true,
+        "reviewed": false,
+        "applied": false,
+        "regression_passed": true
+      }
+    },
+    {
+      "case_id": "generic_alert_metadata",
+      "category": "Generic job-alert metadata",
+      "company": "LinkedIn",
+      "title": "25 new jobs for strategy manager",
+      "expected": {
+        "should_ingest": false,
+        "requires_authoritative_resolution": false,
+        "authoritative_match_correct": false,
+        "evidence_should_be_accepted": false,
+        "should_be_high_potential": false,
+        "verified_strong_fit": false,
+        "should_be_closed": false,
+        "duplicate_group_correct": true
+      },
+      "actual": {
+        "ingested": false,
+        "resolved_authoritative": false,
+        "authoritative_match_accepted": false,
+        "evidence_accepted": false,
+        "high_potential": false,
+        "verified_strong_fit": false,
+        "marked_closed": false,
+        "duplicate_collapsed_correct": true,
+        "reviewed": false,
+        "applied": false,
+        "regression_passed": true
+      }
+    },
+    {
+      "case_id": "sparse_alert_needs_enrichment",
+      "category": "Sparse alert requiring enrichment",
+      "company": "Sanitized Hardware Co",
+      "title": "Senior Manager, Growth Strategy",
+      "expected": {
+        "should_ingest": true,
+        "requires_authoritative_resolution": true,
+        "authoritative_match_correct": true,
+        "evidence_should_be_accepted": true,
+        "should_be_high_potential": true,
+        "verified_strong_fit": true,
+        "should_be_closed": false,
+        "duplicate_group_correct": true
+      },
+      "actual": {
+        "ingested": true,
+        "resolved_authoritative": true,
+        "authoritative_match_accepted": true,
+        "evidence_accepted": true,
+        "high_potential": true,
+        "verified_strong_fit": true,
+        "marked_closed": false,
+        "duplicate_collapsed_correct": true,
+        "reviewed": false,
+        "applied": false,
+        "regression_passed": true
+      }
+    },
+    {
+      "case_id": "closed_posting_explicit_ats",
+      "category": "Closed posting",
+      "company": "Sanitized ATS Co",
+      "title": "Director, Business Operations",
+      "expected": {
+        "should_ingest": true,
+        "requires_authoritative_resolution": true,
+        "authoritative_match_correct": true,
+        "evidence_should_be_accepted": true,
+        "should_be_high_potential": true,
+        "verified_strong_fit": true,
+        "should_be_closed": true,
+        "duplicate_group_correct": true
+      },
+      "actual": {
+        "ingested": true,
+        "resolved_authoritative": true,
+        "authoritative_match_accepted": true,
+        "evidence_accepted": true,
+        "high_potential": true,
+        "verified_strong_fit": true,
+        "marked_closed": true,
+        "duplicate_collapsed_correct": true,
+        "reviewed": false,
+        "applied": false,
+        "regression_passed": true
+      }
+    },
+    {
+      "case_id": "reopened_requisition",
+      "category": "Reopened posting",
+      "company": "Sanitized ATS Co",
+      "title": "Director, Business Operations",
+      "expected": {
+        "should_ingest": true,
+        "requires_authoritative_resolution": true,
+        "authoritative_match_correct": true,
+        "evidence_should_be_accepted": true,
+        "should_be_high_potential": true,
+        "verified_strong_fit": true,
+        "should_be_closed": false,
+        "duplicate_group_correct": true
+      },
+      "actual": {
+        "ingested": true,
+        "resolved_authoritative": true,
+        "authoritative_match_accepted": true,
+        "evidence_accepted": true,
+        "high_potential": true,
+        "verified_strong_fit": true,
+        "marked_closed": false,
+        "duplicate_collapsed_correct": true,
+        "reviewed": false,
+        "applied": false,
+        "regression_passed": true
+      }
+    },
+    {
+      "case_id": "five_day_onsite_long_commute",
+      "category": "Five-day on-site long commute",
+      "company": "Sanitized Local Co",
+      "title": "Senior Manager, Corporate Strategy",
+      "expected": {
+        "should_ingest": true,
+        "requires_authoritative_resolution": true,
+        "authoritative_match_correct": true,
+        "evidence_should_be_accepted": true,
+        "should_be_high_potential": false,
+        "verified_strong_fit": false,
+        "should_be_closed": false,
+        "duplicate_group_correct": true
+      },
+      "actual": {
+        "ingested": true,
+        "resolved_authoritative": true,
+        "authoritative_match_accepted": true,
+        "evidence_accepted": true,
+        "high_potential": false,
+        "verified_strong_fit": false,
+        "marked_closed": false,
+        "duplicate_collapsed_correct": true,
+        "reviewed": false,
+        "applied": false,
+        "regression_passed": true
+      }
+    },
+    {
+      "case_id": "remote_confirmed_compensation",
+      "category": "Remote role confirmed compensation",
+      "company": "Sanitized Remote Co",
+      "title": "Director, Revenue Strategy",
+      "expected": {
+        "should_ingest": true,
+        "requires_authoritative_resolution": true,
+        "authoritative_match_correct": true,
+        "evidence_should_be_accepted": true,
+        "should_be_high_potential": true,
+        "verified_strong_fit": true,
+        "should_be_closed": false,
+        "duplicate_group_correct": true
+      },
+      "actual": {
+        "ingested": true,
+        "resolved_authoritative": true,
+        "authoritative_match_accepted": true,
+        "evidence_accepted": true,
+        "high_potential": true,
+        "verified_strong_fit": true,
+        "marked_closed": false,
+        "duplicate_collapsed_correct": true,
+        "reviewed": false,
+        "applied": false,
+        "regression_passed": true
+      }
+    },
+    {
+      "case_id": "estimated_compensation_not_confirmed",
+      "category": "Estimated compensation",
+      "company": "Sanitized Estimate Co",
+      "title": "Director, Strategy and Operations",
+      "expected": {
+        "should_ingest": true,
+        "requires_authoritative_resolution": true,
+        "authoritative_match_correct": true,
+        "evidence_should_be_accepted": true,
+        "should_be_high_potential": true,
+        "verified_strong_fit": false,
+        "should_be_closed": false,
+        "duplicate_group_correct": true
+      },
+      "actual": {
+        "ingested": true,
+        "resolved_authoritative": true,
+        "authoritative_match_accepted": true,
+        "evidence_accepted": true,
+        "high_potential": true,
+        "verified_strong_fit": false,
+        "marked_closed": false,
+        "duplicate_collapsed_correct": true,
+        "reviewed": false,
+        "applied": false,
+        "regression_passed": true
+      }
+    },
+    {
+      "case_id": "missing_compensation_strong_role",
+      "category": "Missing compensation strong role",
+      "company": "Sanitized Growth Co",
+      "title": "Senior Manager, Commercial Strategy",
+      "expected": {
+        "should_ingest": true,
+        "requires_authoritative_resolution": true,
+        "authoritative_match_correct": true,
+        "evidence_should_be_accepted": true,
+        "should_be_high_potential": true,
+        "verified_strong_fit": true,
+        "should_be_closed": false,
+        "duplicate_group_correct": true
+      },
+      "actual": {
+        "ingested": true,
+        "resolved_authoritative": true,
+        "authoritative_match_accepted": true,
+        "evidence_accepted": true,
+        "high_potential": true,
+        "verified_strong_fit": true,
+        "marked_closed": false,
+        "duplicate_collapsed_correct": true,
+        "reviewed": false,
+        "applied": false,
+        "regression_passed": true
+      }
+    },
+    {
+      "case_id": "ambiguous_authoritative_match",
+      "category": "Ambiguous authoritative match",
+      "company": "Sanitized Ambiguous Co",
+      "title": "Strategy Manager",
+      "expected": {
+        "should_ingest": true,
+        "requires_authoritative_resolution": true,
+        "authoritative_match_correct": false,
+        "evidence_should_be_accepted": false,
+        "should_be_high_potential": false,
+        "verified_strong_fit": false,
+        "should_be_closed": false,
+        "duplicate_group_correct": true
+      },
+      "actual": {
+        "ingested": true,
+        "resolved_authoritative": false,
+        "authoritative_match_accepted": false,
+        "evidence_accepted": false,
+        "high_potential": false,
+        "verified_strong_fit": false,
+        "marked_closed": false,
+        "duplicate_collapsed_correct": true,
+        "reviewed": false,
+        "applied": false,
+        "regression_passed": true
+      }
+    },
+    {
+      "case_id": "blocked_source_no_false_closure",
+      "category": "Blocked source",
+      "company": "Sanitized Blocked Co",
+      "title": "Director, Commercial Operations",
+      "expected": {
+        "should_ingest": true,
+        "requires_authoritative_resolution": true,
+        "authoritative_match_correct": false,
+        "evidence_should_be_accepted": false,
+        "should_be_high_potential": true,
+        "verified_strong_fit": false,
+        "should_be_closed": false,
+        "duplicate_group_correct": true
+      },
+      "actual": {
+        "ingested": true,
+        "resolved_authoritative": false,
+        "authoritative_match_accepted": false,
+        "evidence_accepted": false,
+        "high_potential": true,
+        "verified_strong_fit": false,
+        "marked_closed": false,
+        "duplicate_collapsed_correct": true,
+        "reviewed": false,
+        "applied": false,
+        "regression_passed": true
+      }
+    },
+    {
+      "case_id": "temporary_failure_no_false_closure",
+      "category": "Temporary source failure",
+      "company": "Sanitized Temporary Co",
+      "title": "Senior Manager, Revenue Strategy",
+      "expected": {
+        "should_ingest": true,
+        "requires_authoritative_resolution": true,
+        "authoritative_match_correct": false,
+        "evidence_should_be_accepted": false,
+        "should_be_high_potential": true,
+        "verified_strong_fit": false,
+        "should_be_closed": false,
+        "duplicate_group_correct": true
+      },
+      "actual": {
+        "ingested": true,
+        "resolved_authoritative": false,
+        "authoritative_match_accepted": false,
+        "evidence_accepted": false,
+        "high_potential": true,
+        "verified_strong_fit": false,
+        "marked_closed": false,
+        "duplicate_collapsed_correct": true,
+        "reviewed": false,
+        "applied": false,
+        "regression_passed": true
+      }
+    }
+  ]
+}
