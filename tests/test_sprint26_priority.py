@@ -350,6 +350,43 @@ def test_excluded_duplicate_replaces_verified_score_consistently():
 
 
 def test_sprint26_jobs_fields_are_appended_after_legacy_columns():
+    lifecycle_fields = [
+        "lifecycle_last_checked_at",
+        "lifecycle_next_check_at",
+        "lifecycle_check_count",
+        "lifecycle_miss_count",
+        "lifecycle_last_evidence_key",
+        "lifecycle_evidence_type",
+        "lifecycle_evidence_url",
+        "lifecycle_evidence_at",
+        "lifecycle_reason",
+        "lifecycle_last_authoritative_miss_date",
+    ]
+    review_fields = [
+        "review_status",
+        "reviewed_date",
+        "reviewer",
+        "interest_decision",
+        "manual_priority",
+        "manual_fit_rating",
+        "manual_authoritative_url",
+        "review_notes",
+        "follow_up_date",
+        "dismissal_reason",
+        "dismissal_detail",
+        "application_status",
+        "application_date",
+        "application_url",
+        "resume_version",
+        "cover_letter_version",
+        "referral_or_contact",
+        "interview_stage",
+        "last_application_update",
+        "next_action",
+        "next_action_date",
+        "manual_decision_conflict",
+    ]
+
     assert JOB_FIELDS[34:36] == ["created_at", "updated_at"]
     assert JOB_FIELDS[36:49] == [
         "potential_priority_score",
@@ -366,15 +403,5 @@ def test_sprint26_jobs_fields_are_appended_after_legacy_columns():
         "enrichment_source_url",
         "enrichment_match_confidence",
     ]
-    assert JOB_FIELDS[49:] == [
-        "lifecycle_last_checked_at",
-        "lifecycle_next_check_at",
-        "lifecycle_check_count",
-        "lifecycle_miss_count",
-        "lifecycle_last_evidence_key",
-        "lifecycle_evidence_type",
-        "lifecycle_evidence_url",
-        "lifecycle_evidence_at",
-        "lifecycle_reason",
-        "lifecycle_last_authoritative_miss_date",
-    ]
+    assert JOB_FIELDS[49 : 49 + len(lifecycle_fields)] == lifecycle_fields
+    assert JOB_FIELDS[-len(review_fields) :] == review_fields

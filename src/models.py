@@ -27,6 +27,13 @@ JOB_FIELDS = [
     "lifecycle_miss_count", "lifecycle_last_evidence_key", "lifecycle_evidence_type",
     "lifecycle_evidence_url", "lifecycle_evidence_at", "lifecycle_reason",
     "lifecycle_last_authoritative_miss_date",
+    "review_status", "reviewed_date", "reviewer", "interest_decision",
+    "manual_priority", "manual_fit_rating", "manual_authoritative_url",
+    "review_notes", "follow_up_date", "dismissal_reason", "dismissal_detail",
+    "application_status", "application_date", "application_url",
+    "resume_version", "cover_letter_version", "referral_or_contact",
+    "interview_stage", "last_application_update", "next_action",
+    "next_action_date", "manual_decision_conflict",
 ]
 
 VALID_JOB_STATUSES = {
@@ -52,10 +59,59 @@ VALID_ENRICHMENT_STATUSES = {
     "permanent_failure",
     "closed",
 }
+VALID_REVIEW_STATUSES = {
+    "not_reviewed",
+    "review_now",
+    "reviewing",
+    "interested",
+    "watch",
+    "deferred",
+    "dismissed",
+    "applied",
+    "interviewing",
+    "offer",
+    "rejected",
+    "withdrawn",
+    "closed",
+}
+VALID_APPLICATION_STATUSES = {
+    "",
+    "not_started",
+    "drafting",
+    "applied",
+    "interviewing",
+    "offer",
+    "rejected",
+    "withdrawn",
+    "closed",
+}
+VALID_INTEREST_DECISIONS = {"", "interested", "watch", "deferred", "dismissed", "not_interested", "applied"}
+VALID_DISMISSAL_REASONS = {
+    "",
+    "compensation_too_low",
+    "commute_too_long",
+    "on_site_requirement",
+    "wrong_seniority",
+    "role_too_junior",
+    "role_too_senior",
+    "too_much_fp_and_a",
+    "weak_p_and_l_path",
+    "weak_operating_scope",
+    "industry_excluded",
+    "company_not_attractive",
+    "benefits_not_compelling",
+    "role_closed",
+    "duplicate",
+    "recruiting_intermediary",
+    "insufficient_improvement",
+    "not_interested",
+    "other",
+}
 TERMINAL_JOB_STATUSES = {"confirmed_closed", "closed", "expired"}
 OPTIONAL_INT_FIELDS = {
     "commute_estimate_minutes", "salary_min", "salary_max", "total_comp_estimate",
-    "verified_total_score", "enrichment_match_confidence",
+    "verified_total_score", "enrichment_match_confidence", "manual_priority",
+    "manual_fit_rating",
 }
 INT_FIELDS = {
     "missed_count", "days_open", "fit_score", "p_and_l_path_score",
@@ -110,6 +166,10 @@ def _coerce_optional_int(value: Any) -> int | None:
 def _coerce_int(value: Any, default: int = 0) -> int:
     coerced = _coerce_optional_int(value)
     return default if coerced is None else coerced
+
+
+def _normalize_choice(value: Any) -> str:
+    return str(value or "").strip().lower()
 
 
 def normalize_key_part(value: Any) -> str:
@@ -232,6 +292,28 @@ class JobPosting:
     lifecycle_evidence_at: str = ""
     lifecycle_reason: str = ""
     lifecycle_last_authoritative_miss_date: str = ""
+    review_status: str = "not_reviewed"
+    reviewed_date: str = ""
+    reviewer: str = ""
+    interest_decision: str = ""
+    manual_priority: int | None = None
+    manual_fit_rating: int | None = None
+    manual_authoritative_url: str = ""
+    review_notes: str = ""
+    follow_up_date: str = ""
+    dismissal_reason: str = ""
+    dismissal_detail: str = ""
+    application_status: str = ""
+    application_date: str = ""
+    application_url: str = ""
+    resume_version: str = ""
+    cover_letter_version: str = ""
+    referral_or_contact: str = ""
+    interview_stage: str = ""
+    last_application_update: str = ""
+    next_action: str = ""
+    next_action_date: str = ""
+    manual_decision_conflict: str = ""
 
     def __post_init__(self) -> None:
         for field_name in OPTIONAL_INT_FIELDS:
@@ -269,6 +351,21 @@ class JobPosting:
             self.enrichment_status = "not_required"
         if self.enrichment_priority not in {"", "high", "medium", "low"}:
             self.enrichment_priority = ""
+
+        self.review_status = _normalize_choice(self.review_status) or "not_reviewed"
+        if self.review_status not in VALID_REVIEW_STATUSES:
+            self.review_status = "not_reviewed"
+        self.interest_decision = _normalize_choice(self.interest_decision)
+        if self.interest_decision not in VALID_INTEREST_DECISIONS:
+            self.interest_decision = ""
+        self.dismissal_reason = _normalize_choice(self.dismissal_reason)
+        if self.dismissal_reason not in VALID_DISMISSAL_REASONS:
+            self.dismissal_reason = "other" if self.dismissal_reason else ""
+        self.application_status = _normalize_choice(self.application_status)
+        if self.application_status not in VALID_APPLICATION_STATUSES:
+            self.application_status = ""
+        if not self.application_status and self.review_status in {"applied", "interviewing", "offer", "rejected", "withdrawn", "closed"}:
+            self.application_status = self.review_status
         self.days_open = days_between(self.first_seen_date, self.closed_date or self.last_seen_date)
 
     @property
