@@ -1,6 +1,6 @@
 import pytest
 
-from src.models import JOB_FIELDS, JobPosting
+from src.models import JOB_FIELDS, SPRINT_36_REVIEW_JOB_FIELDS, SPRINT_37_DECISION_JOB_FIELDS, JobPosting
 from src.review_workflow import (
     apply_review_update,
     build_feedback_metrics,
@@ -32,31 +32,12 @@ def make_job(**overrides):
     return JobPosting(**values)
 
 
-def test_review_schema_fields_are_trailing_job_fields():
-    assert JOB_FIELDS[-22:] == [
-        "review_status",
-        "reviewed_date",
-        "reviewer",
-        "interest_decision",
-        "manual_priority",
-        "manual_fit_rating",
-        "manual_authoritative_url",
-        "review_notes",
-        "follow_up_date",
-        "dismissal_reason",
-        "dismissal_detail",
-        "application_status",
-        "application_date",
-        "application_url",
-        "resume_version",
-        "cover_letter_version",
-        "referral_or_contact",
-        "interview_stage",
-        "last_application_update",
-        "next_action",
-        "next_action_date",
-        "manual_decision_conflict",
-    ]
+def test_review_schema_fields_stay_before_sprint37_decision_fields():
+    review_start = -len(SPRINT_36_REVIEW_JOB_FIELDS) - len(SPRINT_37_DECISION_JOB_FIELDS)
+    review_end = -len(SPRINT_37_DECISION_JOB_FIELDS)
+
+    assert JOB_FIELDS[review_start:review_end] == SPRINT_36_REVIEW_JOB_FIELDS
+    assert JOB_FIELDS[-len(SPRINT_37_DECISION_JOB_FIELDS):] == SPRINT_37_DECISION_JOB_FIELDS
 
 
 def test_valid_review_transition_allows_review_to_interest():

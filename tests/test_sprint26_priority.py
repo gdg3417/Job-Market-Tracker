@@ -3,7 +3,7 @@ from pathlib import Path
 
 from src.dashboard import build_dashboard_values, build_digest_rows
 from src.dedupe import merge_job
-from src.models import JOB_FIELDS, JobPosting
+from src.models import JOB_FIELDS, SPRINT_37_DECISION_JOB_FIELDS, JobPosting
 from src.normalize import normalize_raw_job
 from src.scoring import load_scoring_rules, score_job
 
@@ -404,4 +404,7 @@ def test_sprint26_jobs_fields_are_appended_after_legacy_columns():
         "enrichment_match_confidence",
     ]
     assert JOB_FIELDS[49 : 49 + len(lifecycle_fields)] == lifecycle_fields
-    assert JOB_FIELDS[-len(review_fields) :] == review_fields
+    review_start = 49 + len(lifecycle_fields)
+    review_end = review_start + len(review_fields)
+    assert JOB_FIELDS[review_start:review_end] == review_fields
+    assert JOB_FIELDS[-len(SPRINT_37_DECISION_JOB_FIELDS) :] == SPRINT_37_DECISION_JOB_FIELDS

@@ -67,8 +67,8 @@ def test_merge_preserves_stronger_existing_record():
     merged = merge_job(existing, incoming, seen_date="2026-06-26")
 
     assert merged.description_text == "Detailed recovered record."
-    assert merged.remote_status == "on-site"
-    assert merged.work_model == "on-site"
+    assert merged.remote_status == "on_site"
+    assert merged.work_model == "on_site"
     assert merged.total_score == 70
     assert merged.score_status == "partially_verified"
     assert merged.evidence_completeness_score == 80
