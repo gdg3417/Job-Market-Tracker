@@ -50,7 +50,6 @@ REVIEW_QUEUE_HEADERS = [
 
 ENRICHMENT_PROBLEM_STATUSES = {"not_found", "ambiguous", "retryable_failure", "permanent_failure"}
 REVIEW_ACTION_STATUSES = {
-    "not_reviewed",
     "review_now",
     "reviewing",
     "interested",
@@ -156,6 +155,12 @@ def should_include_review_queue_job(job: JobPosting) -> bool:
     if _has_manual_review_state(job):
         return True
 
+    if job.status in TERMINAL_JOB_STATUSES:
+        return False
+
+    if job.score_status == "excluded" and job.potential_priority == "excluded":
+        return False
+
     if job.review_status in REVIEW_ACTION_STATUSES or job.review_status in TERMINAL_REVIEW_STATUSES:
         return True
 
@@ -170,12 +175,6 @@ def should_include_review_queue_job(job: JobPosting) -> bool:
 
     if job.enrichment_status in ENRICHMENT_PROBLEM_STATUSES or job.enrichment_status in {"pending", "in_progress", "partial"}:
         return True
-
-    if job.status in TERMINAL_JOB_STATUSES:
-        return False
-
-    if job.score_status == "excluded" and job.potential_priority == "excluded":
-        return False
 
     return job.total_score >= 50
 
