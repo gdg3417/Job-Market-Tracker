@@ -148,7 +148,8 @@ cd "C:\Users\gdg34\OneDrive\Documents\GitHub\Job-Market-Tracker"
 
 git switch main
 git pull --ff-only origin main
-git switch -c sprint-39-review-ux
+git fetch origin codex/sprint-39-review-queue
+git switch codex/sprint-39-review-queue
 
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
