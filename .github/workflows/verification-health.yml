@@ -147,7 +147,11 @@ jobs:
               return total
 
           output_path = Path(os.environ["RUNNER_TEMP"]) / "verification_health.json"
-          data = load_json_output(output_path, summary_default)
+          data = load_json_output(
+              output_path,
+              summary_default,
+              required_keys=("overall_classification", "overall_score"),
+          )
           components = data.get("health_components") or []
           if not isinstance(components, list):
               components = []
