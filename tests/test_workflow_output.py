@@ -26,6 +26,35 @@ def test_load_json_output_reads_final_pretty_json_after_log_lines(tmp_path):
     }
 
 
+def test_load_json_output_reads_json_before_trailing_log_lines(tmp_path):
+    path = tmp_path / "command-output.txt"
+    payload = {
+        "status": "success",
+        "failed_messages": 0,
+        "summary": {"records": 3},
+    }
+    path.write_text(
+        "Starting workflow command.\n"
+        + json.dumps(payload, indent=2)
+        + "\nCleanup finished after summary write.\n",
+        encoding="utf-8",
+    )
+
+    assert load_json_output(path, {"status": "not_run"}) == payload
+
+
+def test_load_json_output_can_require_payload_keys(tmp_path):
+    path = tmp_path / "command-output.txt"
+    payload = {"status": "success", "records": 3}
+    diagnostic = {"diagnostic": "cleanup", "records": 99}
+    path.write_text(
+        json.dumps(payload) + "\n" + json.dumps(diagnostic),
+        encoding="utf-8",
+    )
+
+    assert load_json_output(path, required_keys=("status",)) == payload
+
+
 def test_load_json_output_ignores_braces_in_prior_log_lines(tmp_path):
     path = tmp_path / "command-output.txt"
     path.write_text(
