@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
 
-def load_json_output(path: str | Path, default: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Load the final JSON object from command output that may contain log lines."""
+def load_json_output(
+    path: str | Path,
+    default: dict[str, Any] | None = None,
+    *,
+    required_keys: Iterable[str] | None = None,
+) -> dict[str, Any]:
+    """Load a JSON object from command output that may contain log lines."""
     fallback = dict(default or {})
+    expected_keys = set(required_keys or [])
     output_path = Path(path)
     if not output_path.exists():
         return fallback
@@ -17,15 +24,24 @@ def load_json_output(path: str | Path, default: dict[str, Any] | None = None) ->
         return fallback
 
     decoder = json.JSONDecoder()
-    for index in range(len(text) - 1, -1, -1):
-        if text[index] != "{":
+    candidates: list[tuple[int, int, dict[str, Any]]] = []
+    for index, character in enumerate(text):
+        if character != "{":
             continue
         try:
             value, end_index = decoder.raw_decode(text[index:])
         except json.JSONDecodeError:
             continue
-        if text[index + end_index :].strip():
+        if not isinstance(value, dict):
             continue
-        if isinstance(value, dict):
+        if expected_keys and not expected_keys.issubset(value):
+            continue
+
+        absolute_end_index = index + end_index
+        if not text[absolute_end_index:].strip():
             return value
+        candidates.append((index, absolute_end_index, value))
+
+    if candidates:
+        return max(candidates, key=lambda candidate: (candidate[1] - candidate[0], candidate[0]))[2]
     return fallback
