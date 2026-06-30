@@ -5,6 +5,13 @@ import json
 from src.workflow_output import load_json_output
 
 
+def test_load_json_output_reads_clean_json(tmp_path):
+    path = tmp_path / "command-output.txt"
+    path.write_text(json.dumps({"status": "success", "records": 3}) + "\n", encoding="utf-8")
+
+    assert load_json_output(path) == {"status": "success", "records": 3}
+
+
 def test_load_json_output_reads_final_pretty_json_after_log_lines(tmp_path):
     path = tmp_path / "command-output.txt"
     path.write_text(
