@@ -121,10 +121,16 @@ def test_pe_backed_operating_company_with_advisory_language_is_not_rejected():
 
 def test_blocked_companies_do_not_surface_as_viable_review_queue_items():
     blocked = _score("McKinsey", title="Senior Manager, Commercial Strategy")
+    blocked.review_status = "review_now"
+    blocked.manual_priority = 99
+    blocked.application_status = "applied"
+    blocked.next_action = "Follow up"
+    blocked.next_action_date = "2024-01-01"
+
     eligible = _score("Acme Industrial", title="Senior Manager, Commercial Strategy")
     eligible.review_status = "review_now"
 
-    dashboard_rows = build_review_dashboard_sections([blocked, eligible])
+    dashboard_rows = build_review_dashboard_sections([blocked, eligible], as_of="2024-01-02")
     row_text = "\n".join(" | ".join(str(cell) for cell in row) for row in dashboard_rows)
 
     assert "Acme Industrial" in row_text
