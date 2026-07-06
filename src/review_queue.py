@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from dataclasses import asdict, dataclass
 from typing import Any
 
 from src.models import JobPosting, utc_now_iso
+from src.seniority import evaluate_seniority_fit
 from src.settings import load_settings
 from src.sheets import SheetClient, with_quota_backoff
 
@@ -15,6 +17,9 @@ REVIEW_QUEUE_HEADERS = [
     "job_key",
     "company",
     "title",
+    "role_level",
+    "seniority_fit",
+    "seniority_reason",
     "location",
     "canonical_url",
     "potential_priority",
@@ -49,18 +54,10 @@ REVIEW_QUEUE_HEADERS = [
 ]
 
 ENRICHMENT_PROBLEM_STATUSES = {"not_found", "ambiguous", "retryable_failure", "permanent_failure"}
-REVIEW_ACTION_STATUSES = {
-    "review_now",
-    "reviewing",
-    "interested",
-    "watch",
-    "deferred",
-    "applied",
-    "interviewing",
-    "offer",
-}
+REVIEW_ACTION_STATUSES = {"review_now", "reviewing", "interested", "watch", "deferred", "applied", "interviewing", "offer"}
 TERMINAL_REVIEW_STATUSES = {"dismissed", "rejected", "withdrawn", "closed"}
 TERMINAL_JOB_STATUSES = {"confirmed_closed", "closed", "expired"}
+TOO_SENIOR_QUEUE_FITS = {"too_senior", "excluded"}
 
 REVIEW_STATUS_SORT_ORDER = {
     "review_now": 0,
@@ -81,6 +78,9 @@ REVIEW_STATUS_SORT_ORDER = {
 DATE_HEADERS = {"reviewed_date", "next_action_date", "follow_up_date", "application_date"}
 WRAPPED_HEADERS = {"review_notes", "move_value_notes"}
 FILTERABLE_HEADERS = {
+    "role_level",
+    "seniority_fit",
+    "seniority_reason",
     "review_status",
     "interest_decision",
     "manual_priority",
@@ -146,36 +146,48 @@ def _has_manual_review_state(job: JobPosting) -> bool:
     )
 
 
+def _score_tag(job: JobPosting, tag_name: str) -> str:
+    pattern = re.compile(rf"(?:^|;)\s*{re.escape(tag_name)}=([^;]+)")
+    match = pattern.search(str(job.score_explanation or ""))
+    return match.group(1).strip() if match else ""
+
+
+def seniority_review_fields(job: JobPosting) -> dict[str, str]:
+    evaluated = evaluate_seniority_fit(job.title, job.role_level)
+    return {
+        "role_level": str(job.role_level or evaluated.normalized_level or ""),
+        "seniority_fit": _score_tag(job, "seniority_fit") or evaluated.seniority_fit,
+        "seniority_reason": _score_tag(job, "seniority_reason") or evaluated.reason_code,
+    }
+
+
+def _is_too_senior_for_viable_queue(job: JobPosting) -> bool:
+    return seniority_review_fields(job)["seniority_fit"] in TOO_SENIOR_QUEUE_FITS
+
+
 def should_include_review_queue_job(job: JobPosting) -> bool:
     """Return True when a Jobs row belongs on the operational review surface."""
 
     if not _has_identity(job):
         return False
-
     if _has_manual_review_state(job):
         return True
-
     if job.status in TERMINAL_JOB_STATUSES:
         return False
-
     if job.score_status == "excluded" and job.potential_priority == "excluded":
         return False
-
+    if _is_too_senior_for_viable_queue(job):
+        return False
     if job.review_status in REVIEW_ACTION_STATUSES or job.review_status in TERMINAL_REVIEW_STATUSES:
         return True
-
     if job.application_status in {"applied", "interviewing", "offer"}:
         return True
-
     if job.potential_priority in {"high", "medium"}:
         return True
-
     if job.score_status in {"verified", "partially_verified"}:
         return True
-
     if job.enrichment_status in ENRICHMENT_PROBLEM_STATUSES or job.enrichment_status in {"pending", "in_progress", "partial"}:
         return True
-
     return job.total_score >= 50
 
 
@@ -213,7 +225,7 @@ def _cell(value: Any) -> Any:
 
 
 def job_to_review_queue_row(job: JobPosting) -> list[Any]:
-    values = job.to_dict()
+    values = job.to_dict() | seniority_review_fields(job)
     return [_cell(values.get(header, "")) for header in REVIEW_QUEUE_HEADERS]
 
 
@@ -238,7 +250,6 @@ def _worksheet_id(sheet_client: SheetClient, worksheet: Any, worksheet_name: str
     worksheet_id = getattr(worksheet, "id", None)
     if worksheet_id is not None:
         return int(worksheet_id)
-
     metadata = with_quota_backoff(lambda: sheet_client.workbook.fetch_sheet_metadata(), operation_name="fetch workbook metadata")
     for sheet in metadata.get("sheets", []):
         properties = sheet.get("properties") or {}
@@ -290,10 +301,7 @@ def _base_filter_and_freeze_requests(
             "updateSheetProperties": {
                 "properties": {
                     "sheetId": sheet_id,
-                    "gridProperties": {
-                        "frozenRowCount": frozen_row_count,
-                        "frozenColumnCount": frozen_column_count,
-                    },
+                    "gridProperties": {"frozenRowCount": frozen_row_count, "frozenColumnCount": frozen_column_count},
                 },
                 "fields": "gridProperties.frozenRowCount,gridProperties.frozenColumnCount",
             }
@@ -308,7 +316,7 @@ def _review_queue_formatting_requests(sheet_id: int, row_count: int) -> list[dic
         row_count=row_count,
         column_count=len(REVIEW_QUEUE_HEADERS),
         frozen_row_count=1,
-        frozen_column_count=5,
+        frozen_column_count=7,
     )
     requests.append(
         {
@@ -319,26 +327,17 @@ def _review_queue_formatting_requests(sheet_id: int, row_count: int) -> list[dic
             }
         }
     )
-
     for header in WRAPPED_HEADERS:
         index = REVIEW_QUEUE_HEADERS.index(header)
         requests.append(_repeat_cell_request(sheet_id, index, index + 1, {"wrapStrategy": "WRAP"}))
-
     for header in DATE_HEADERS.intersection(REVIEW_QUEUE_HEADERS):
         index = REVIEW_QUEUE_HEADERS.index(header)
-        requests.append(
-            _repeat_cell_request(
-                sheet_id,
-                index,
-                index + 1,
-                {"numberFormat": {"type": "DATE", "pattern": "yyyy-mm-dd"}},
-            )
-        )
-
+        requests.append(_repeat_cell_request(sheet_id, index, index + 1, {"numberFormat": {"type": "DATE", "pattern": "yyyy-mm-dd"}}))
     widths = {
         "job_key": 190,
         "company": 160,
         "title": 280,
+        "seniority_reason": 230,
         "location": 180,
         "canonical_url": 120,
         "manual_authoritative_url": 120,
@@ -350,7 +349,6 @@ def _review_queue_formatting_requests(sheet_id: int, row_count: int) -> list[dic
     for header, width in widths.items():
         index = REVIEW_QUEUE_HEADERS.index(header)
         requests.append(_dimension_width_request(sheet_id, index, index + 1, width))
-
     return requests
 
 
@@ -365,9 +363,8 @@ def _jobs_filter_and_freeze_requests(sheet_id: int, row_count: int, column_count
 
 
 def _apply_batch_requests(sheet_client: SheetClient, requests: list[dict[str, Any]], operation_name: str) -> None:
-    if not requests:
-        return
-    with_quota_backoff(lambda: sheet_client.workbook.batch_update({"requests": requests}), operation_name=operation_name)
+    if requests:
+        with_quota_backoff(lambda: sheet_client.workbook.batch_update({"requests": requests}), operation_name=operation_name)
 
 
 def write_review_queue_values(sheet_client: SheetClient, values: list[list[Any]]) -> Any:
@@ -387,39 +384,27 @@ def apply_review_queue(sheet_client: SheetClient) -> ReviewQueueResult:
     jobs = [job for _, job in jobs_with_rows]
     values = build_review_queue_values(jobs)
     worksheet = write_review_queue_values(sheet_client, values)
-
     warnings: list[str] = []
     review_filter_applied = False
     review_freeze_applied = False
     jobs_filter_applied = False
     jobs_freeze_applied = False
-
     try:
         review_sheet_id = _worksheet_id(sheet_client, worksheet, REVIEW_QUEUE_SHEET)
-        _apply_batch_requests(
-            sheet_client,
-            _review_queue_formatting_requests(review_sheet_id, len(values)),
-            "format Review_Queue worksheet",
-        )
+        _apply_batch_requests(sheet_client, _review_queue_formatting_requests(review_sheet_id, len(values)), "format Review_Queue worksheet")
         review_filter_applied = True
         review_freeze_applied = True
     except Exception as exc:  # pragma: no cover, exercised by live Sheets only
         warnings.append(f"Review_Queue formatting was not applied: {exc}")
-
     try:
         jobs_worksheet = sheet_client.get_worksheet("Jobs")
         jobs_sheet_id = _worksheet_id(sheet_client, jobs_worksheet, "Jobs")
         jobs_headers = sheet_client.worksheet_headers("Jobs")
-        _apply_batch_requests(
-            sheet_client,
-            _jobs_filter_and_freeze_requests(jobs_sheet_id, len(jobs_with_rows) + 1, len(jobs_headers)),
-            "format Jobs worksheet",
-        )
+        _apply_batch_requests(sheet_client, _jobs_filter_and_freeze_requests(jobs_sheet_id, len(jobs_with_rows) + 1, len(jobs_headers)), "format Jobs worksheet")
         jobs_filter_applied = True
         jobs_freeze_applied = True
     except Exception as exc:  # pragma: no cover, exercised by live Sheets only
         warnings.append(f"Jobs freeze or filter formatting was not applied: {exc}")
-
     return ReviewQueueResult(
         jobs_read=len(jobs),
         review_queue_rows=max(0, len(values) - 1),
