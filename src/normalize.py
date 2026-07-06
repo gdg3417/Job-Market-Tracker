@@ -7,6 +7,7 @@ from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from src.models import JobPosting, normalize_key_part, today_iso
+from src.seniority import evaluate_seniority_fit
 
 TRACKING_PREFIXES = ("utm_",)
 TRACKING_PARAMS = {"gh_src", "lever-source", "source", "ref", "referrer"}
@@ -109,24 +110,7 @@ def infer_work_model(title: str, location: str, description: str) -> tuple[str, 
 
 
 def infer_role_level(title: str) -> str:
-    text = title.lower()
-    if re.search(r"\b(vp|vice president|svp|evp)\b", text):
-        return "VP"
-    if "director" in text or "head of" in text:
-        return "Director"
-    if "senior manager" in text or "sr manager" in text or "sr. manager" in text:
-        return "Senior Manager"
-    if "manager" in text:
-        return "Manager"
-    if "principal" in text:
-        return "Principal"
-    if "lead" in text:
-        return "Lead"
-    if "senior" in text or "sr " in text or "sr." in text:
-        return "Senior"
-    if "analyst" in text:
-        return "Analyst"
-    return "Unknown"
+    return evaluate_seniority_fit(title).normalized_level
 
 
 def infer_role_family(title: str, description: str = "") -> str:
