@@ -344,8 +344,18 @@ def build_calibration_report_rows(jobs: list[JobPosting], target_company_rows: l
     return rows
 
 
+def _is_excluded_from_review_queue(job: JobPosting) -> bool:
+    explanation = str(job.score_explanation or "").lower()
+    return (
+        job.alert_tier == "exclude"
+        or job.score_status == "excluded"
+        or job.verified_alert_tier == "exclude"
+        or "hard_exclude=true" in explanation
+    )
+
+
 def _is_open_for_review(job: JobPosting) -> bool:
-    return job.status in {"open", "reopened", "not_seen_once", "likely_closed"}
+    return job.status in {"open", "reopened", "not_seen_once", "likely_closed"} and not _is_excluded_from_review_queue(job)
 
 
 def _format_job_row(job: JobPosting) -> list[Any]:
@@ -379,7 +389,8 @@ def _queue_rows(title: str, jobs: list[JobPosting], empty_label: str, limit: int
 
 def build_review_dashboard_sections(jobs: list[JobPosting], *, as_of: str | None = None) -> list[list[Any]]:
     as_of_date = parse_iso_date(as_of) or parse_iso_date(today_iso())
-    open_jobs = [job for job in jobs if _is_open_for_review(job)]
+    visible_jobs = [job for job in jobs if not _is_excluded_from_review_queue(job)]
+    open_jobs = [job for job in visible_jobs if _is_open_for_review(job)]
 
     def due(value: str) -> bool:
         date_value = parse_iso_date(value)
@@ -388,11 +399,11 @@ def build_review_dashboard_sections(jobs: list[JobPosting], *, as_of: str | None
     review_now = [job for job in open_jobs if job.review_status in {"review_now", "reviewing"} or (job.review_status == "not_reviewed" and job.manual_priority is not None)]
     interested = [job for job in open_jobs if job.review_status == "interested"]
     deferred = [job for job in open_jobs if job.review_status == "deferred" and due(job.follow_up_date)]
-    submitted = [job for job in jobs if job.review_status == "applied" or job.application_status == "applied"]
-    interviews = [job for job in jobs if job.review_status == "interviewing" or job.application_status == "interviewing"]
-    offers = [job for job in jobs if job.review_status == "offer" or job.application_status == "offer"]
+    submitted = [job for job in visible_jobs if job.review_status == "applied" or job.application_status == "applied"]
+    interviews = [job for job in visible_jobs if job.review_status == "interviewing" or job.application_status == "interviewing"]
+    offers = [job for job in visible_jobs if job.review_status == "offer" or job.application_status == "offer"]
     stale_apps = [job for job in submitted if due(job.next_action_date)]
-    upcoming = [job for job in jobs if job.next_action and due(job.next_action_date)]
+    upcoming = [job for job in visible_jobs if job.next_action and due(job.next_action_date)]
 
     rows: list[list[Any]] = [
         ["Metric", "Count", "Meaning"],
