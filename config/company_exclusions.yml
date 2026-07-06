@@ -1,0 +1,89 @@
+company_exclusions:
+  reason_code: blocked_company
+  blocked_companies:
+    - canonical_name: Gartner
+      category: blocked_company
+      aliases:
+        - Gartner
+        - Gartner Inc
+        - Gartner, Inc.
+    - canonical_name: Swooped
+      category: blocked_company
+      aliases:
+        - Swooped
+    - canonical_name: Deloitte
+      category: consulting_firm
+      aliases:
+        - Deloitte
+        - Deloitte Consulting
+        - Deloitte Consulting LLP
+        - Deloitte LLP
+        - Deloitte & Touche
+        - Deloitte Tax
+    - canonical_name: EY
+      category: consulting_firm
+      aliases:
+        - EY
+        - E.Y.
+        - Ernst & Young
+        - Ernst and Young
+        - EY-Parthenon
+        - EY Parthenon
+    - canonical_name: Alvarez & Marsal
+      category: consulting_firm
+      aliases:
+        - Alvarez & Marsal
+        - Alvarez and Marsal
+        - A&M
+        - A and M
+        - A&M PEPI
+        - Alvarez & Marsal PEPI
+    - canonical_name: KPMG
+      category: consulting_firm
+      aliases:
+        - KPMG
+        - KPMG US
+        - KPMG LLP
+    - canonical_name: Bain & Company
+      category: consulting_firm
+      aliases:
+        - Bain
+        - Bain & Company
+        - Bain and Company
+        - Bain Consulting
+    - canonical_name: Boston Consulting Group
+      category: consulting_firm
+      aliases:
+        - BCG
+        - Boston Consulting Group
+        - BCG X
+    - canonical_name: McKinsey & Company
+      category: consulting_firm
+      aliases:
+        - McKinsey
+        - McKinsey & Company
+        - McKinsey and Company
+    - canonical_name: Accenture
+      category: consulting_firm
+      aliases:
+        - Accenture
+        - Accenture Strategy
+    - canonical_name: PwC
+      category: consulting_firm
+      aliases:
+        - PwC
+        - PWC
+        - PricewaterhouseCoopers
+        - Pricewaterhouse Coopers
+        - PwC Advisory
+    - canonical_name: Oliver Wyman
+      category: consulting_firm
+      aliases:
+        - Oliver Wyman
+    - canonical_name: L.E.K. Consulting
+      category: consulting_firm
+      aliases:
+        - LEK
+        - LEK Consulting
+        - L.E.K.
+        - L.E.K. Consulting

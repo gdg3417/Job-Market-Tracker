@@ -6,6 +6,7 @@ from typing import Any
 
 import yaml
 
+from src.company_exclusions import evaluate_company_exclusion, load_company_exclusions
 from src.models import JobPosting
 from src.potential_priority import apply_potential_priority, load_potential_priority_rules
 from src.verified_scoring import finalize_verified_scoring
@@ -40,6 +41,10 @@ def load_scoring_rules(path: str | Path) -> dict[str, Any]:
     potential_rules_path = rules_path.with_name("potential_priority_rules.yml")
     rules["potential_priority"] = (
         load_potential_priority_rules(potential_rules_path) if potential_rules_path.exists() else {}
+    )
+    company_exclusions_path = rules_path.with_name("company_exclusions.yml")
+    rules["company_exclusions"] = (
+        load_company_exclusions(company_exclusions_path) if company_exclusions_path.exists() else {"blocked_companies": []}
     )
     rules["verified_scoring"] = dict((rules["potential_priority"] or {}).get("verified_scoring") or {})
     return rules
@@ -301,7 +306,76 @@ def _explain(label: str, score: int, evidence: list[str] | str | None = None) ->
     return f"{label}={score}"
 
 
+def _apply_company_exclusion(
+    job: JobPosting,
+    rules: dict[str, Any],
+    company_context: dict[str, Any] | None,
+    *,
+    canonical_name: str,
+    matched_alias: str,
+    reason_code: str,
+    category: str,
+) -> JobPosting:
+    alert_tier = str(rules.get("alert_tiers", {}).get("hard_exclude", "exclude"))
+    job.fit_score = 0
+    job.p_and_l_path_score = 0
+    job.growth_ownership_score = 0
+    job.executive_exposure_score = 0
+    job.operating_cadence_score = 0
+    job.comp_score = 0
+    job.location_score = 0
+    job.industry_match_score = 0
+    job.total_score = 0
+    job.alert_tier = alert_tier
+    job.score_explanation = "; ".join(
+        [
+            "total=0",
+            f"tier={alert_tier}",
+            "fit=0",
+            "p_and_l=0",
+            "growth=0",
+            "executive=0",
+            "cadence=0",
+            "comp=0",
+            "location=0",
+            "industry=0",
+            "company_exclusion=true",
+            f"company_exclusion_reason={reason_code}",
+            f"company_exclusion_category={category}",
+            f"company_exclusion_match={canonical_name}",
+            f"company_exclusion_alias={matched_alias}",
+            "hard_exclude=true",
+        ]
+    )
+    apply_potential_priority(
+        job,
+        rules.get("potential_priority", {}) or {},
+        company_context=company_context,
+        hard_exclude=True,
+    )
+    finalize_verified_scoring(
+        job,
+        rules,
+        company_context=company_context,
+        hard_exclude=True,
+    )
+    job.refresh_updated_at()
+    return job
+
+
 def score_job(job: JobPosting, rules: dict[str, Any], company_context: dict[str, Any] | None = None) -> JobPosting:
+    company_exclusion = evaluate_company_exclusion(job.company, rules.get("company_exclusions", {}) or {})
+    if company_exclusion.blocked:
+        return _apply_company_exclusion(
+            job,
+            rules,
+            company_context,
+            canonical_name=company_exclusion.canonical_name,
+            matched_alias=company_exclusion.matched_alias,
+            reason_code=company_exclusion.reason_code,
+            category=company_exclusion.category,
+        )
+
     job_text = _text_for_job(job)
     weights = rules.get("category_weights", {})
     targets = rules.get("category_match_targets", {})
