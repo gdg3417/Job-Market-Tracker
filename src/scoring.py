@@ -9,16 +9,30 @@ import yaml
 from src.company_exclusions import evaluate_company_exclusion, load_company_exclusions
 from src.models import JobPosting
 from src.potential_priority import apply_potential_priority, load_potential_priority_rules
+from src.seniority import SeniorityEvaluation, evaluate_seniority_fit
 from src.verified_scoring import finalize_verified_scoring
 
 ScoreMatch = tuple[int, list[str]]
 DEFAULT_SPARSE_GMAIL_REVIEW_REASON = "sparse_gmail_high_signal_title"
 DEFAULT_GENERIC_GMAIL_DESCRIPTION_PREFIXES = ["Extracted from Gmail job alert"]
 DEFAULT_INCOMPLETE_WORK_MODEL_VALUES = {"", "unknown", "unspecified", "not specified", "n/a", "na", "none"}
-COMPANY_CONTEXT_SCORING_FIELDS = (
-    "industry_bucket",
-    "ownership_type",
-    "company_size_bucket",
+COMPANY_CONTEXT_SCORING_FIELDS = ("industry_bucket", "ownership_type", "company_size_bucket")
+DEFAULT_SENIORITY_FIT_SCORES = {
+    "target": 15,
+    "stretch": 12,
+    "context_dependent": 12,
+    "manual_review": 8,
+    "too_senior": 0,
+    "too_junior": 1,
+    "excluded": 0,
+    "unknown": 0,
+}
+SENIORITY_MODEL_TAG_PREFIXES = (
+    "potential_priority=",
+    "potential_priority_score=",
+    "seniority_fit=",
+    "seniority_reason=",
+    "seniority_penalty=",
 )
 
 
@@ -31,6 +45,7 @@ def load_scoring_rules(path: str | Path) -> dict[str, Any]:
     rules.setdefault("positive_keywords", {})
     rules.setdefault("negative_keywords", {})
     rules.setdefault("sparse_gmail_review", {})
+    rules.setdefault("seniority_fit_scores", dict(DEFAULT_SENIORITY_FIT_SCORES))
     sparse_rules_path = rules_path.with_name("sparse_gmail_review.yml")
     if sparse_rules_path.exists():
         with sparse_rules_path.open("r", encoding="utf-8") as file:
@@ -39,13 +54,9 @@ def load_scoring_rules(path: str | Path) -> dict[str, Any]:
         if isinstance(sparse_values, dict):
             rules["sparse_gmail_review"].update(sparse_values)
     potential_rules_path = rules_path.with_name("potential_priority_rules.yml")
-    rules["potential_priority"] = (
-        load_potential_priority_rules(potential_rules_path) if potential_rules_path.exists() else {}
-    )
+    rules["potential_priority"] = load_potential_priority_rules(potential_rules_path) if potential_rules_path.exists() else {}
     company_exclusions_path = rules_path.with_name("company_exclusions.yml")
-    rules["company_exclusions"] = (
-        load_company_exclusions(company_exclusions_path) if company_exclusions_path.exists() else {"blocked_companies": []}
-    )
+    rules["company_exclusions"] = load_company_exclusions(company_exclusions_path) if company_exclusions_path.exists() else {"blocked_companies": []}
     rules["verified_scoring"] = dict((rules["potential_priority"] or {}).get("verified_scoring") or {})
     return rules
 
@@ -61,22 +72,15 @@ def _as_text(value: Any) -> str:
 
 
 def _text_for_job(job: JobPosting) -> str:
-    parts = [
-        job.title,
-        job.role_family,
-        job.role_level,
-        job.description_text,
-    ]
-    return re.sub(r"\s+", " ", " ".join(parts)).strip().lower()
+    return re.sub(r"\s+", " ", " ".join([job.title, job.role_family, job.role_level, job.description_text])).strip().lower()
 
 
 def _contains_phrase(text: str, phrase: str) -> bool:
-    phrase_text = phrase.strip().lower()
+    phrase_text = str(phrase or "").strip().lower()
     if not phrase_text:
         return False
     if re.match(r"^[a-z0-9 ]+$", phrase_text):
-        pattern = r"(?<![a-z0-9])" + re.escape(phrase_text) + r"(?![a-z0-9])"
-        return re.search(pattern, text) is not None
+        return re.search(r"(?<![a-z0-9])" + re.escape(phrase_text) + r"(?![a-z0-9])", text) is not None
     return phrase_text in text
 
 
@@ -96,7 +100,6 @@ def _gmail_description_is_generic(description: str, review_rules: dict[str, Any]
     normalized = re.sub(r"\s+", " ", str(description or "")).strip().lower()
     if not normalized:
         return True
-
     prefixes = list(review_rules.get("generic_description_prefixes") or DEFAULT_GENERIC_GMAIL_DESCRIPTION_PREFIXES)
     matched_prefix = False
     remainder = normalized
@@ -107,7 +110,6 @@ def _gmail_description_is_generic(description: str, review_rules: dict[str, Any]
             remainder = remainder.replace(prefix_text, " ")
     if not matched_prefix:
         return False
-
     remainder = re.sub(
         r"\b(?:confidence|origin|extraction|linkedin_job_id|job_id)\s*=\s*[^;,.\s]+[;,.]?",
         " ",
@@ -119,10 +121,7 @@ def _gmail_description_is_generic(description: str, review_rules: dict[str, Any]
 
 
 def _work_model_is_incomplete(job: JobPosting, review_rules: dict[str, Any]) -> bool:
-    values = {
-        str(value).strip().lower()
-        for value in (review_rules.get("incomplete_work_model_values") or DEFAULT_INCOMPLETE_WORK_MODEL_VALUES)
-    }
+    values = {str(value).strip().lower() for value in (review_rules.get("incomplete_work_model_values") or DEFAULT_INCOMPLETE_WORK_MODEL_VALUES)}
     return str(job.remote_status or "").strip().lower() in values or str(job.work_model or "").strip().lower() in values
 
 
@@ -141,7 +140,6 @@ def sparse_gmail_review_reason(job: JobPosting, rules: dict[str, Any]) -> str:
     review_rules = rules.get("sparse_gmail_review", {}) or {}
     if not is_sparse_gmail_record(job, rules):
         return ""
-
     title_text = str(job.title or "").strip().lower()
     priority_matches = _matching_keywords(title_text, list(review_rules.get("priority_title_phrases") or []))
     seniority_matches = _matching_keywords(title_text, list(review_rules.get("seniority_phrases") or []))
@@ -159,16 +157,21 @@ def _weighted_keyword_score(text: str, keywords: list[str], max_points: int, tar
     return min(max_points, score), matches
 
 
-def _score_fit(job: JobPosting, text: str, rules: dict[str, Any]) -> tuple[int, list[str]]:
+def _safe_int(value: Any, default: int = 0) -> int:
+    if value in (None, ""):
+        return default
+    try:
+        return int(float(str(value).replace(",", "").strip()))
+    except (TypeError, ValueError):
+        return default
+
+
+def _score_fit(job: JobPosting, text: str, rules: dict[str, Any], seniority: SeniorityEvaluation) -> tuple[int, list[str]]:
     weights = rules.get("category_weights", {})
     max_points = int(weights.get("fit_score", weights.get("role_level_score", 15)))
-    role_level_score = 0
-    role_level_match = ""
-    title_and_level = f"{job.title} {job.role_level}".lower()
-    for keyword, points in rules.get("role_level_keywords", {}).items():
-        if _contains_phrase(title_and_level, str(keyword)) and int(points) > role_level_score:
-            role_level_score = int(points)
-            role_level_match = str(keyword)
+    configured_scores = dict(DEFAULT_SENIORITY_FIT_SCORES)
+    configured_scores.update(rules.get("seniority_fit_scores", {}) or {})
+    role_level_score = min(max_points, _safe_int(configured_scores.get(seniority.seniority_fit), 0))
     family_score = int(rules.get("role_family_fit", {}).get(job.role_family, 0))
     family_matches: list[str] = []
     for family, keywords in rules.get("role_family_keywords", {}).items():
@@ -179,9 +182,7 @@ def _score_fit(job: JobPosting, text: str, rules: dict[str, Any]) -> tuple[int, 
     leadership_matches = _matching_keywords(text, list(rules.get("team_leadership_keywords", []) or []))
     leadership_score = min(2, len(leadership_matches))
     score = min(max_points, role_level_score + family_score + leadership_score)
-    evidence = []
-    if role_level_match:
-        evidence.append(role_level_match)
+    evidence = [seniority.reason_code]
     if job.role_family and job.role_family != "Unknown":
         evidence.append(job.role_family)
     evidence.extend(family_matches[:4])
@@ -306,6 +307,41 @@ def _explain(label: str, score: int, evidence: list[str] | str | None = None) ->
     return f"{label}={score}"
 
 
+def _replace_model_tags(explanation: str, replacement_tags: list[str]) -> str:
+    parts = [part.strip() for part in str(explanation or "").split(";") if part.strip()]
+    retained = [part for part in parts if not part.startswith(SENIORITY_MODEL_TAG_PREFIXES)]
+    return "; ".join([*retained, *replacement_tags])
+
+
+def _apply_seniority_priority_override(job: JobPosting, seniority: SeniorityEvaluation) -> None:
+    if seniority.hard_exclude:
+        job.potential_priority_score = 0
+        job.potential_priority = "excluded"
+        job.potential_priority_reason = f"hard exclusion; seniority={seniority.reason_code}"
+        job.enrichment_status = "not_required"
+        job.enrichment_priority = ""
+    elif seniority.seniority_fit == "too_senior":
+        job.potential_priority_score = min(int(job.potential_priority_score or 0), 20)
+        job.potential_priority = "low"
+        reason = f"seniority={seniority.reason_code}; too senior for normal viable queue"
+        job.potential_priority_reason = "; ".join(part for part in [reason, job.potential_priority_reason] if part)
+        if job.enrichment_status in {"", "not_required", "pending", "closed"}:
+            job.enrichment_status = "not_required"
+            job.enrichment_priority = ""
+    else:
+        return
+    job.score_explanation = _replace_model_tags(
+        job.score_explanation,
+        [
+            f"potential_priority={job.potential_priority}",
+            f"potential_priority_score={job.potential_priority_score}",
+            f"seniority_fit={seniority.seniority_fit}",
+            f"seniority_reason={seniority.reason_code}",
+            f"seniority_penalty={seniority.score_penalty}",
+        ],
+    )
+
+
 def _apply_company_exclusion(
     job: JobPosting,
     rules: dict[str, Any],
@@ -347,18 +383,8 @@ def _apply_company_exclusion(
             "hard_exclude=true",
         ]
     )
-    apply_potential_priority(
-        job,
-        rules.get("potential_priority", {}) or {},
-        company_context=company_context,
-        hard_exclude=True,
-    )
-    finalize_verified_scoring(
-        job,
-        rules,
-        company_context=company_context,
-        hard_exclude=True,
-    )
+    apply_potential_priority(job, rules.get("potential_priority", {}) or {}, company_context=company_context, hard_exclude=True)
+    finalize_verified_scoring(job, rules, company_context=company_context, hard_exclude=True)
     job.refresh_updated_at()
     return job
 
@@ -376,12 +402,14 @@ def score_job(job: JobPosting, rules: dict[str, Any], company_context: dict[str,
             category=company_exclusion.category,
         )
 
+    seniority = evaluate_seniority_fit(job.title, job.role_level, company_context)
+    job.role_level = seniority.normalized_level
     job_text = _text_for_job(job)
     weights = rules.get("category_weights", {})
     targets = rules.get("category_match_targets", {})
     positive = rules.get("positive_keywords", {})
 
-    fit_score, fit_evidence = _score_fit(job, job_text, rules)
+    fit_score, fit_evidence = _score_fit(job, job_text, rules, seniority)
     p_and_l_score, p_and_l_matches = _weighted_keyword_score(
         job_text,
         list(positive.get("p_and_l_path", []) or []),
@@ -410,22 +438,14 @@ def score_job(job: JobPosting, rules: dict[str, Any], company_context: dict[str,
     location_score, location_evidence = _score_location(job, rules)
     industry_score, industry_matches = _score_company_context(company_context, rules)
     penalty, penalty_matches, hard_exclude = _negative_penalty(job_text, rules)
-
-    raw_total = sum(
-        [
-            fit_score,
-            p_and_l_score,
-            growth_score,
-            executive_score,
-            cadence_score,
-            comp_score,
-            location_score,
-            industry_score,
-        ]
-    )
+    if seniority.score_penalty:
+        penalty += seniority.score_penalty
+        penalty_matches.append(seniority.reason_code)
+    if seniority.hard_exclude:
+        hard_exclude = True
+    raw_total = sum([fit_score, p_and_l_score, growth_score, executive_score, cadence_score, comp_score, location_score, industry_score])
     total = 0 if hard_exclude else max(0, min(int(rules.get("score_scale", 100)), raw_total - penalty))
     alert_tier = _alert_tier(total, hard_exclude, rules)
-
     explanation_parts = [
         f"total={total}",
         f"tier={alert_tier}",
@@ -437,6 +457,9 @@ def score_job(job: JobPosting, rules: dict[str, Any], company_context: dict[str,
         _explain("comp", comp_score, comp_evidence),
         _explain("location", location_score, location_evidence),
         _explain("industry", industry_score, industry_matches),
+        f"seniority_fit={seniority.seniority_fit}",
+        f"seniority_reason={seniority.reason_code}",
+        f"seniority_penalty={seniority.score_penalty}",
     ]
     if penalty_matches:
         explanation_parts.append(f"penalty={penalty} ({', '.join(penalty_matches[:5])})")
@@ -444,9 +467,10 @@ def score_job(job: JobPosting, rules: dict[str, Any], company_context: dict[str,
         explanation_parts.append("hard_exclude=true")
     else:
         review_reason = sparse_gmail_review_reason(job, rules)
+        if seniority.manual_review:
+            review_reason = seniority.reason_code
         if review_reason:
             explanation_parts.extend(["manual_review=true", f"review_reason={review_reason}"])
-
     job.fit_score = fit_score
     job.p_and_l_path_score = p_and_l_score
     job.growth_ownership_score = growth_score
@@ -458,17 +482,8 @@ def score_job(job: JobPosting, rules: dict[str, Any], company_context: dict[str,
     job.total_score = total
     job.alert_tier = alert_tier
     job.score_explanation = "; ".join(explanation_parts)
-    apply_potential_priority(
-        job,
-        rules.get("potential_priority", {}) or {},
-        company_context=company_context,
-        hard_exclude=hard_exclude,
-    )
-    finalize_verified_scoring(
-        job,
-        rules,
-        company_context=company_context,
-        hard_exclude=hard_exclude,
-    )
+    apply_potential_priority(job, rules.get("potential_priority", {}) or {}, company_context=company_context, hard_exclude=hard_exclude)
+    _apply_seniority_priority_override(job, seniority)
+    finalize_verified_scoring(job, rules, company_context=company_context, hard_exclude=hard_exclude)
     job.refresh_updated_at()
     return job
