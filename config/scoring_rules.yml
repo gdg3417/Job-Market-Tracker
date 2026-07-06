@@ -20,6 +20,15 @@ category_match_targets:
   growth_ownership_score: 3
   executive_exposure_score: 2
   operating_cadence_score: 2
+seniority_fit_scores:
+  target: 15
+  stretch: 12
+  context_dependent: 12
+  manual_review: 8
+  too_senior: 0
+  too_junior: 1
+  excluded: 0
+  unknown: 0
 role_family_keywords:
   Commercial Strategy:
     - commercial strategy
@@ -113,17 +122,20 @@ role_family_fit:
   Finance Transformation: 4
   FP&A: 1
 role_level_keywords:
-  SVP: 15
-  VP: 15
-  Vice President: 15
-  Head of: 15
-  Director: 15
-  Senior Manager: 12
-  Sr Manager: 12
-  Manager: 9
+  Senior Manager: 15
+  Sr Manager: 15
+  Manager: 15
+  Director: 12
+  Head of: 8
+  Senior Director: 0
+  Sr Director: 0
+  VP: 0
+  Vice President: 0
+  SVP: 0
+  EVP: 0
   Principal: 7
   Lead: 7
-  Senior: 5
+  Senior: 3
 team_leadership_keywords:
   - direct reports
   - people manager
@@ -258,8 +270,6 @@ negative_keywords:
     - top companies
     - resume builder
   penalties:
-    controller-only: 35
-    controller: 25
     audit: 20
     SEC reporting: 20
     SOX: 20
