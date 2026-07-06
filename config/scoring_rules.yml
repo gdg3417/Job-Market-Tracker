@@ -270,6 +270,8 @@ negative_keywords:
     - top companies
     - resume builder
   penalties:
+    controller-only: 35
+    controller: 25
     audit: 20
     SEC reporting: 20
     SOX: 20
