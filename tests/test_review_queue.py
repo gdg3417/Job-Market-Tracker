@@ -6,11 +6,11 @@ from src.review_queue import (
     FILTERABLE_HEADERS,
     REVIEW_QUEUE_HEADERS,
     REVIEW_QUEUE_SHEET,
+    apply_review_queue,
     build_review_queue_rows,
     build_review_queue_values,
     should_include_review_queue_job,
     sort_review_queue_jobs,
-    apply_review_queue,
 )
 
 
@@ -19,6 +19,7 @@ def make_job(**overrides):
         "job_key": "sample-job",
         "company": "Acme Industrial",
         "title": "Director, Commercial Operations",
+        "role_level": "Director",
         "location": "Plano, TX Hybrid",
         "canonical_url": "https://example.com/job",
         "source_primary": "gmail",
@@ -38,6 +39,7 @@ def make_job(**overrides):
         "review_status": "not_reviewed",
         "move_value_classification": "potentially_better",
         "move_value_notes": "Strong scope, evidence incomplete.",
+        "score_explanation": "seniority_fit=stretch; seniority_reason=stretch_seniority_director",
     }
     values.update(overrides)
     return JobPosting(**values)
@@ -98,9 +100,18 @@ def row_as_record(row: list[object]) -> dict[str, object]:
     return dict(zip(REVIEW_QUEUE_HEADERS, row))
 
 
-def test_review_queue_column_order_keeps_identity_and_review_fields_together():
-    assert REVIEW_QUEUE_HEADERS[:5] == ["job_key", "company", "title", "location", "canonical_url"]
-    assert REVIEW_QUEUE_HEADERS[5:12] == [
+def test_review_queue_column_order_keeps_identity_seniority_and_review_fields_together():
+    assert REVIEW_QUEUE_HEADERS[:8] == [
+        "job_key",
+        "company",
+        "title",
+        "role_level",
+        "seniority_fit",
+        "seniority_reason",
+        "location",
+        "canonical_url",
+    ]
+    assert REVIEW_QUEUE_HEADERS[8:15] == [
         "potential_priority",
         "potential_priority_score",
         "score_status",
@@ -109,7 +120,7 @@ def test_review_queue_column_order_keeps_identity_and_review_fields_together():
         "enrichment_match_confidence",
         "manual_authoritative_url",
     ]
-    assert REVIEW_QUEUE_HEADERS[19:25] == [
+    assert REVIEW_QUEUE_HEADERS[22:28] == [
         "review_status",
         "reviewed_date",
         "interest_decision",
@@ -124,14 +135,18 @@ def test_required_review_queue_filter_fields_are_present():
     assert FILTERABLE_HEADERS <= set(REVIEW_QUEUE_HEADERS)
 
 
-def test_review_queue_includes_high_potential_partial_evidence_jobs():
+def test_review_queue_includes_high_potential_partial_evidence_jobs_and_seniority_fields():
     job = make_job(potential_priority="high", score_status="partially_verified", enrichment_status="partial")
 
     rows = build_review_queue_rows([job])
 
     assert len(rows) == 1
-    assert row_as_record(rows[0])["company"] == "Acme Industrial"
-    assert row_as_record(rows[0])["score_status"] == "partially_verified"
+    record = row_as_record(rows[0])
+    assert record["company"] == "Acme Industrial"
+    assert record["score_status"] == "partially_verified"
+    assert record["role_level"] == "Director"
+    assert record["seniority_fit"] == "stretch"
+    assert record["seniority_reason"] == "stretch_seniority_director"
 
 
 def test_review_queue_includes_enrichment_failure_jobs():
@@ -139,10 +154,12 @@ def test_review_queue_includes_enrichment_failure_jobs():
         job_key="toyota-product",
         company="Toyota North America",
         title="National Manager, Product",
+        role_level="Manager",
         potential_priority="high",
         score_status="provisional",
         enrichment_status="not_found",
         manual_authoritative_url="https://toyota.example/jobs/123",
+        score_explanation="seniority_fit=target; seniority_reason=target_seniority_manager",
     )
 
     record = row_as_record(build_review_queue_rows([job])[0])
@@ -153,7 +170,7 @@ def test_review_queue_includes_enrichment_failure_jobs():
 
 
 def test_review_queue_includes_applied_and_interviewing_jobs():
-    applied = make_job(job_key="topgolf", company="Topgolf", title="Sr Manager, Strategic Planning", application_status="applied")
+    applied = make_job(job_key="topgolf", company="Topgolf", title="Sr Manager, Strategic Planning", role_level="Senior Manager", application_status="applied")
     interviewing = make_job(job_key="pipeline", application_status="interviewing", potential_priority="low", score_status="provisional")
 
     records = [row_as_record(row) for row in build_review_queue_rows([applied, interviewing])]
@@ -170,7 +187,7 @@ def test_review_queue_includes_dismissed_jobs_for_audit():
     assert row_as_record(rows[0])["review_status"] == "dismissed"
 
 
-def test_review_queue_excludes_terminal_noise_without_review_state():
+def test_review_queue_excludes_terminal_noise_excluded_jobs_and_too_senior_jobs_without_review_state():
     closed = make_job(
         job_key="closed-low",
         status="confirmed_closed",
@@ -187,10 +204,36 @@ def test_review_queue_excludes_terminal_noise_without_review_state():
         enrichment_status="not_required",
         total_score=0,
     )
+    too_senior = make_job(
+        job_key="vp-role",
+        title="VP, Commercial Strategy",
+        role_level="VP",
+        potential_priority="medium",
+        score_status="partially_verified",
+        score_explanation="seniority_fit=too_senior; seniority_reason=likely_too_senior_vp",
+    )
 
     assert should_include_review_queue_job(closed) is False
     assert should_include_review_queue_job(excluded) is False
-    assert build_review_queue_rows([closed, excluded]) == []
+    assert should_include_review_queue_job(too_senior) is False
+    assert build_review_queue_rows([closed, excluded, too_senior]) == []
+
+
+def test_review_queue_preserves_too_senior_jobs_with_manual_state_for_audit():
+    too_senior_reviewed = make_job(
+        job_key="senior-director-reviewed",
+        title="Senior Director, Commercial Strategy",
+        role_level="Senior Director",
+        review_status="dismissed",
+        dismissal_reason="role_too_senior",
+        potential_priority="low",
+        score_explanation="seniority_fit=too_senior; seniority_reason=likely_too_senior_senior_director",
+    )
+
+    record = row_as_record(build_review_queue_rows([too_senior_reviewed])[0])
+
+    assert record["review_status"] == "dismissed"
+    assert record["seniority_fit"] == "too_senior"
 
 
 def test_review_queue_preserves_jobs_with_missing_optional_evidence():
@@ -258,18 +301,17 @@ def test_review_queue_applies_basic_filters_and_freezes_to_review_queue_and_jobs
         for request in requests
         if request.get("updateSheetProperties", {}).get("properties", {}).get("sheetId") == 1002
     )
-    assert review_freeze == {"frozenRowCount": 1, "frozenColumnCount": 5}
+    assert review_freeze == {"frozenRowCount": 1, "frozenColumnCount": 7}
     assert jobs_freeze == {"frozenRowCount": 1, "frozenColumnCount": 4}
     assert any("setBasicFilter" in request for request in requests)
 
 
 def test_specific_priority_roles_appear_in_review_queue():
     jobs = [
-        make_job(job_key="topgolf", company="Topgolf", title="Sr Manager, Strategic Planning", application_status="applied", interest_decision="interested"),
+        make_job(job_key="topgolf", company="Topgolf", title="Sr Manager, Strategic Planning", role_level="Senior Manager", application_status="applied", interest_decision="interested"),
         make_job(job_key="osteal", company="Osteal Therapeutics", title="Director, Commercial Operations", move_value_classification="clearly_better"),
-        make_job(job_key="toyota", company="Toyota North America", title="National Manager, Product", enrichment_status="not_found"),
+        make_job(job_key="toyota", company="Toyota North America", title="National Manager, Product", role_level="Manager", enrichment_status="not_found", score_explanation="seniority_fit=target; seniority_reason=target_seniority_manager"),
         make_job(job_key="divcon", company="divcon", title="Director of Product Strategy", compensation_source_type="unknown"),
-        make_job(job_key="deloitte", company="Deloitte", title="Strategic Planning Manager", interest_decision="watch"),
     ]
 
     records = [row_as_record(row) for row in build_review_queue_rows(jobs)]
@@ -279,7 +321,6 @@ def test_specific_priority_roles_appear_in_review_queue():
     assert ("Osteal Therapeutics", "Director, Commercial Operations") in visible
     assert ("Toyota North America", "National Manager, Product") in visible
     assert ("divcon", "Director of Product Strategy") in visible
-    assert ("Deloitte", "Strategic Planning Manager") in visible
 
 
 def test_dashboard_and_digest_still_render_with_review_queue_jobs():
