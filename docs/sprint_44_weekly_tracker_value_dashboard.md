@@ -51,7 +51,7 @@ Counts rows whose first durable review transition date, using `reviewed_date` wi
 
 ### Jobs Dismissed
 
-Counts reviewed rows whose current manual decision is Dismissed, Rejected, Closed, Withdrawn, Not Interested, or an equivalent controlled value.
+Counts reviewed rows whose current user decision is Dismissed or Not Interested. Recruiter rejection, withdrawal, and job closure are not counted as user dismissals.
 
 ### Jobs Applied
 
@@ -59,7 +59,7 @@ Counts rows whose `application_date` falls within the week.
 
 ### Jobs Moved to Active Status
 
-Counts currently outstanding active roles whose most recent durable application or review update falls within the week.
+Counts roles with an application date in the week plus currently outstanding roles whose most recent durable application or review update falls within the week. An application still counts as an active-status movement if it later closes during the same week.
 
 ### Jobs Still Not Reviewed Yet
 
@@ -105,7 +105,7 @@ Actionable decisions include Interested, Watch, Deferred, Applied, Interviewing,
 
 ### Backlog Change
 
-`Current week backlog / Prior week backlog`, expressed as the numeric difference rather than a rate.
+`Current week backlog minus prior week backlog`
 
 ### Signal Quality
 
@@ -160,7 +160,7 @@ python -m src.weekly_value --refresh --as-of 2026-07-09 --backfill-weeks 12
 Focused tests:
 
 ```powershell
-pytest tests/test_weekly_value.py tests/test_follow_up.py
+pytest tests/test_weekly_value.py tests/test_weekly_value_status_edges.py tests/test_follow_up.py
 ```
 
 ## Automation
