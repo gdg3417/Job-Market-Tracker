@@ -17,6 +17,8 @@ JOB_DATE_FIELDS = (
     "reviewed_date",
     "application_date",
     "last_application_update",
+    "next_action_date",
+    "follow_up_date",
 )
 REJECTED_DATE_FIELDS = ("created_at", "received_date", "updated_at")
 GOOGLE_SHEETS_EPOCH = date(1899, 12, 30)
