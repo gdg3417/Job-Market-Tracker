@@ -1,0 +1,108 @@
+name: Job Tracker Weekly Value Refresh
+
+on:
+  workflow_dispatch:
+    inputs:
+      backfill_weeks:
+        description: Number of weekly rows to reconstruct when history is missing
+        required: false
+        default: "12"
+        type: string
+  schedule:
+    - cron: "15 14 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: job-tracker-weekly-value-refresh
+  cancel-in-progress: false
+
+jobs:
+  weekly-value-refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate required secrets
+        shell: bash
+        run: |
+          if [ -z "${GOOGLE_SHEET_ID}" ]; then
+            echo "::error::Missing required GitHub Secret: GOOGLE_SHEET_ID"
+            exit 1
+          fi
+          if [ -z "${GOOGLE_SERVICE_ACCOUNT_JSON}" ]; then
+            echo "::error::Missing required GitHub Secret: GOOGLE_SERVICE_ACCOUNT_JSON"
+            exit 1
+          fi
+
+      - name: Write Google credentials
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          raw_value = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
+          json.loads(raw_value)
+          path = Path(os.environ["RUNNER_TEMP"]) / "google-service-account.json"
+          path.write_text(raw_value, encoding="utf-8")
+          path.chmod(0o600)
+          with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as handle:
+              handle.write(f"GOOGLE_APPLICATION_CREDENTIALS={path}\n")
+          PY
+
+      - name: Run focused tests
+        run: pytest tests/test_weekly_value*.py tests/test_follow_up.py
+
+      - name: Refresh Weekly Value dashboard
+        shell: bash
+        env:
+          BACKFILL_WEEKS: ${{ github.event.inputs.backfill_weeks || '12' }}
+        run: |
+          set -o pipefail
+          python -m src.weekly_value --refresh --backfill-weeks "${BACKFILL_WEEKS}" | tee "$RUNNER_TEMP/weekly_value.json"
+
+      - name: Write GitHub Step Summary
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          from src.workflow_output import load_json_output
+
+          result = load_json_output(Path(os.environ["RUNNER_TEMP"]) / "weekly_value.json")
+          rows = [
+              ("Status", result.get("status", "not_run")),
+              ("Weeks written", result.get("weeks_written", 0)),
+              ("Current week jobs added", result.get("current_jobs_added", 0)),
+              ("Current week jobs reviewed", result.get("current_jobs_reviewed", 0)),
+              ("Current review backlog", result.get("current_backlog", 0)),
+              ("Current follow-ups due", result.get("current_follow_ups_due", 0)),
+          ]
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as handle:
+              handle.write("### Weekly Value Refresh\n\n")
+              handle.write("| Metric | Value |\n")
+              handle.write("| --- | ---: |\n")
+              for metric, value in rows:
+                  handle.write(f"| {metric} | {value} |\n")
+          PY
