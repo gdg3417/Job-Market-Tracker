@@ -539,11 +539,11 @@ def _formatting_requests(sheet_id: int, row_count: int) -> list[dict[str, Any]]:
                 "cell": {
                     "userEnteredFormat": {
                         "backgroundColor": {"red": 0.72, "green": 0.72, "blue": 0.72},
-                        "textFormat": {"bold": true},
-                        "wrapStrategy": "WRAP"
+                        "textFormat": {"bold": True},
+                        "wrapStrategy": "WRAP",
                     }
                 },
-                "fields": "userEnteredFormat.backgroundColor,userEnteredFormat.textFormat.bold,userEnteredFormat.wrapStrategy"
+                "fields": "userEnteredFormat.backgroundColor,userEnteredFormat.textFormat.bold,userEnteredFormat.wrapStrategy",
             }
         },
         {
@@ -553,10 +553,10 @@ def _formatting_requests(sheet_id: int, row_count: int) -> list[dict[str, Any]]:
                     "startRowIndex": 1,
                     "endRowIndex": max(2, row_count),
                     "startColumnIndex": 0,
-                    "endColumnIndex": column_count
+                    "endColumnIndex": column_count,
                 },
                 "cell": {"userEnteredFormat": {"backgroundColor": {"red": 1, "green": 1, "blue": 1}}},
-                "fields": "userEnteredFormat.backgroundColor"
+                "fields": "userEnteredFormat.backgroundColor",
             }
         },
         {
@@ -565,7 +565,7 @@ def _formatting_requests(sheet_id: int, row_count: int) -> list[dict[str, Any]]:
                     "sheetId": sheet_id,
                     "dimension": "COLUMNS",
                     "startIndex": 0,
-                    "endIndex": column_count
+                    "endIndex": column_count,
                 }
             }
         },
@@ -575,12 +575,12 @@ def _formatting_requests(sheet_id: int, row_count: int) -> list[dict[str, Any]]:
                     "sheetId": sheet_id,
                     "dimension": "COLUMNS",
                     "startIndex": 8,
-                    "endIndex": 9
+                    "endIndex": 9,
                 },
                 "properties": {"pixelSize": 420},
-                "fields": "pixelSize"
+                "fields": "pixelSize",
             }
-        }
+        },
     ]
 
 
