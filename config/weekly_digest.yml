@@ -1,0 +1,14 @@
+weekly_digest:
+  # Monday emails summarize the latest fully completed Monday through Sunday week.
+  summary_week: latest_completed
+
+  # Keep the email concise. These limits do not change scoring or workbook metrics.
+  top_review_limit: 5
+  top_follow_up_limit: 5
+  top_new_match_limit: 5
+
+  # The full metric set remains in Weekly_Value. Enable this only if a larger email is desired.
+  include_dashboard_only_metrics: false
+
+  # Add selected optional Weekly_Value metrics here without changing core scoring logic.
+  include_optional_metrics: []

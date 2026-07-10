@@ -9,6 +9,8 @@ on:
         default: "12"
         type: string
   schedule:
+    # Monday pre-email refresh. The normal daily refresh remains below.
+    - cron: "0 12 * * 1"
     - cron: "15 14 * * *"
 
 permissions:
@@ -70,7 +72,7 @@ jobs:
           PY
 
       - name: Run focused tests
-        run: pytest tests/test_weekly_value*.py tests/test_follow_up.py
+        run: pytest tests/test_weekly_value*.py tests/test_follow_up.py tests/test_weekly_context*.py
 
       - name: Refresh Weekly Value dashboard
         shell: bash
@@ -79,6 +81,12 @@ jobs:
         run: |
           set -o pipefail
           python -m src.weekly_value_sheet_dates --refresh --backfill-weeks "${BACKFILL_WEEKS}" | tee "$RUNNER_TEMP/weekly_value.json"
+
+      - name: Refresh Weekly Context digest contract
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m src.weekly_context --refresh | tee "$RUNNER_TEMP/weekly_context.json"
 
       - name: Write GitHub Step Summary
         if: always()
@@ -90,17 +98,24 @@ jobs:
 
           from src.workflow_output import load_json_output
 
-          result = load_json_output(Path(os.environ["RUNNER_TEMP"]) / "weekly_value.json")
+          temp = Path(os.environ["RUNNER_TEMP"])
+          value_result = load_json_output(temp / "weekly_value.json")
+          context_result = load_json_output(temp / "weekly_context.json")
           rows = [
-              ("Status", result.get("status", "not_run")),
-              ("Weeks written", result.get("weeks_written", 0)),
-              ("Current week jobs added", result.get("current_jobs_added", 0)),
-              ("Current week jobs reviewed", result.get("current_jobs_reviewed", 0)),
-              ("Current review backlog", result.get("current_backlog", 0)),
-              ("Current follow-ups due", result.get("current_follow_ups_due", 0)),
+              ("Status", value_result.get("status", "not_run")),
+              ("Weeks written", value_result.get("weeks_written", 0)),
+              ("Current week jobs added", value_result.get("current_jobs_added", 0)),
+              ("Current week jobs reviewed", value_result.get("current_jobs_reviewed", 0)),
+              ("Current review backlog", value_result.get("current_backlog", 0)),
+              ("Current follow-ups due", value_result.get("current_follow_ups_due", 0)),
+              ("Context status", context_result.get("status", "not_run")),
+              ("Context summary week", f"{context_result.get('summary_week_start', '')} through {context_result.get('summary_week_end', '')}"),
+              ("Context review items", context_result.get("review_items", 0)),
+              ("Context follow-up items", context_result.get("follow_up_items", 0)),
+              ("Context new matches", context_result.get("new_match_items", 0)),
           ]
           with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as handle:
-              handle.write("### Weekly Value Refresh\n\n")
+              handle.write("### Weekly Value and Context Refresh\n\n")
               handle.write("| Metric | Value |\n")
               handle.write("| --- | ---: |\n")
               for metric, value in rows:
