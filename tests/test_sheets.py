@@ -114,7 +114,6 @@ def test_canonical_read_ignores_extra_blank_headers_created_by_wide_sheet_range(
         values=[
             [*JOB_FIELDS, "", ""],
             [*_jobs_row(job_key="acme-manager", company="Acme", title="Manager, Strategy", canonical_url="https://example.com/job"), "", "stray value"],
-            ["" for _ in range(len(JOB_FIELDS) + 2)],
         ],
     )
     client = make_fake_client(FakeWorkbook({"Jobs": worksheet}))
@@ -127,6 +126,25 @@ def test_canonical_read_ignores_extra_blank_headers_created_by_wide_sheet_range(
     assert records[0]["title"] == "Manager, Strategy"
     assert records[0]["canonical_url"] == "https://example.com/job"
     assert worksheet.get_all_records_called is False
+
+
+def test_canonical_read_preserves_blank_rows_so_row_numbers_remain_aligned():
+    worksheet = FakeWorksheet(
+        headers=JOB_FIELDS,
+        values=[
+            JOB_FIELDS,
+            _jobs_row(),
+            _jobs_row(job_key="row-three", company="Acme", title="Manager, Strategy", canonical_url="https://example.com/job"),
+        ],
+    )
+    client = make_fake_client(FakeWorkbook({"Jobs": worksheet}))
+
+    rows = client.read_records_with_row_numbers("Jobs")
+
+    assert rows[0][0] == 2
+    assert rows[0][1]["job_key"] == ""
+    assert rows[1][0] == 3
+    assert rows[1][1]["job_key"] == "row-three"
 
 
 def test_canonical_read_still_fails_when_required_header_is_missing():
