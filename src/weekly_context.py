@@ -25,7 +25,7 @@ from src.weekly_value import (
     _is_too_senior_job,
     _visible_score,
 )
-from src.weekly_value_sheet_dates import JOB_DATE_FIELDS, normalize_record_dates
+from src.weekly_value_sheet_dates import JOB_DATE_FIELDS, normalize_record_dates, normalize_sheet_date
 
 WEEKLY_CONTEXT_SHEET = "Weekly_Context"
 WEEKLY_CONTEXT_HEADERS = [
@@ -139,7 +139,10 @@ def load_weekly_digest_config(path: str | Path | None = None) -> WeeklyDigestCon
 
 def _normalized_weekly_record(record: dict[str, Any]) -> dict[str, Any]:
     by_key = {_normalize(key): value for key, value in record.items()}
-    return {header: by_key.get(_normalize(header), "") for header in WEEKLY_VALUE_HEADERS}
+    normalized = {header: by_key.get(_normalize(header), "") for header in WEEKLY_VALUE_HEADERS}
+    normalized["Week Start"] = normalize_sheet_date(normalized["Week Start"])
+    normalized["Week End"] = normalize_sheet_date(normalized["Week End"])
+    return normalized
 
 
 def _previous_week(as_of_date: date) -> tuple[date, date]:
