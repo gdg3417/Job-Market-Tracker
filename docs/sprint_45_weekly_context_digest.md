@@ -180,7 +180,7 @@ cd "C:\Users\gdg34\OneDrive\Documents\GitHub\Job-Market-Tracker"
 git switch main
 git pull --ff-only origin main
 .\.venv\Scripts\Activate.ps1
-pytest tests/test_weekly_value*.py tests/test_follow_up.py tests/test_weekly_context.py
+pytest tests/test_weekly_value*.py tests/test_follow_up.py tests/test_weekly_context*.py
 python -m src.weekly_value_sheet_dates --refresh --backfill-weeks 12
 python -m src.weekly_context --refresh
 ```
@@ -194,7 +194,7 @@ python -m src.weekly_context --refresh
 5. Body cells receive white fill.
 6. The tab has a filter and frozen headers.
 7. No Merge & Center behavior is used.
-8. Blocked companies, automated rejects, and too-senior roles cannot appear as normal review recommendations.
+8. Blocked companies, automated rejects, too-senior roles, and terminal postings cannot appear as normal review recommendations.
 9. Director stretch roles remain visible as stretch matches.
 10. Manager and Senior Manager strong fits remain prioritized.
 
@@ -212,5 +212,6 @@ Before merge:
 8. Confirm follow-up due items include reasons and row links.
 9. Confirm empty weeks render cleanly.
 10. Confirm missing optional fields do not break rendering.
-11. Confirm the existing weekly digest remains available as a fallback.
-12. Confirm no canonical schema or manual data changes occur.
+11. Confirm terminal postings are excluded from new-match and review recommendations.
+12. Confirm the existing weekly digest remains available as a fallback.
+13. Confirm no canonical schema or manual data changes occur.
