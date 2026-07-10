@@ -2,21 +2,28 @@ from __future__ import annotations
 
 import pytest
 
-from src.schema import RUNS_HEADERS
+from src.models import JOB_FIELDS
+from src.schema import RUNS_HEADERS, SchemaValidationError
 from src.sheets import SheetClient, build_sprint2_run_record, normalize_header_name
 
 
 class FakeWorksheet:
-    def __init__(self, headers, records=None):
+    def __init__(self, headers, records=None, values=None):
         self.headers = headers
         self.records = records or []
+        self.values = values
         self.appended_rows = []
+        self.get_all_records_called = False
 
     def row_values(self, row_number):
         assert row_number == 1
         return self.headers
 
+    def get_values(self):
+        return self.values if self.values is not None else [self.headers]
+
     def get_all_records(self, numericise_ignore=None):
+        self.get_all_records_called = True
         assert numericise_ignore == ["all"]
         return self.records
 
@@ -39,6 +46,13 @@ def make_fake_client(workbook):
     client._worksheet_cache = {}
     client._header_cache = {}
     return client
+
+
+def _jobs_row(**values):
+    row = [""] * len(JOB_FIELDS)
+    for key, value in values.items():
+        row[JOB_FIELDS.index(key)] = value
+    return row
 
 
 def test_normalize_header_name_handles_spaces_and_case():
@@ -84,13 +98,44 @@ def test_append_run_accepts_canonical_runs_headers():
     assert worksheet.appended_rows[0][13] == 25
 
 
-def test_read_records_keeps_sheet_values_as_strings():
+def test_read_records_keeps_sheet_values_as_strings_for_noncanonical_tabs():
     worksheet = FakeWorksheet(headers=["company_id"], records=[{"company_id": "001"}])
-    client = make_fake_client(FakeWorkbook({"Config_Companies": worksheet}))
+    client = make_fake_client(FakeWorkbook({"Scratch": worksheet}))
 
-    records = client.read_records("Config_Companies")
+    records = client.read_records("Scratch")
 
     assert records == [{"company_id": "001"}]
+    assert worksheet.get_all_records_called is True
+
+
+def test_canonical_read_ignores_extra_blank_headers_created_by_wide_sheet_range():
+    worksheet = FakeWorksheet(
+        headers=JOB_FIELDS,
+        values=[
+            [*JOB_FIELDS, "", ""],
+            [*_jobs_row(job_key="acme-manager", company="Acme", title="Manager, Strategy", canonical_url="https://example.com/job"), "", "stray value"],
+            ["" for _ in range(len(JOB_FIELDS) + 2)],
+        ],
+    )
+    client = make_fake_client(FakeWorkbook({"Jobs": worksheet}))
+
+    records = client.read_records("Jobs")
+
+    assert len(records) == 1
+    assert records[0]["job_key"] == "acme-manager"
+    assert records[0]["company"] == "Acme"
+    assert records[0]["title"] == "Manager, Strategy"
+    assert records[0]["canonical_url"] == "https://example.com/job"
+    assert worksheet.get_all_records_called is False
+
+
+def test_canonical_read_still_fails_when_required_header_is_missing():
+    headers = [header for header in JOB_FIELDS if header != "title"]
+    worksheet = FakeWorksheet(headers=headers, values=[headers, ["" for _ in headers]])
+    client = make_fake_client(FakeWorkbook({"Jobs": worksheet}))
+
+    with pytest.raises(SchemaValidationError, match="title"):
+        client.read_records("Jobs")
 
 
 def test_build_sprint2_run_record_contains_counts_and_status():
