@@ -77,6 +77,17 @@ def build_rows(jobs=None, *, config=None, records=None):
     )
 
 
+def test_formatted_google_sheets_week_dates_are_normalized_before_selection():
+    record = weekly_record(**{"Week Start": "6/29/26", "Week End": "7/5/26"})
+    rows = build_rows(records=[record])
+    period = next(row for row in rows if row["item_type"] == "period")
+    jobs_added = next(row for row in rows if row["label"] == "Jobs Added")
+
+    assert period["week_start"] == "2026-06-29"
+    assert period["week_end"] == "2026-07-05"
+    assert jobs_added["value"] == 20
+
+
 def test_core_weekly_metrics_are_included_without_full_dashboard_metrics():
     rows = build_rows()
     metric_labels = {row["label"] for row in rows if row["item_type"] == "metric"}
