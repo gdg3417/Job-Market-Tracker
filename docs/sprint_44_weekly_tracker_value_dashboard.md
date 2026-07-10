@@ -129,6 +129,8 @@ The Notes column makes this limitation explicit. Future weekly rows become more 
 
 Sprint 44 does not add brittle manual date requirements to `Jobs`. A full status event ledger can be considered separately if later reporting requires exact historical state reconstruction.
 
+Production and documented local refreshes normalize common Google Sheets date representations, including values such as `6/30/26`, before weekly calculations. This includes review, application, status-update, next-action, and follow-up dates. Source cells in `Jobs` are not modified.
+
 ## Worksheet behavior
 
 `Weekly_Value` is a generated read-only surface.
@@ -148,13 +150,13 @@ Normal refresh:
 ```powershell
 cd "C:\Users\gdg34\OneDrive\Documents\GitHub\Job-Market-Tracker"
 .\.venv\Scripts\Activate.ps1
-python -m src.weekly_value --refresh
+python -m src.weekly_value_sheet_dates --refresh
 ```
 
 Deterministic validation:
 
 ```powershell
-python -m src.weekly_value --refresh --as-of 2026-07-09 --backfill-weeks 12
+python -m src.weekly_value_sheet_dates --refresh --as-of 2026-07-09 --backfill-weeks 12
 ```
 
 Focused tests:
@@ -194,3 +196,4 @@ Before merging:
 12. Confirm Senior Director and VP roles count in too-senior suppression.
 13. Confirm no manual review or application data changes in `Jobs`.
 14. Confirm a missing optional `Rejected_Jobs` tab does not block the refresh.
+15. Confirm formatted Google Sheets dates populate review, application, and follow-up metrics.
