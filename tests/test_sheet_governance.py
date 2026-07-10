@@ -54,21 +54,35 @@ def test_governance_definitions_are_valid_and_jobs_fields_exist():
 
 def test_jobs_controlled_options_reuse_existing_model_values_and_workflow_scales():
     assert set(JOBS_CONTROLLED_FIELDS["review_status"]) == VALID_REVIEW_STATUSES
-    assert set(JOBS_CONTROLLED_FIELDS["application_status"]) == {
-        value for value in VALID_APPLICATION_STATUSES if value
-    }
+    assert set(JOBS_CONTROLLED_FIELDS["application_status"]) == VALID_APPLICATION_STATUSES
     assert JOBS_CONTROLLED_FIELDS["manual_priority"] == MANUAL_PRIORITY_OPTIONS == (
+        "",
         "1",
         "2",
         "3",
         "4",
         "5",
     )
-    assert JOBS_CONTROLLED_FIELDS["manual_fit_rating"] == MANUAL_FIT_RATING_OPTIONS == tuple(
-        str(value) for value in range(1, 11)
+    assert JOBS_CONTROLLED_FIELDS["manual_fit_rating"] == MANUAL_FIT_RATING_OPTIONS == (
+        "",
+        *tuple(str(value) for value in range(1, 11)),
     )
     assert JOBS_CONTROLLED_FIELDS["work_model_source"] == WORK_MODEL_SOURCE_OPTIONS
+    assert WORK_MODEL_SOURCE_OPTIONS[0] == ""
     assert "user_entered" in WORK_MODEL_SOURCE_OPTIONS
+
+
+def test_optional_jobs_dropdowns_include_blank_clear_value():
+    for field in (
+        "interest_decision",
+        "manual_priority",
+        "manual_fit_rating",
+        "dismissal_reason",
+        "application_status",
+        "work_model_source",
+        "required_office_days_per_week",
+    ):
+        assert JOBS_CONTROLLED_FIELDS[field][0] == ""
 
 
 def test_jobs_requests_color_only_safe_manual_headers_green():
