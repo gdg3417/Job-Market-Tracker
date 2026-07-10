@@ -169,9 +169,8 @@ def _is_blocked_company_job(job: JobPosting) -> bool:
 
 def _is_too_senior_job(job: JobPosting) -> bool:
     explanation = str(job.score_explanation or "").lower()
-    level = _normalize(job.role_level)
     return (
-        level in TOO_SENIOR_LEVELS
+        _normalize(job.role_level) in TOO_SENIOR_LEVELS
         or "likely_too_senior" in explanation
         or "seniority_fit=too_senior" in explanation
         or "seniority_fit=excluded" in explanation
@@ -179,8 +178,13 @@ def _is_too_senior_job(job: JobPosting) -> bool:
     )
 
 
+def _is_auto_rejected_job(job: JobPosting) -> bool:
+    explanation = str(job.score_explanation or "").lower()
+    return job.score_status == "excluded" or job.alert_tier == "exclude" or "hard_exclude=true" in explanation
+
+
 def _is_stretch_fit(job: JobPosting) -> bool:
-    if _is_blocked_company_job(job) or _is_too_senior_job(job):
+    if _is_auto_rejected_job(job) or _is_blocked_company_job(job) or _is_too_senior_job(job):
         return False
     explanation = str(job.score_explanation or "").lower()
     return (
@@ -195,12 +199,7 @@ def _is_strong_fit(job: JobPosting) -> bool:
         return False
     visible_score = job.verified_total_score if job.verified_total_score is not None else job.total_score
     visible_tier = _normalize(job.verified_alert_tier or job.alert_tier)
-    return job.score_status != "excluded" and (visible_score >= 75 or visible_tier in STRONG_ALERT_TIERS)
-
-
-def _is_auto_rejected_job(job: JobPosting) -> bool:
-    explanation = str(job.score_explanation or "").lower()
-    return job.score_status == "excluded" or job.alert_tier == "exclude" or "hard_exclude=true" in explanation
+    return job.score_status == "verified" and (visible_score >= 75 or visible_tier in STRONG_ALERT_TIERS)
 
 
 def _rejected_row_date(row: dict[str, Any]) -> date | None:
@@ -230,18 +229,8 @@ def _week_note(*, is_current: bool, missing_job_dates: int, missing_rejected_dat
     return " ".join(notes)
 
 
-def _active_status_movements(
-    jobs: list[JobPosting],
-    *,
-    start: date,
-    end: date,
-    active_jobs: list[JobPosting],
-) -> int:
-    moved: set[str] = {
-        _job_identity(job)
-        for job in jobs
-        if _in_period(job.application_date, start, end)
-    }
+def _active_status_movements(jobs: list[JobPosting], *, start: date, end: date, active_jobs: list[JobPosting]) -> int:
+    moved = {_job_identity(job) for job in jobs if _in_period(job.application_date, start, end)}
     for job in active_jobs:
         transition = _active_transition_date(job)
         if transition is not None and start <= transition <= end:
@@ -359,10 +348,7 @@ def _record_week_start(record: dict[str, Any]) -> date | None:
 
 def _normalize_existing_record(record: dict[str, Any]) -> dict[str, Any]:
     normalized = {_normalize(key).replace(" ", "_"): value for key, value in record.items()}
-    return {
-        header: normalized.get(_normalize(header).replace(" ", "_"), "")
-        for header in WEEKLY_VALUE_HEADERS
-    }
+    return {header: normalized.get(_normalize(header).replace(" ", "_"), "") for header in WEEKLY_VALUE_HEADERS}
 
 
 def build_weekly_records(
@@ -421,10 +407,7 @@ def merge_weekly_records(
 
 
 def build_weekly_values(records: list[dict[str, Any]]) -> list[list[Any]]:
-    return [
-        WEEKLY_VALUE_HEADERS,
-        *[[record.get(header, "") for header in WEEKLY_VALUE_HEADERS] for record in records],
-    ]
+    return [WEEKLY_VALUE_HEADERS, *[[record.get(header, "") for header in WEEKLY_VALUE_HEADERS] for record in records]]
 
 
 def _column_name(number: int) -> str:
@@ -503,11 +486,7 @@ def _formatting_requests(sheet_id: int, row_count: int) -> list[dict[str, Any]]:
                     "startColumnIndex": 15,
                     "endColumnIndex": 18,
                 },
-                "cell": {
-                    "userEnteredFormat": {
-                        "numberFormat": {"type": "PERCENT", "pattern": "0.0%"}
-                    }
-                },
+                "cell": {"userEnteredFormat": {"numberFormat": {"type": "PERCENT", "pattern": "0.0%"}}},
                 "fields": "userEnteredFormat.numberFormat",
             }
         },
@@ -520,11 +499,7 @@ def _formatting_requests(sheet_id: int, row_count: int) -> list[dict[str, Any]]:
                     "startColumnIndex": 19,
                     "endColumnIndex": 21,
                 },
-                "cell": {
-                    "userEnteredFormat": {
-                        "numberFormat": {"type": "PERCENT", "pattern": "0.0%"}
-                    }
-                },
+                "cell": {"userEnteredFormat": {"numberFormat": {"type": "PERCENT", "pattern": "0.0%"}}},
                 "fields": "userEnteredFormat.numberFormat",
             }
         },
@@ -568,10 +543,7 @@ def write_weekly_value(sheet_client: SheetClient, values: list[list[Any]]) -> An
         rows=max(1000, len(values) + 10),
         cols=len(WEEKLY_VALUE_HEADERS),
     )
-    with_quota_backoff(
-        lambda: worksheet.clear(),
-        operation_name=f"clear worksheet {WEEKLY_VALUE_SHEET}",
-    )
+    with_quota_backoff(lambda: worksheet.clear(), operation_name=f"clear worksheet {WEEKLY_VALUE_SHEET}")
     end_cell = f"{_column_name(len(WEEKLY_VALUE_HEADERS))}{len(values)}"
     with_quota_backoff(
         lambda: worksheet.update(
@@ -595,9 +567,7 @@ def apply_weekly_value(
     as_of_date = _date(as_of) or _date(today_iso()) or date.today()
     jobs = jobs if jobs is not None else [job for _, job in sheet_client.read_jobs_with_row_numbers()]
     rejected_job_rows = (
-        rejected_job_rows
-        if rejected_job_rows is not None
-        else sheet_client.read_records("Rejected_Jobs")
+        rejected_job_rows if rejected_job_rows is not None else sheet_client.read_records("Rejected_Jobs")
     )
     existing_records = _read_existing_records(sheet_client)
     generated = build_weekly_records(
@@ -641,29 +611,15 @@ def apply_weekly_value(
     )
 
 
-def run_weekly_value_refresh(
-    *,
-    as_of: str | None = None,
-    backfill_weeks: int = 12,
-) -> dict[str, Any]:
+def run_weekly_value_refresh(*, as_of: str | None = None, backfill_weeks: int = 12) -> dict[str, Any]:
     settings = load_settings()
     sheet_client = SheetClient.from_settings(settings)
-    result = apply_weekly_value(
-        sheet_client,
-        as_of=as_of,
-        backfill_weeks=backfill_weeks,
-    )
-    return {
-        "run_mode": "sprint_44_weekly_value_refresh",
-        "status": "success",
-        **result.to_dict(),
-    }
+    result = apply_weekly_value(sheet_client, as_of=as_of, backfill_weeks=backfill_weeks)
+    return {"run_mode": "sprint_44_weekly_value_refresh", "status": "success", **result.to_dict()}
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Refresh the Job Market Tracker Weekly_Value tab"
-    )
+    parser = argparse.ArgumentParser(description="Refresh the Job Market Tracker Weekly_Value tab")
     parser.add_argument("--refresh", action="store_true")
     parser.add_argument("--as-of", default=None)
     parser.add_argument("--backfill-weeks", type=int, default=12)
@@ -674,10 +630,7 @@ def main() -> None:
     args = parse_args()
     print(
         json.dumps(
-            run_weekly_value_refresh(
-                as_of=args.as_of,
-                backfill_weeks=args.backfill_weeks,
-            ),
+            run_weekly_value_refresh(as_of=args.as_of, backfill_weeks=args.backfill_weeks),
             indent=2,
         )
     )
