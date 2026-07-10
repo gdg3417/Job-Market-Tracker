@@ -40,7 +40,7 @@ WEEKLY_VALUE_HEADERS = [
 
 TERMINAL_JOB_STATUSES = {"confirmed_closed", "closed", "expired"}
 NOT_REVIEWED_STATUSES = {"", "not reviewed", "not reviewed yet", "not_reviewed"}
-DISMISSED_REVIEW_STATUSES = {"dismissed", "rejected", "closed", "withdrawn"}
+DISMISSED_REVIEW_STATUSES = {"dismissed"}
 DISMISSED_INTEREST_DECISIONS = {"dismissed", "not interested", "not_interested"}
 ACTIONABLE_REVIEW_STATUSES = {
     "review now",
@@ -64,7 +64,6 @@ TOO_SENIOR_LEVELS = {
     "evp",
     "executive vice president",
     "c suite",
-    "c-suite",
     "chief executive officer",
     "chief financial officer",
     "chief operating officer",
@@ -132,6 +131,10 @@ def _active_transition_date(job: JobPosting) -> date | None:
     return _last_date(job.last_application_update, job.application_date, job.reviewed_date)
 
 
+def _job_identity(job: JobPosting) -> str:
+    return job.job_key or "|".join([job.company, job.title, job.canonical_url])
+
+
 def _job_existed_by(job: JobPosting, end: date) -> bool:
     first_seen = _date(job.first_seen_date)
     return first_seen is not None and first_seen <= end
@@ -145,15 +148,18 @@ def _closed_by(job: JobPosting, end: date, as_of: date) -> bool:
 
 
 def _is_dismissed(job: JobPosting) -> bool:
-    return _normalize(job.review_status) in DISMISSED_REVIEW_STATUSES or _normalize(job.interest_decision) in DISMISSED_INTEREST_DECISIONS
+    return (
+        _normalize(job.review_status) in DISMISSED_REVIEW_STATUSES
+        or _normalize(job.interest_decision) in DISMISSED_INTEREST_DECISIONS
+    )
 
 
 def _is_actionable(job: JobPosting) -> bool:
-    if _normalize(job.review_status) in ACTIONABLE_REVIEW_STATUSES:
-        return True
-    if _normalize(job.interest_decision) in ACTIONABLE_INTEREST_DECISIONS:
-        return True
-    return _normalize(job.application_status) in {"applied", "interviewing", "offer"}
+    return (
+        _normalize(job.review_status) in ACTIONABLE_REVIEW_STATUSES
+        or _normalize(job.interest_decision) in ACTIONABLE_INTEREST_DECISIONS
+        or _normalize(job.application_status) in {"applied", "interviewing", "offer"}
+    )
 
 
 def _is_blocked_company_job(job: JobPosting) -> bool:
@@ -177,9 +183,8 @@ def _is_stretch_fit(job: JobPosting) -> bool:
     if _is_blocked_company_job(job) or _is_too_senior_job(job):
         return False
     explanation = str(job.score_explanation or "").lower()
-    level = _normalize(job.role_level)
     return (
-        level == "director"
+        _normalize(job.role_level) == "director"
         or "stretch_seniority_director" in explanation
         or "seniority_fit=stretch" in explanation
     )
@@ -213,7 +218,9 @@ def _safe_rate(numerator: int, denominator: int) -> float:
 
 def _week_note(*, is_current: bool, missing_job_dates: int, missing_rejected_dates: int, effective_end: date) -> str:
     notes = [
-        f"Current week through {effective_end.isoformat()}." if is_current else "Historical metrics reconstructed from durable date fields."
+        f"Current week through {effective_end.isoformat()}."
+        if is_current
+        else "Historical metrics reconstructed from durable date fields."
     ]
     if missing_job_dates:
         notes.append(f"{missing_job_dates} Jobs row(s) lacked first_seen_date and were excluded from weekly volume metrics.")
@@ -221,6 +228,25 @@ def _week_note(*, is_current: bool, missing_job_dates: int, missing_rejected_dat
         notes.append(f"{missing_rejected_dates} rejected row(s) lacked a usable date and were excluded from weekly rejection metrics.")
     notes.append("Historical status metrics are limited where the workbook lacks a complete status transition ledger.")
     return " ".join(notes)
+
+
+def _active_status_movements(
+    jobs: list[JobPosting],
+    *,
+    start: date,
+    end: date,
+    active_jobs: list[JobPosting],
+) -> int:
+    moved: set[str] = {
+        _job_identity(job)
+        for job in jobs
+        if _in_period(job.application_date, start, end)
+    }
+    for job in active_jobs:
+        transition = _active_transition_date(job)
+        if transition is not None and start <= transition <= end:
+            moved.add(_job_identity(job))
+    return len(moved)
 
 
 def calculate_week_record(
@@ -234,12 +260,16 @@ def calculate_week_record(
     effective_end = min(end, as_of)
     is_current = start == _week_start(as_of)
     jobs_added = [job for job in jobs if _in_period(job.first_seen_date, start, effective_end)]
-    reviewed = [job for job in jobs if (transition := _review_transition_date(job)) is not None and start <= transition <= effective_end]
+    reviewed = [
+        job
+        for job in jobs
+        if (transition := _review_transition_date(job)) is not None and start <= transition <= effective_end
+    ]
     dismissed = [job for job in reviewed if _is_dismissed(job)]
     applied = [job for job in jobs if _in_period(job.application_date, start, effective_end)]
 
-    active_jobs = []
-    follow_ups_due = []
+    active_jobs: list[JobPosting] = []
+    follow_ups_due: list[JobPosting] = []
     for job in jobs:
         if not _job_existed_by(job, effective_end) or _closed_by(job, effective_end, as_of):
             continue
@@ -248,12 +278,6 @@ def calculate_week_record(
             active_jobs.append(job)
         if evaluation.follow_up_due:
             follow_ups_due.append(job)
-
-    moved_to_active = [
-        job
-        for job in active_jobs
-        if (transition := _active_transition_date(job)) is not None and start <= transition <= effective_end
-    ]
 
     backlog = 0
     for job in jobs:
@@ -268,7 +292,8 @@ def calculate_week_record(
             backlog += 1
 
     period_rejected_rows = [
-        row for row in rejected_job_rows
+        row
+        for row in rejected_job_rows
         if (rejected_date := _rejected_row_date(row)) is not None and start <= rejected_date <= effective_end
     ]
     auto_rejected_jobs = [job for job in jobs_added if _is_auto_rejected_job(job)]
@@ -281,7 +306,7 @@ def calculate_week_record(
 
     auto_rejected_count = len(period_rejected_rows) + len(auto_rejected_jobs)
     total_considered = len(jobs_added) + len(period_rejected_rows)
-    signal_job_keys = {job.job_key or f"{job.company}|{job.title}|{job.canonical_url}" for job in [*strong_fit, *stretch_fit]}
+    signal_job_keys = {_job_identity(job) for job in [*strong_fit, *stretch_fit]}
     missing_job_dates = sum(1 for job in jobs if _date(job.first_seen_date) is None)
     missing_rejected_dates = sum(1 for row in rejected_job_rows if _rejected_row_date(row) is None)
 
@@ -292,7 +317,12 @@ def calculate_week_record(
         "Jobs Reviewed": len(reviewed),
         "Jobs Dismissed": len(dismissed),
         "Jobs Applied": len(applied),
-        "Jobs Moved to Active Status": len(moved_to_active),
+        "Jobs Moved to Active Status": _active_status_movements(
+            jobs,
+            start=start,
+            end=effective_end,
+            active_jobs=active_jobs,
+        ),
         "Jobs Still Not Reviewed Yet": backlog,
         "Follow-ups Due": len(follow_ups_due),
         "Outstanding Active Roles": len(active_jobs),
@@ -329,11 +359,10 @@ def _record_week_start(record: dict[str, Any]) -> date | None:
 
 def _normalize_existing_record(record: dict[str, Any]) -> dict[str, Any]:
     normalized = {_normalize(key).replace(" ", "_"): value for key, value in record.items()}
-    output: dict[str, Any] = {}
-    for header in WEEKLY_VALUE_HEADERS:
-        key = _normalize(header).replace(" ", "_")
-        output[header] = normalized.get(key, "")
-    return output
+    return {
+        header: normalized.get(_normalize(header).replace(" ", "_"), "")
+        for header in WEEKLY_VALUE_HEADERS
+    }
 
 
 def build_weekly_records(
@@ -345,9 +374,8 @@ def build_weekly_records(
 ) -> list[dict[str, Any]]:
     as_of_date = _date(as_of) or _date(today_iso()) or date.today()
     current_start = _week_start(as_of_date)
-    weeks = max(1, int(backfill_weeks))
     records = []
-    for offset in range(weeks - 1, -1, -1):
+    for offset in range(max(1, int(backfill_weeks)) - 1, -1, -1):
         start = current_start - timedelta(days=7 * offset)
         records.append(
             calculate_week_record(
@@ -370,8 +398,8 @@ def merge_weekly_records(
     as_of_date = _date(as_of) or _date(today_iso()) or date.today()
     current_start = _week_start(as_of_date)
     previous_start = current_start - timedelta(days=7)
-
     merged: dict[date, dict[str, Any]] = {}
+
     for raw_record in existing_records:
         record = _normalize_existing_record(raw_record)
         start = _record_week_start(record)
@@ -380,9 +408,7 @@ def merge_weekly_records(
 
     for record in generated_records:
         start = _record_week_start(record)
-        if start is None:
-            continue
-        if start >= previous_start or start not in merged:
+        if start is not None and (start >= previous_start or start not in merged):
             merged[start] = record
 
     chronological = [merged[start] for start in sorted(merged)]
@@ -395,7 +421,10 @@ def merge_weekly_records(
 
 
 def build_weekly_values(records: list[dict[str, Any]]) -> list[list[Any]]:
-    return [WEEKLY_VALUE_HEADERS, *[[record.get(header, "") for header in WEEKLY_VALUE_HEADERS] for record in records]]
+    return [
+        WEEKLY_VALUE_HEADERS,
+        *[[record.get(header, "") for header in WEEKLY_VALUE_HEADERS] for record in records],
+    ]
 
 
 def _column_name(number: int) -> str:
@@ -410,7 +439,10 @@ def _worksheet_id(sheet_client: SheetClient, worksheet: Any) -> int:
     worksheet_id = getattr(worksheet, "id", None)
     if worksheet_id is not None:
         return int(worksheet_id)
-    metadata = with_quota_backoff(lambda: sheet_client.workbook.fetch_sheet_metadata(), operation_name="fetch workbook metadata")
+    metadata = with_quota_backoff(
+        lambda: sheet_client.workbook.fetch_sheet_metadata(),
+        operation_name="fetch workbook metadata",
+    )
     for sheet in metadata.get("sheets", []):
         properties = sheet.get("properties") or {}
         if properties.get("title") == WEEKLY_VALUE_SHEET:
@@ -423,7 +455,10 @@ def _formatting_requests(sheet_id: int, row_count: int) -> list[dict[str, Any]]:
     return [
         {
             "updateSheetProperties": {
-                "properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": 1, "frozenColumnCount": 2}},
+                "properties": {
+                    "sheetId": sheet_id,
+                    "gridProperties": {"frozenRowCount": 1, "frozenColumnCount": 2},
+                },
                 "fields": "gridProperties.frozenRowCount,gridProperties.frozenColumnCount",
             }
         },
@@ -442,7 +477,13 @@ def _formatting_requests(sheet_id: int, row_count: int) -> list[dict[str, Any]]:
         },
         {
             "repeatCell": {
-                "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1, "startColumnIndex": 0, "endColumnIndex": column_count},
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": 0,
+                    "endRowIndex": 1,
+                    "startColumnIndex": 0,
+                    "endColumnIndex": column_count,
+                },
                 "cell": {
                     "userEnteredFormat": {
                         "backgroundColor": {"red": 0.72, "green": 0.72, "blue": 0.72},
@@ -455,26 +496,56 @@ def _formatting_requests(sheet_id: int, row_count: int) -> list[dict[str, Any]]:
         },
         {
             "repeatCell": {
-                "range": {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": max(2, row_count), "startColumnIndex": 15, "endColumnIndex": 18},
-                "cell": {"userEnteredFormat": {"numberFormat": {"type": "PERCENT", "pattern": "0.0%"}}},
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": 1,
+                    "endRowIndex": max(2, row_count),
+                    "startColumnIndex": 15,
+                    "endColumnIndex": 18,
+                },
+                "cell": {
+                    "userEnteredFormat": {
+                        "numberFormat": {"type": "PERCENT", "pattern": "0.0%"}
+                    }
+                },
                 "fields": "userEnteredFormat.numberFormat",
             }
         },
         {
             "repeatCell": {
-                "range": {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": max(2, row_count), "startColumnIndex": 19, "endColumnIndex": 21},
-                "cell": {"userEnteredFormat": {"numberFormat": {"type": "PERCENT", "pattern": "0.0%"}}},
+                "range": {
+                    "sheetId": sheet_id,
+                    "startRowIndex": 1,
+                    "endRowIndex": max(2, row_count),
+                    "startColumnIndex": 19,
+                    "endColumnIndex": 21,
+                },
+                "cell": {
+                    "userEnteredFormat": {
+                        "numberFormat": {"type": "PERCENT", "pattern": "0.0%"}
+                    }
+                },
                 "fields": "userEnteredFormat.numberFormat",
             }
         },
         {
             "autoResizeDimensions": {
-                "dimensions": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": 0, "endIndex": column_count}
+                "dimensions": {
+                    "sheetId": sheet_id,
+                    "dimension": "COLUMNS",
+                    "startIndex": 0,
+                    "endIndex": column_count,
+                }
             }
         },
         {
             "updateDimensionProperties": {
-                "range": {"sheetId": sheet_id, "dimension": "COLUMNS", "startIndex": 21, "endIndex": 22},
+                "range": {
+                    "sheetId": sheet_id,
+                    "dimension": "COLUMNS",
+                    "startIndex": 21,
+                    "endIndex": 22,
+                },
                 "properties": {"pixelSize": 420},
                 "fields": "pixelSize",
             }
@@ -497,10 +568,17 @@ def write_weekly_value(sheet_client: SheetClient, values: list[list[Any]]) -> An
         rows=max(1000, len(values) + 10),
         cols=len(WEEKLY_VALUE_HEADERS),
     )
-    with_quota_backoff(lambda: worksheet.clear(), operation_name=f"clear worksheet {WEEKLY_VALUE_SHEET}")
+    with_quota_backoff(
+        lambda: worksheet.clear(),
+        operation_name=f"clear worksheet {WEEKLY_VALUE_SHEET}",
+    )
     end_cell = f"{_column_name(len(WEEKLY_VALUE_HEADERS))}{len(values)}"
     with_quota_backoff(
-        lambda: worksheet.update(range_name=f"A1:{end_cell}", values=values, value_input_option="USER_ENTERED"),
+        lambda: worksheet.update(
+            range_name=f"A1:{end_cell}",
+            values=values,
+            value_input_option="USER_ENTERED",
+        ),
         operation_name=f"write worksheet {WEEKLY_VALUE_SHEET}",
     )
     return worksheet
@@ -516,9 +594,18 @@ def apply_weekly_value(
 ) -> WeeklyValueResult:
     as_of_date = _date(as_of) or _date(today_iso()) or date.today()
     jobs = jobs if jobs is not None else [job for _, job in sheet_client.read_jobs_with_row_numbers()]
-    rejected_job_rows = rejected_job_rows if rejected_job_rows is not None else sheet_client.read_records("Rejected_Jobs")
+    rejected_job_rows = (
+        rejected_job_rows
+        if rejected_job_rows is not None
+        else sheet_client.read_records("Rejected_Jobs")
+    )
     existing_records = _read_existing_records(sheet_client)
-    generated = build_weekly_records(jobs, rejected_job_rows, as_of=as_of_date, backfill_weeks=backfill_weeks)
+    generated = build_weekly_records(
+        jobs,
+        rejected_job_rows,
+        as_of=as_of_date,
+        backfill_weeks=backfill_weeks,
+    )
     merged = merge_weekly_records(existing_records, generated, as_of=as_of_date)
     values = build_weekly_values(merged)
     worksheet = write_weekly_value(sheet_client, values)
@@ -534,7 +621,10 @@ def apply_weekly_value(
         warnings.append(f"Weekly_Value formatting was not applied: {exc}")
 
     current_start = _week_start(as_of_date)
-    current_record = next((record for record in merged if _record_week_start(record) == current_start), {})
+    current_record = next(
+        (record for record in merged if _record_week_start(record) == current_start),
+        {},
+    )
     return WeeklyValueResult(
         jobs_read=len(jobs),
         rejected_rows_read=len(rejected_job_rows),
@@ -551,15 +641,29 @@ def apply_weekly_value(
     )
 
 
-def run_weekly_value_refresh(*, as_of: str | None = None, backfill_weeks: int = 12) -> dict[str, Any]:
+def run_weekly_value_refresh(
+    *,
+    as_of: str | None = None,
+    backfill_weeks: int = 12,
+) -> dict[str, Any]:
     settings = load_settings()
     sheet_client = SheetClient.from_settings(settings)
-    result = apply_weekly_value(sheet_client, as_of=as_of, backfill_weeks=backfill_weeks)
-    return {"run_mode": "sprint_44_weekly_value_refresh", "status": "success", **result.to_dict()}
+    result = apply_weekly_value(
+        sheet_client,
+        as_of=as_of,
+        backfill_weeks=backfill_weeks,
+    )
+    return {
+        "run_mode": "sprint_44_weekly_value_refresh",
+        "status": "success",
+        **result.to_dict(),
+    }
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Refresh the Job Market Tracker Weekly_Value tab")
+    parser = argparse.ArgumentParser(
+        description="Refresh the Job Market Tracker Weekly_Value tab"
+    )
     parser.add_argument("--refresh", action="store_true")
     parser.add_argument("--as-of", default=None)
     parser.add_argument("--backfill-weeks", type=int, default=12)
@@ -568,7 +672,15 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    print(json.dumps(run_weekly_value_refresh(as_of=args.as_of, backfill_weeks=args.backfill_weeks), indent=2))
+    print(
+        json.dumps(
+            run_weekly_value_refresh(
+                as_of=args.as_of,
+                backfill_weeks=args.backfill_weeks,
+            ),
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":
