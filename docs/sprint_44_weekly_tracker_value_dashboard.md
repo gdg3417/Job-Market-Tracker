@@ -12,7 +12,7 @@ Each row represents a Monday through Sunday week.
 
 The current week is calculated through the refresh date. Completed weeks retain their recorded values so later status changes do not rewrite long-term history. The immediately prior week is recalculated to capture edits made shortly after the week closes.
 
-The initial refresh reconstructs up to 12 weeks from durable dates already present in the workbook. The backfill length is configurable.
+The initial refresh reconstructs up to 12 weeks from durable dates already present in the workbook. The backfill length is configurable. Production refreshes always calculate at least the current and immediately prior week, even when `backfill_weeks` is set to 1.
 
 ## Metrics
 
@@ -75,11 +75,11 @@ Counts jobs added during the week that meet the existing verified strong-fit thr
 
 ### Stretch Fit Jobs
 
-Counts jobs added during the week that are classified as Director stretch opportunities by role level or Sprint 42 seniority tags.
+Counts jobs added during the week that have Director or Sprint 42 stretch seniority and remain viable for review. Viability requires either High or Medium potential priority, or a verified score of at least 60 or an existing track-or-better alert tier. Hard exclusions, blocked companies, too-senior roles, and low-signal Director roles are excluded.
 
 ### Auto-Rejected Jobs
 
-Counts dated `Rejected_Jobs` rows plus canonical `Jobs` rows added during the week that were hard excluded by automated scoring.
+Counts dated `Rejected_Jobs` rows plus canonical `Jobs` rows added during the week that were hard excluded by automated scoring. If `Rejected_Jobs` is absent, the refresh treats it as an empty optional input instead of failing.
 
 ### Blocked Company Rejects
 
@@ -160,7 +160,7 @@ python -m src.weekly_value --refresh --as-of 2026-07-09 --backfill-weeks 12
 Focused tests:
 
 ```powershell
-pytest tests/test_weekly_value.py tests/test_weekly_value_status_edges.py tests/test_follow_up.py
+pytest tests/test_weekly_value*.py tests/test_follow_up.py
 ```
 
 ## Automation
@@ -186,9 +186,11 @@ Before merging:
 4. Run the Weekly Value workflow manually on the branch if branch workflow permissions allow it.
 5. Confirm `Weekly_Value` appears with one row per week.
 6. Confirm the current week is first and is calculated through the refresh date.
-7. Confirm the prior week remains filterable.
+7. Confirm the prior week remains filterable and recalculates even when the requested backfill is one week.
 8. Confirm gray headers, filters, frozen columns, and percentage formats are applied.
-9. Confirm blocked companies are not counted as viable strong fits.
-10. Confirm Director roles count as stretch rather than strong fit.
-11. Confirm Senior Director and VP roles count in too-senior suppression.
-12. Confirm no manual review or application data changes in `Jobs`.
+9. Confirm blocked companies are not counted as viable strong or stretch fits.
+10. Confirm viable Director roles count as stretch rather than strong fit.
+11. Confirm low-signal Director roles do not inflate Stretch Fit Jobs.
+12. Confirm Senior Director and VP roles count in too-senior suppression.
+13. Confirm no manual review or application data changes in `Jobs`.
+14. Confirm a missing optional `Rejected_Jobs` tab does not block the refresh.
