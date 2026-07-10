@@ -113,6 +113,19 @@ def _positive_int(value: Any, default: int) -> int:
         return default
 
 
+def _as_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text in {"true", "1", "yes", "on"}:
+        return True
+    if text in {"false", "0", "no", "off", ""}:
+        return False
+    return default
+
+
 def load_weekly_digest_config(path: str | Path | None = None) -> WeeklyDigestConfig:
     config_path = Path(path) if path is not None else DEFAULT_CONFIG_PATH
     if not config_path.exists():
@@ -132,7 +145,7 @@ def load_weekly_digest_config(path: str | Path | None = None) -> WeeklyDigestCon
         top_review_limit=_positive_int(values.get("top_review_limit"), 5),
         top_follow_up_limit=_positive_int(values.get("top_follow_up_limit"), 5),
         top_new_match_limit=_positive_int(values.get("top_new_match_limit"), 5),
-        include_dashboard_only_metrics=bool(values.get("include_dashboard_only_metrics", False)),
+        include_dashboard_only_metrics=_as_bool(values.get("include_dashboard_only_metrics")),
         include_optional_metrics=optional_metrics,
     )
 
@@ -195,6 +208,10 @@ def _job_identity(job: JobPosting) -> str:
     return str(job.job_key or "|".join([job.company, job.title, job.canonical_url])).strip().lower()
 
 
+def _is_terminal(job: JobPosting) -> bool:
+    return _normalize(job.status) in TERMINAL_JOB_STATUSES
+
+
 def _in_summary_week(job: JobPosting, start: date, end: date) -> bool:
     first_seen = parse_iso_date(job.first_seen_date)
     return first_seen is not None and start <= first_seen <= end
@@ -231,7 +248,12 @@ def select_new_match_items(
     candidates = [
         (row_number, job)
         for row_number, job in jobs_with_rows
-        if _in_summary_week(job, start, end) and (_is_strong_fit(job) or _is_stretch_fit(job))
+        if _in_summary_week(job, start, end)
+        and not _is_terminal(job)
+        and not _is_auto_rejected_job(job)
+        and not _is_blocked_company_job(job)
+        and not _is_too_senior_job(job)
+        and (_is_strong_fit(job) or _is_stretch_fit(job))
     ]
     candidates.sort(
         key=lambda item: (
@@ -254,9 +276,7 @@ def select_review_items(
     excluded = excluded_job_keys or set()
     eligible: list[tuple[int, JobPosting]] = []
     for row_number, job in jobs_with_rows:
-        if _job_identity(job) in excluded:
-            continue
-        if job.status in TERMINAL_JOB_STATUSES:
+        if _job_identity(job) in excluded or _is_terminal(job):
             continue
         if _normalize(job.review_status) not in REVIEW_STATUSES:
             continue
@@ -519,11 +539,11 @@ def _formatting_requests(sheet_id: int, row_count: int) -> list[dict[str, Any]]:
                 "cell": {
                     "userEnteredFormat": {
                         "backgroundColor": {"red": 0.72, "green": 0.72, "blue": 0.72},
-                        "textFormat": {"bold": True},
-                        "wrapStrategy": "WRAP",
+                        "textFormat": {"bold": true},
+                        "wrapStrategy": "WRAP"
                     }
                 },
-                "fields": "userEnteredFormat.backgroundColor,userEnteredFormat.textFormat.bold,userEnteredFormat.wrapStrategy",
+                "fields": "userEnteredFormat.backgroundColor,userEnteredFormat.textFormat.bold,userEnteredFormat.wrapStrategy"
             }
         },
         {
@@ -533,10 +553,10 @@ def _formatting_requests(sheet_id: int, row_count: int) -> list[dict[str, Any]]:
                     "startRowIndex": 1,
                     "endRowIndex": max(2, row_count),
                     "startColumnIndex": 0,
-                    "endColumnIndex": column_count,
+                    "endColumnIndex": column_count
                 },
                 "cell": {"userEnteredFormat": {"backgroundColor": {"red": 1, "green": 1, "blue": 1}}},
-                "fields": "userEnteredFormat.backgroundColor",
+                "fields": "userEnteredFormat.backgroundColor"
             }
         },
         {
@@ -545,7 +565,7 @@ def _formatting_requests(sheet_id: int, row_count: int) -> list[dict[str, Any]]:
                     "sheetId": sheet_id,
                     "dimension": "COLUMNS",
                     "startIndex": 0,
-                    "endIndex": column_count,
+                    "endIndex": column_count
                 }
             }
         },
@@ -555,12 +575,12 @@ def _formatting_requests(sheet_id: int, row_count: int) -> list[dict[str, Any]]:
                     "sheetId": sheet_id,
                     "dimension": "COLUMNS",
                     "startIndex": 8,
-                    "endIndex": 9,
+                    "endIndex": 9
                 },
                 "properties": {"pixelSize": 420},
-                "fields": "pixelSize",
+                "fields": "pixelSize"
             }
-        },
+        }
     ]
 
 
