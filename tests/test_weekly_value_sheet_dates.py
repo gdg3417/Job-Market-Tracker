@@ -55,6 +55,8 @@ def test_normalize_record_dates_only_updates_requested_fields():
     record = {
         "reviewed_date": "6/30/26",
         "application_date": "7/1/26",
+        "next_action_date": "7/2/26",
+        "follow_up_date": "7/3/26",
         "review_notes": "Keep 6/30/26 wording unchanged",
     }
 
@@ -62,6 +64,8 @@ def test_normalize_record_dates_only_updates_requested_fields():
 
     assert normalized["reviewed_date"] == "2026-06-30"
     assert normalized["application_date"] == "2026-07-01"
+    assert normalized["next_action_date"] == "2026-07-02"
+    assert normalized["follow_up_date"] == "2026-07-03"
     assert normalized["review_notes"] == record["review_notes"]
     assert record["reviewed_date"] == "6/30/26"
 
@@ -104,3 +108,26 @@ def test_sheet_formatted_application_date_restores_application_metrics():
     assert record["Jobs Reviewed"] == 1
     assert record["Jobs Applied"] == 1
     assert record["Jobs Moved to Active Status"] == 1
+
+
+def test_sheet_formatted_explicit_follow_up_date_restores_due_metric():
+    raw = {
+        **make_job(
+            review_status="applied",
+            application_status="applied",
+            reviewed_date="7/2/26",
+            application_date="7/2/26",
+            follow_up_date="7/3/26",
+        ).to_dict(),
+    }
+    job = JobPosting.from_dict(normalize_record_dates(raw, JOB_DATE_FIELDS))
+
+    record = build_weekly_records(
+        [job],
+        [],
+        as_of="2026-07-04",
+        backfill_weeks=1,
+    )[0]
+
+    assert record["Outstanding Active Roles"] == 1
+    assert record["Follow-ups Due"] == 1
