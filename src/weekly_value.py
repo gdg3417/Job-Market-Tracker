@@ -55,6 +55,7 @@ ACTIONABLE_REVIEW_STATUSES = {
 }
 ACTIONABLE_INTEREST_DECISIONS = {"interested", "watch", "deferred", "applied"}
 STRONG_ALERT_TIERS = {"immediate review", "immediate_review", "strong fit", "strong_fit"}
+VIABLE_ALERT_TIERS = {*STRONG_ALERT_TIERS, "track only", "track_only"}
 TOO_SENIOR_LEVELS = {
     "senior director",
     "vp",
@@ -64,6 +65,7 @@ TOO_SENIOR_LEVELS = {
     "evp",
     "executive vice president",
     "c suite",
+    "c-suite",
     "chief executive officer",
     "chief financial officer",
     "chief operating officer",
@@ -147,6 +149,14 @@ def _closed_by(job: JobPosting, end: date, as_of: date) -> bool:
     return job.status in TERMINAL_JOB_STATUSES and end >= as_of
 
 
+def _visible_score(job: JobPosting) -> int:
+    return job.verified_total_score if job.verified_total_score is not None else job.total_score
+
+
+def _visible_tier(job: JobPosting) -> str:
+    return _normalize(job.verified_alert_tier or job.alert_tier)
+
+
 def _is_dismissed(job: JobPosting) -> bool:
     return (
         _normalize(job.review_status) in DISMISSED_REVIEW_STATUSES
@@ -183,23 +193,32 @@ def _is_auto_rejected_job(job: JobPosting) -> bool:
     return job.score_status == "excluded" or job.alert_tier == "exclude" or "hard_exclude=true" in explanation
 
 
+def _is_viable_stretch_candidate(job: JobPosting) -> bool:
+    if job.potential_priority in {"high", "medium"}:
+        return True
+    return job.score_status == "verified" and (
+        _visible_score(job) >= 60 or _visible_tier(job) in VIABLE_ALERT_TIERS
+    )
+
+
 def _is_stretch_fit(job: JobPosting) -> bool:
     if _is_auto_rejected_job(job) or _is_blocked_company_job(job) or _is_too_senior_job(job):
         return False
     explanation = str(job.score_explanation or "").lower()
-    return (
+    has_stretch_seniority = (
         _normalize(job.role_level) == "director"
         or "stretch_seniority_director" in explanation
         or "seniority_fit=stretch" in explanation
     )
+    return has_stretch_seniority and _is_viable_stretch_candidate(job)
 
 
 def _is_strong_fit(job: JobPosting) -> bool:
     if _is_stretch_fit(job) or _is_blocked_company_job(job) or _is_too_senior_job(job):
         return False
-    visible_score = job.verified_total_score if job.verified_total_score is not None else job.total_score
-    visible_tier = _normalize(job.verified_alert_tier or job.alert_tier)
-    return job.score_status == "verified" and (visible_score >= 75 or visible_tier in STRONG_ALERT_TIERS)
+    return job.score_status == "verified" and (
+        _visible_score(job) >= 75 or _visible_tier(job) in STRONG_ALERT_TIERS
+    )
 
 
 def _rejected_row_date(row: dict[str, Any]) -> date | None:
@@ -360,8 +379,9 @@ def build_weekly_records(
 ) -> list[dict[str, Any]]:
     as_of_date = _date(as_of) or _date(today_iso()) or date.today()
     current_start = _week_start(as_of_date)
+    weeks = max(2, int(backfill_weeks))
     records = []
-    for offset in range(max(1, int(backfill_weeks)) - 1, -1, -1):
+    for offset in range(weeks - 1, -1, -1):
         start = current_start - timedelta(days=7 * offset)
         records.append(
             calculate_week_record(
@@ -528,9 +548,9 @@ def _formatting_requests(sheet_id: int, row_count: int) -> list[dict[str, Any]]:
     ]
 
 
-def _read_existing_records(sheet_client: SheetClient) -> list[dict[str, Any]]:
+def _read_optional_records(sheet_client: SheetClient, worksheet_name: str) -> list[dict[str, Any]]:
     try:
-        return sheet_client.read_records(WEEKLY_VALUE_SHEET)
+        return sheet_client.read_records(worksheet_name)
     except Exception as exc:
         if exc.__class__.__name__ == "WorksheetNotFound":
             return []
@@ -567,9 +587,11 @@ def apply_weekly_value(
     as_of_date = _date(as_of) or _date(today_iso()) or date.today()
     jobs = jobs if jobs is not None else [job for _, job in sheet_client.read_jobs_with_row_numbers()]
     rejected_job_rows = (
-        rejected_job_rows if rejected_job_rows is not None else sheet_client.read_records("Rejected_Jobs")
+        rejected_job_rows
+        if rejected_job_rows is not None
+        else _read_optional_records(sheet_client, "Rejected_Jobs")
     )
-    existing_records = _read_existing_records(sheet_client)
+    existing_records = _read_optional_records(sheet_client, WEEKLY_VALUE_SHEET)
     generated = build_weekly_records(
         jobs,
         rejected_job_rows,
