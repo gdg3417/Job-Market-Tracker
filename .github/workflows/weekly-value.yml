@@ -78,7 +78,7 @@ jobs:
           BACKFILL_WEEKS: ${{ github.event.inputs.backfill_weeks || '12' }}
         run: |
           set -o pipefail
-          python -m src.weekly_value --refresh --backfill-weeks "${BACKFILL_WEEKS}" | tee "$RUNNER_TEMP/weekly_value.json"
+          python -m src.weekly_value_sheet_dates --refresh --backfill-weeks "${BACKFILL_WEEKS}" | tee "$RUNNER_TEMP/weekly_value.json"
 
       - name: Write GitHub Step Summary
         if: always()
