@@ -69,7 +69,7 @@ DASHBOARD_ONLY_METRICS = [
     "Noise Removed",
 ]
 REVIEW_STATUSES = {"", "not reviewed", "not reviewed yet", "not_reviewed", "review now", "review_now", "reviewing"}
-TERMINAL_JOB_STATUSES = {"confirmed_closed", "closed", "expired"}
+TERMINAL_JOB_STATUSES = {"confirmed closed", "closed", "expired"}
 
 
 @dataclass(frozen=True, slots=True)
