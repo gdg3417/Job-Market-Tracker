@@ -86,7 +86,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          python -m src.weekly_context --refresh | tee "$RUNNER_TEMP/weekly_context.json"
+          python -m src.weekly_context_hotfix --refresh | tee "$RUNNER_TEMP/weekly_context.json"
 
       - name: Write GitHub Step Summary
         if: always()
