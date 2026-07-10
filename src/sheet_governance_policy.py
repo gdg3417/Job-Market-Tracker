@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, Mapping
 
+from src.decision_evidence import WORK_MODEL_RANK
 from src.models import (
     JOB_FIELDS,
     SPRINT_36_REVIEW_JOB_FIELDS,
@@ -20,13 +21,19 @@ SYSTEM_HEADER_COLOR = "#B7B7B7"
 EDITABLE_HEADER_COLOR = "#93C47D"
 SHEET_GUIDE = "Sheet_Guide"
 BOOLEAN_OPTIONS = ("TRUE", "FALSE")
+MANUAL_PRIORITY_OPTIONS = ("1", "2", "3", "4", "5")
+MANUAL_FIT_RATING_OPTIONS = tuple(str(value) for value in range(1, 11))
+WORK_MODEL_SOURCE_OPTIONS = tuple(sorted(value for value in WORK_MODEL_RANK if value))
 
 JOBS_CONTROLLED_FIELDS: dict[str, tuple[str, ...]] = {
     "review_status": tuple(sorted(VALID_REVIEW_STATUSES)),
     "interest_decision": tuple(sorted(value for value in VALID_INTEREST_DECISIONS if value)),
+    "manual_priority": MANUAL_PRIORITY_OPTIONS,
+    "manual_fit_rating": MANUAL_FIT_RATING_OPTIONS,
     "dismissal_reason": tuple(sorted(value for value in VALID_DISMISSAL_REASONS if value)),
     "application_status": tuple(sorted(value for value in VALID_APPLICATION_STATUSES if value)),
     "work_model": tuple(sorted(VALID_WORK_MODEL_VALUES)),
+    "work_model_source": WORK_MODEL_SOURCE_OPTIONS,
     "compensation_source_type": tuple(sorted(VALID_COMPENSATION_SOURCE_TYPES)),
     "compensation_confidence": tuple(sorted(VALID_EVIDENCE_CONFIDENCE)),
     "work_model_confidence": tuple(sorted(VALID_EVIDENCE_CONFIDENCE)),
