@@ -168,8 +168,6 @@ class SheetClient:
 
         records: list[dict[str, Any]] = []
         for row in values[header_index + 1 :]:
-            if not any(str(value or "").strip() for value in row):
-                continue
             record: dict[str, Any] = {}
             for header in spec.headers:
                 index = normalized_to_index[normalize_header_name(header)]
