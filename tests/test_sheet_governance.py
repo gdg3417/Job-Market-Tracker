@@ -20,6 +20,11 @@ from src.sheet_governance import (
     build_sheet_requests,
     validate_governance_definitions,
 )
+from src.sheet_governance_policy import (
+    MANUAL_FIT_RATING_OPTIONS,
+    MANUAL_PRIORITY_OPTIONS,
+    WORK_MODEL_SOURCE_OPTIONS,
+)
 
 
 def _request_types(requests):
@@ -47,11 +52,23 @@ def test_governance_definitions_are_valid_and_jobs_fields_exist():
     assert set(JOBS_CONTROLLED_FIELDS) <= JOBS_EDITABLE_FIELDS
 
 
-def test_jobs_controlled_options_reuse_existing_model_values():
+def test_jobs_controlled_options_reuse_existing_model_values_and_workflow_scales():
     assert set(JOBS_CONTROLLED_FIELDS["review_status"]) == VALID_REVIEW_STATUSES
     assert set(JOBS_CONTROLLED_FIELDS["application_status"]) == {
         value for value in VALID_APPLICATION_STATUSES if value
     }
+    assert JOBS_CONTROLLED_FIELDS["manual_priority"] == MANUAL_PRIORITY_OPTIONS == (
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+    )
+    assert JOBS_CONTROLLED_FIELDS["manual_fit_rating"] == MANUAL_FIT_RATING_OPTIONS == tuple(
+        str(value) for value in range(1, 11)
+    )
+    assert JOBS_CONTROLLED_FIELDS["work_model_source"] == WORK_MODEL_SOURCE_OPTIONS
+    assert "user_entered" in WORK_MODEL_SOURCE_OPTIONS
 
 
 def test_jobs_requests_color_only_safe_manual_headers_green():
@@ -88,7 +105,16 @@ def test_jobs_requests_color_only_safe_manual_headers_green():
 
 
 def test_jobs_requests_add_strict_dropdowns_to_controlled_fields():
-    headers = ["company", "review_status", "application_status", "review_notes"]
+    headers = [
+        "company",
+        "review_status",
+        "manual_priority",
+        "manual_fit_rating",
+        "application_status",
+        "work_model",
+        "work_model_source",
+        "review_notes",
+    ]
     requests, *_ = build_sheet_requests(
         sheet_id=12,
         headers=headers,
@@ -97,8 +123,8 @@ def test_jobs_requests_add_strict_dropdowns_to_controlled_fields():
     )
     validations = _validation_requests(requests)
 
-    assert len(validations) == 2
-    assert {item["range"]["startColumnIndex"] for item in validations} == {1, 2}
+    assert len(validations) == 6
+    assert {item["range"]["startColumnIndex"] for item in validations} == {1, 2, 3, 4, 5, 6}
     assert all(item["rule"]["strict"] is True for item in validations)
     assert all(item["rule"]["showCustomUi"] is True for item in validations)
     assert all(item["rule"]["condition"]["type"] == "ONE_OF_LIST" for item in validations)
