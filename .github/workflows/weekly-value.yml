@@ -72,7 +72,7 @@ jobs:
           PY
 
       - name: Run focused tests
-        run: pytest tests/test_weekly_value*.py tests/test_follow_up.py tests/test_weekly_context.py
+        run: pytest tests/test_weekly_value*.py tests/test_follow_up.py tests/test_weekly_context*.py
 
       - name: Refresh Weekly Value dashboard
         shell: bash
