@@ -379,7 +379,7 @@ def build_weekly_records(
 ) -> list[dict[str, Any]]:
     as_of_date = _date(as_of) or _date(today_iso()) or date.today()
     current_start = _week_start(as_of_date)
-    weeks = max(2, int(backfill_weeks))
+    weeks = max(1, int(backfill_weeks))
     records = []
     for offset in range(weeks - 1, -1, -1):
         start = current_start - timedelta(days=7 * offset)
@@ -596,7 +596,7 @@ def apply_weekly_value(
         jobs,
         rejected_job_rows,
         as_of=as_of_date,
-        backfill_weeks=backfill_weeks,
+        backfill_weeks=max(2, int(backfill_weeks)),
     )
     merged = merge_weekly_records(existing_records, generated, as_of=as_of_date)
     values = build_weekly_values(merged)
