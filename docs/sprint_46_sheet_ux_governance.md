@@ -35,6 +35,8 @@ Dropdowns are applied to these `Jobs` fields when present:
 13. `benefits_confidence`
 14. `required_office_days_per_week`
 
+Optional controlled fields include a blank dropdown choice so a prior decision, rating, source, or office-day value can be cleared without entering invalid data.
+
 Boolean dropdowns are also applied to existing controlled fields on the configuration tabs.
 
 Fields such as `interview_stage` and `next_action` remain editable without a dropdown because the current model does not define a closed set of valid values for them. Sprint 46 does not invent a conflicting stage or action vocabulary.
@@ -78,12 +80,13 @@ Run `Job Tracker Sheet UX Governance` manually on `main`, then verify:
 
 1. `Jobs` has green headers only on safe manual columns.
 2. `Jobs.review_status`, `Jobs.application_status`, manual priority, manual fit rating, evidence-source fields, and the other controlled fields show dropdowns.
-3. System-managed `Jobs` headers are gray.
-4. `Review_Queue`, `Follow_Up_Queue`, `Weekly_Value`, `Weekly_Context`, `Dashboard`, and `Digest` remain gray and generated.
-5. Configuration-tab headers are green.
-6. Filters and frozen headers work on tabular sheets.
-7. Existing review notes, statuses, dates, and evidence values remain unchanged.
-8. `Sheet_Guide` exists and explains where edits belong.
+3. Optional controlled fields can be returned to blank.
+4. System-managed `Jobs` headers are gray.
+5. `Review_Queue`, `Follow_Up_Queue`, `Weekly_Value`, `Weekly_Context`, `Dashboard`, and `Digest` remain gray and generated.
+6. Configuration-tab headers are green.
+7. Filters and frozen headers work on tabular sheets.
+8. Existing review notes, statuses, dates, and evidence values remain unchanged.
+9. `Sheet_Guide` exists and explains where edits belong.
 
 No local PowerShell validation is required before merge when GitHub Actions passes.
 
