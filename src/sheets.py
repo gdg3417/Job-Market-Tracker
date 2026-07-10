@@ -12,7 +12,7 @@ from google.oauth2.service_account import Credentials
 from gspread.exceptions import APIError, WorksheetNotFound
 
 from src.models import JobPosting
-from src.schema import validate_record_headers_for_write
+from src.schema import CANONICAL_SCHEMA, SchemaValidationError, validate_record_headers_for_write
 from src.settings import Settings
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -144,8 +144,44 @@ class SheetClient:
             self._header_cache[worksheet_name] = [header.strip() for header in headers]
         return self._header_cache[worksheet_name]
 
+    def _read_canonical_records(self, worksheet_name: str, worksheet: gspread.Worksheet) -> list[dict[str, Any]]:
+        spec = CANONICAL_SCHEMA[worksheet_name]
+        values = with_quota_backoff(
+            lambda: worksheet.get_values(),
+            operation_name=f"read values {worksheet_name}",
+        )
+        self._header_cache[worksheet_name] = list(spec.headers)
+        header_index = max(0, int(spec.header_row) - 1)
+        if len(values) <= header_index:
+            return []
+
+        actual_headers = [str(header or "").strip() for header in values[header_index]]
+        normalized_to_index: dict[str, int] = {}
+        for index, header in enumerate(actual_headers):
+            normalized = normalize_header_name(header)
+            if normalized and normalized not in normalized_to_index:
+                normalized_to_index[normalized] = index
+
+        missing = [header for header in spec.headers if normalize_header_name(header) not in normalized_to_index]
+        if missing:
+            raise SchemaValidationError(f"Worksheet {worksheet_name} is missing required headers before read: {', '.join(missing)}")
+
+        records: list[dict[str, Any]] = []
+        for row in values[header_index + 1 :]:
+            if not any(str(value or "").strip() for value in row):
+                continue
+            record: dict[str, Any] = {}
+            for header in spec.headers:
+                index = normalized_to_index[normalize_header_name(header)]
+                record[header] = row[index] if index < len(row) else ""
+            records.append(record)
+        return records
+
     def read_records(self, worksheet_name: str) -> list[dict[str, Any]]:
         worksheet = self.get_worksheet(worksheet_name)
+        if worksheet_name in CANONICAL_SCHEMA:
+            return self._read_canonical_records(worksheet_name, worksheet)
+
         records = with_quota_backoff(
             lambda: worksheet.get_all_records(numericise_ignore=["all"]),
             operation_name=f"read records {worksheet_name}",
@@ -249,7 +285,7 @@ def run_sprint2_smoke_test(settings: Settings) -> dict[str, Any]:
         config_companies_count=len(companies),
         config_searches_count=len(searches),
     )
-    sheet_client.append_run(run_record)
+    sheet_client.append_run(record=run_record)
 
     return {
         "run_mode": "sprint_2_sheets_smoke_test",
