@@ -70,6 +70,9 @@ jobs:
       - name: Validate governance definitions
         run: python -m src.sheet_governance --validate
 
+      - name: Validate live workbook schema
+        run: python -m src.schema --validate
+
       - name: Apply sheet UX governance
         shell: bash
         run: |
