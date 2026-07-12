@@ -96,6 +96,28 @@ def load_thresholds(path: str | Path) -> HealthThresholds:
     return HealthThresholds.from_yaml(path)
 
 
+def prepare_workbook_schema(
+    sheet_client: Any,
+    *,
+    dry_run: bool,
+    schema_prevalidated: bool = False,
+) -> str:
+    """Validate or migrate once, unless the current workflow already completed preflight."""
+    if schema_prevalidated:
+        return "prevalidated"
+
+    from src.schema import migrate_trailing_headers, validate_workbook_or_raise
+
+    if dry_run:
+        validate_workbook_or_raise(sheet_client)
+        return "validated"
+
+    migration = migrate_trailing_headers(sheet_client)
+    if not migration.ok:
+        raise RuntimeError("Workbook schema migration did not produce a valid workbook")
+    return "migrated"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Calculate and persist Sprint 33 verification health")
     execution = parser.add_mutually_exclusive_group(required=True)
@@ -106,24 +128,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-id", default="")
     parser.add_argument("--no-dashboard", action="store_true")
     parser.add_argument("--no-run-log", action="store_true")
+    parser.add_argument(
+        "--schema-prevalidated",
+        action="store_true",
+        help="Reuse a successful schema preflight from the current workflow instead of rereading every header.",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    from src.schema import migrate_trailing_headers, validate_workbook_or_raise
     from src.settings import load_settings
     from src.sheets import SheetClient
 
     client = SheetClient.from_settings(load_settings())
     thresholds = load_thresholds(args.config)
     as_of = parse_datetime(args.as_of) if args.as_of else None
-    if args.dry_run:
-        validate_workbook_or_raise(client)
-    else:
-        migration = migrate_trailing_headers(client)
-        if not migration.ok:
-            raise RuntimeError("Workbook schema migration did not produce a valid workbook")
+    schema_action = prepare_workbook_schema(
+        client,
+        dry_run=args.dry_run,
+        schema_prevalidated=args.schema_prevalidated,
+    )
 
     result = calculate_from_workbook(client, thresholds=thresholds, as_of=as_of, run_id=args.run_id)
     dashboard_rows = 0
@@ -138,6 +163,7 @@ def main() -> None:
             "dashboard_rows_written": dashboard_rows,
             "history_action": history_action,
             "dry_run": args.dry_run,
+            "schema_action": schema_action,
         },
         indent=2,
         sort_keys=True,
@@ -148,7 +174,8 @@ __all__ = [
     "BLOCKER_REASONS", "AgingMetric", "Blocker", "FunnelMetric", "HealthComponent",
     "HealthThresholds", "VerificationHealthResult", "build_dashboard_section",
     "build_run_record", "calculate_from_workbook", "calculate_verification_health",
-    "classify_blocker", "load_thresholds", "upsert_run_record", "write_dashboard_section",
+    "classify_blocker", "load_thresholds", "prepare_workbook_schema", "upsert_run_record",
+    "write_dashboard_section",
 ]
 
 

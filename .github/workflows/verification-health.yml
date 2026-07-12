@@ -103,15 +103,60 @@ jobs:
           echo "execution=$execution" >> "$GITHUB_OUTPUT"
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
 
+      - name: Cool down Google Sheets quota
+        shell: bash
+        run: |
+          echo "Waiting 75 seconds after schema preflight before the workbook health read and write cycle."
+          sleep 75
+
       - name: Calculate verification health
         shell: bash
         run: |
-          set -o pipefail
-          args=("--${{ steps.mode.outputs.execution }}")
+          args=("--${{ steps.mode.outputs.execution }}" "--schema-prevalidated")
           if [ -n "${{ steps.mode.outputs.run_id }}" ]; then
             args+=(--run-id "${{ steps.mode.outputs.run_id }}")
           fi
-          python -m src.verification_health "${args[@]}" | tee "$RUNNER_TEMP/verification_health.json"
+
+          stdout_path="$RUNNER_TEMP/verification_health.stdout"
+          stderr_path="$RUNNER_TEMP/verification_health.stderr"
+          output_path="$RUNNER_TEMP/verification_health.json"
+
+          set +e
+          python -m src.verification_health "${args[@]}" >"$stdout_path" 2>"$stderr_path"
+          command_status=$?
+          set -e
+
+          cat "$stdout_path"
+          cat "$stderr_path" >&2
+          cp "$stdout_path" "$output_path"
+
+          if [ "$command_status" -ne 0 ]; then
+            ERROR_FILE="$stderr_path" python - <<'PY' >> "$output_path"
+          import json
+          import os
+          from pathlib import Path
+
+          text = Path(os.environ["ERROR_FILE"]).read_text(encoding="utf-8", errors="replace")
+          lines = [line.strip() for line in text.splitlines() if line.strip()]
+          detail = lines[-1] if lines else "Verification health command failed without stderr output."
+          error_type = detail.split(":", 1)[0] if ":" in detail else "command_failed"
+          print(json.dumps({
+              "overall_classification": "not calculated",
+              "overall_score": "",
+              "status": "failed",
+              "error_type": error_type,
+              "error_message": detail,
+              "history_action": "not written",
+              "dashboard_rows_written": 0,
+              "sla_breach_count": 0,
+              "blocker_counts": {},
+              "health_components": [],
+          }))
+          PY
+            echo "::error::Verification health calculation failed after a successful schema preflight. See the traceback and failure detail above."
+          fi
+
+          exit "$command_status"
 
       - name: Write GitHub Step Summary
         if: always()
@@ -133,6 +178,8 @@ jobs:
               "history_action": "not written",
               "dashboard_rows_written": 0,
               "health_components": [],
+              "error_type": "",
+              "error_message": "",
           }
 
           def _safe_count_sum(value):
@@ -183,4 +230,10 @@ jobs:
                           f"| {component.get('label', '')} | {component.get('score', '')} | "
                           f"{component.get('classification', '')} |\n"
                       )
+              error_message = str(data.get("error_message") or "").strip()
+              if error_message:
+                  error_type = str(data.get("error_type") or "command_failed").strip()
+                  safe_detail = error_message.replace("`", "'").replace("\n", " ")
+                  handle.write(f"\nFailure type: `{error_type}`\n\n")
+                  handle.write(f"Failure detail: `{safe_detail[:1500]}`\n")
           PY
