@@ -1,8 +1,12 @@
+import sys
+
 from src.verification_health import (
     build_dashboard_section,
     build_run_record,
     calculate_from_workbook,
     calculate_verification_health,
+    parse_args,
+    prepare_workbook_schema,
     upsert_run_record,
 )
 from tests.verification_health_helpers import AS_OF, job, successful_daily_run
@@ -76,6 +80,26 @@ def test_calculate_from_workbook_uses_only_existing_canonical_tabs():
         "Jobs", "Job_Sources", "Enrichment_Queue", "Enrichment_Evidence",
         "Runs", "Posting_Resolution", "Target_Companies", "Config_Companies",
     }
+
+
+def test_prevalidated_schema_skips_duplicate_workbook_preflight():
+    class NoWorkbookAccessExpected:
+        def __getattr__(self, name):
+            raise AssertionError(f"Unexpected workbook access through {name}")
+
+    action = prepare_workbook_schema(
+        NoWorkbookAccessExpected(),
+        dry_run=False,
+        schema_prevalidated=True,
+    )
+    assert action == "prevalidated"
+
+
+def test_cli_accepts_schema_prevalidated_flag(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["verification_health", "--run", "--schema-prevalidated"])
+    args = parse_args()
+    assert args.run is True
+    assert args.schema_prevalidated is True
 
 
 def test_run_record_uses_existing_runs_schema_shape():
