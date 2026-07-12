@@ -22,6 +22,11 @@ from src.verification_health_state import (
 )
 
 
+def _rows_with_job_key(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Exclude blank worksheet rows before portfolio calculations."""
+    return [row for row in rows if str(row.get("job_key") or "").strip()]
+
+
 def calculate_verification_health(
     *,
     jobs: list[dict[str, Any]],
@@ -42,8 +47,23 @@ def calculate_verification_health(
         now = now.replace(tzinfo=UTC)
     now = now.astimezone(UTC)
 
+    raw_resolution_rows = resolution_rows or []
+    records_read = {
+        "jobs": len(jobs),
+        "job_sources": len(job_sources),
+        "queue": len(queue_rows),
+        "evidence": len(evidence_rows),
+        "resolutions": len(raw_resolution_rows),
+        "runs": len(runs_rows),
+    }
+    jobs = _rows_with_job_key(jobs)
+    job_sources = _rows_with_job_key(job_sources)
+    queue_rows = _rows_with_job_key(queue_rows)
+    evidence_rows = _rows_with_job_key(evidence_rows)
+    resolution_rows = _rows_with_job_key(raw_resolution_rows)
+
     queues = latest_by_job(queue_rows, "updated_at", "last_attempted_at", "created_at")
-    resolutions = latest_by_job(resolution_rows or [], "updated_at", "attempted_at", "created_at")
+    resolutions = latest_by_job(resolution_rows, "updated_at", "attempted_at", "created_at")
     evidence_by_job: dict[str, list[dict[str, Any]]] = {}
     for row in evidence_rows:
         evidence_by_job.setdefault(str(row.get("job_key") or ""), []).append(row)
@@ -85,8 +105,14 @@ def calculate_verification_health(
         for job in jobs if str(job.get("job_key") or "") in blockers
     ]
     summaries.sort(key=lambda row: row["age_hours"], reverse=True)
-    oldest_high = [row for row in summaries if is_high(jobs_by_key[row["job_key"]])][: limits.dashboard_job_limit]
-    oldest_target = [row for row in summaries if is_target(jobs_by_key[row["job_key"]], company_keys)][: limits.dashboard_job_limit]
+    oldest_high = [
+        row for row in summaries
+        if row["job_key"] in jobs_by_key and is_high(jobs_by_key[row["job_key"]])
+    ][: limits.dashboard_job_limit]
+    oldest_target = [
+        row for row in summaries
+        if row["job_key"] in jobs_by_key and is_target(jobs_by_key[row["job_key"]], company_keys)
+    ][: limits.dashboard_job_limit]
     manual_reasons = {
         "manual_review_required", "source_blocked", "parser_failure",
         "no_supported_enrichment_path", "authoritative_match_below_threshold",
@@ -106,7 +132,11 @@ def calculate_verification_health(
         funnel=funnel,
         aging=aging,
         blocker_counts=dict(sorted(blocker_counts.items(), key=lambda item: (-item[1], item[0]))),
-        high_potential_blockers={key: blocker.reason for key, blocker in blockers.items() if is_high(jobs_by_key[key])},
+        high_potential_blockers={
+            key: blocker.reason
+            for key, blocker in blockers.items()
+            if key in jobs_by_key and is_high(jobs_by_key[key])
+        },
         sla_breaches=breaches,
         health_components=components,
         oldest_high_potential=oldest_high,
@@ -114,8 +144,5 @@ def calculate_verification_health(
         manual_intervention=manual,
         critical_overrides=overrides,
         thresholds=limits,
-        records_read={
-            "jobs": len(jobs), "job_sources": len(job_sources), "queue": len(queue_rows),
-            "evidence": len(evidence_rows), "resolutions": len(resolution_rows or []), "runs": len(runs_rows),
-        },
+        records_read=records_read,
     )
