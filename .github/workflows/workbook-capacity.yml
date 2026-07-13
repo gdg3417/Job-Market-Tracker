@@ -126,6 +126,7 @@ jobs:
           rows = [
               ("Status", result.get("status", "not_run")),
               ("Run mode", result.get("run_mode", "not_run")),
+              ("Apply requested", result.get("requested_apply", False)),
               ("Compaction applied", result.get("applied", False)),
               ("Blank formatting approved", result.get("allow_trim_blank_formatting", False)),
               ("Classification", audit.get("classification", "not_calculated")),
