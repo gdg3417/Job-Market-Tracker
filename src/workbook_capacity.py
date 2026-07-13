@@ -84,6 +84,8 @@ class SheetCapacityAudit:
     note_cells: int
     validation_cells: int
     formatted_blank_cells_detected: int
+    blank_formatted_grid_cells_detected: int
+    formatting_unverified_grid_cells: int
     formatting_scan_complete: bool
     structural_ranges: int
     target_rows: int
@@ -173,6 +175,7 @@ class WorkbookCapacityAudit:
 @dataclass(slots=True)
 class CompactionResult:
     status: str
+    requested_apply: bool
     applied: bool
     allow_trim_blank_formatting: bool
     requests_planned: int
@@ -185,8 +188,13 @@ class CompactionResult:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "run_mode": "workbook_capacity_compaction" if self.applied else "workbook_capacity_plan",
+            "run_mode": (
+                "workbook_capacity_compaction"
+                if self.requested_apply
+                else "workbook_capacity_plan"
+            ),
             "status": self.status,
+            "requested_apply": self.requested_apply,
             "applied": self.applied,
             "allow_trim_blank_formatting": self.allow_trim_blank_formatting,
             "requests_planned": self.requests_planned,
@@ -419,17 +427,23 @@ def audit_sheet(
         highest_structural_column = max(highest_structural_column, column_end)
         unknown_ranges.extend(unknown)
 
+    highest_hard_metadata_row = max(
+        highest_hard_metadata_row,
+        highest_structural_row,
+    )
+    highest_hard_metadata_column = max(
+        highest_hard_metadata_column,
+        highest_structural_column,
+    )
     meaningful_row = max(
         highest_populated_row,
         highest_formula_row,
         highest_hard_metadata_row,
-        highest_structural_row,
     )
     meaningful_column = max(
         highest_populated_column,
         highest_formula_column,
         highest_hard_metadata_column,
-        highest_structural_column,
     )
     minimum_rows, minimum_columns = _minimum_dimensions(
         title,
@@ -474,13 +488,22 @@ def audit_sheet(
         allocated_cells - (no_approval_rows * no_approval_columns),
     )
 
-    truly_unused = 0
-    if column_delete_possible and formatting_evidence.column_scan_complete and not column_formatting:
-        truly_unused += row_count * (column_count - target_columns)
-    if row_delete_possible and formatting_evidence.row_scan_complete and not row_formatting:
-        retained_columns = target_columns if not column_approval else column_count
-        truly_unused += (row_count - target_rows) * retained_columns
-    truly_unused = min(truly_unused, reclaimable)
+    formatted_cells_in_delete_region = {
+        (row, column)
+        for row, column in formatting_evidence.formatted_cells
+        if row > target_rows or column > target_columns
+    }
+    candidate_formatting_scan_complete = (
+        (not row_delete_possible or formatting_evidence.row_scan_complete)
+        and (not column_delete_possible or formatting_evidence.column_scan_complete)
+    )
+    formatted_blank_detected = len(formatted_cells_in_delete_region)
+    if candidate_formatting_scan_complete:
+        truly_unused = max(0, reclaimable - formatted_blank_detected)
+        formatting_unverified = 0
+    else:
+        truly_unused = 0
+        formatting_unverified = max(0, reclaimable - formatted_blank_detected)
 
     highest_formatting_row = formatting_evidence.highest_row
     highest_formatting_column = formatting_evidence.highest_column
@@ -518,17 +541,18 @@ def audit_sheet(
         note_cells=note_cells,
         validation_cells=validation_cells,
         formatted_blank_cells_detected=len(formatting_evidence.formatted_cells),
-        formatting_scan_complete=(
-            formatting_evidence.row_scan_complete
-            and formatting_evidence.column_scan_complete
-        ),
+        blank_formatted_grid_cells_detected=formatted_blank_detected,
+        formatting_unverified_grid_cells=formatting_unverified,
+        formatting_scan_complete=candidate_formatting_scan_complete,
         structural_ranges=structural_ranges,
         target_rows=target_rows,
         target_columns=target_columns,
         estimated_reclaimable_cells=reclaimable,
         reclaimable_without_formatting_approval=reclaimable_without_approval,
         truly_unused_grid_cells=truly_unused,
-        blank_formatted_or_unverified_grid_cells=max(0, reclaimable - truly_unused),
+        blank_formatted_or_unverified_grid_cells=(
+            formatted_blank_detected + formatting_unverified
+        ),
         row_compaction_requires_formatting_approval=row_approval,
         column_compaction_requires_formatting_approval=column_approval,
         unknown_ranges=unknown_ranges,
@@ -822,14 +846,17 @@ def compact_workbook(
     else:
         after = before
     cells_reclaimed = max(0, before.allocated_cells - after.allocated_cells) if apply else 0
+    changes_applied = apply and bool(requests)
+    status = "blocked" if apply and not requests and before.estimated_reclaimable_cells else "success"
     return CompactionResult(
-        status="success",
-        applied=apply,
+        status=status,
+        requested_apply=apply,
+        applied=changes_applied,
         allow_trim_blank_formatting=allow_trim_blank_formatting,
         requests_planned=len(requests),
-        requests_submitted=len(requests) if apply else 0,
+        requests_submitted=len(requests) if changes_applied else 0,
         sheets_planned=len(planned_sheet_ids),
-        sheets_compacted=len(planned_sheet_ids) if apply else 0,
+        sheets_compacted=len(planned_sheet_ids) if changes_applied else 0,
         cells_reclaimed=cells_reclaimed,
         before=before,
         after=after,
