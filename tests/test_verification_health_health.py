@@ -37,6 +37,33 @@ def test_empty_workbook_is_reproducible_and_does_not_crash():
     assert result.critical_overrides
 
 
+def test_blank_canonical_rows_are_ignored_without_losing_raw_read_counts():
+    result = calculate_verification_health(
+        jobs=[{}, {"job_key": "   "}, job("valid")],
+        job_sources=[{}],
+        queue_rows=[{}],
+        evidence_rows=[{}],
+        resolution_rows=[{}],
+        runs_rows=[successful_daily_run()],
+        as_of=AS_OF,
+    )
+
+    normalized = next(metric for metric in result.funnel if metric.stage == "jobs_normalized")
+    leads = next(metric for metric in result.funnel if metric.stage == "leads_received")
+    assert normalized.current_count == 1
+    assert leads.current_count == 0
+    assert result.blocker_counts == {"enrichment_not_attempted": 1}
+    assert "" not in result.high_potential_blockers
+    assert result.records_read == {
+        "jobs": 3,
+        "job_sources": 1,
+        "queue": 1,
+        "evidence": 1,
+        "resolutions": 1,
+        "runs": 1,
+    }
+
+
 def test_configurable_health_boundaries_change_classification():
     thresholds = HealthThresholds(
         verification_watch_breach_rate=0.05,
