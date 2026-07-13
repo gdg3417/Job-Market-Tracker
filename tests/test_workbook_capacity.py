@@ -242,6 +242,8 @@ def test_complete_clean_format_scan_identifies_truly_unused_grid_and_needs_no_ap
 
     assert result.estimated_reclaimable_cells == 1700
     assert result.truly_unused_grid_cells == 1700
+    assert result.blank_formatted_grid_cells_detected == 0
+    assert result.formatting_unverified_grid_cells == 0
     assert result.blank_formatted_or_unverified_grid_cells == 0
     assert result.reclaimable_without_formatting_approval == 1700
     assert result.safe_to_compact is True
@@ -310,6 +312,9 @@ def test_compaction_without_formatting_approval_does_not_delete_unverified_blank
 
     result = compact_workbook(client, apply=True)
 
+    assert result.status == "blocked"
+    assert result.requested_apply is True
+    assert result.applied is False
     assert result.requests_planned == 0
     assert result.requests_submitted == 0
     assert client.workbook.batch_updates == []
