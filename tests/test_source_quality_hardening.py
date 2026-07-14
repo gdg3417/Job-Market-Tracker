@@ -239,7 +239,7 @@ def test_review_yield_is_bounded_for_application_status_only():
 def test_audit_includes_failed_static_sources_without_reenabling_execution():
     companies = [
         _company(company_id="custom", source_type="custom", source_url="https://example.com/careers"),
-        _company(company_id="blocked", source_quality="failed"),
+        _company(company_id="blocked", source_url="https://example.com/careers", source_quality="failed"),
         _company(company_id="gmail", ingestion_mode="gmail_only"),
     ]
     audit_rows = configured_static_source_rows_for_audit(companies)
