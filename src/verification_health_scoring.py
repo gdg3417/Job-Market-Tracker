@@ -140,6 +140,11 @@ def calculate_components(
     ))
 
     active = lambda row: not is_closed(row)
+    actionable_keys = {
+        str(job.get("job_key") or "").strip()
+        for job in jobs
+        if str(job.get("job_key") or "").strip()
+    }
     priority_actionable = [job for job in jobs if active(job) and (is_high(job) or is_medium_signal(job))]
     high_actionable = [job for job in jobs if active(job) and is_high(job)]
     breached_keys = {str(row.get("job_key") or "") for row in breaches}
@@ -173,11 +178,15 @@ def calculate_components(
         evidence_score = 60
     else:
         evidence_score = round(40 * average_evidence / max(1, thresholds.evidence_degraded_score))
+    actionable_accepted_evidence = sum(
+        1 for row in evidence
+        if truthy(row.get("accepted")) and str(row.get("job_key") or "").strip() in actionable_keys
+    )
     components.append(_component(
         "evidence_completeness", "Actionable evidence completeness", evidence_score,
         {
             "average_actionable_priority_evidence_score": average_evidence,
-            "accepted_evidence_rows": sum(1 for row in evidence if truthy(row.get("accepted"))),
+            "actionable_accepted_evidence_rows": actionable_accepted_evidence,
         },
     ))
 
