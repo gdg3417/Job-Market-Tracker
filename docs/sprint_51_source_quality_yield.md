@@ -4,11 +4,11 @@
 
 Sprint 51 reduces repeated static-source failures and makes source and search value measurable over a configurable reporting window.
 
-The implementation is deliberately conservative. It does not automatically disable a source from one failure, does not delete source history, and does not change scoring weights.
+The implementation is conservative. It does not disable a source from one failure, delete source history, change scoring weights, or automatically remove a low-yield search.
 
 ## Source audit classifications
 
-`python -m src.source_quality` classifies active static and career-page sources as one of:
+`python -m src.source_quality_report` classifies active static and career-page sources as one of:
 
 * `healthy`
 * `empty_but_valid`
@@ -20,20 +20,11 @@ The implementation is deliberately conservative. It does not automatically disab
 * `dns_failure`
 * `manual_review_required`
 
-The live audit follows redirects and performs a bounded HTTP request. It does not crawl unrestricted pages or follow job links.
+The live audit follows redirects and performs one bounded HTTP request per audited source. It does not crawl unrestricted pages or follow discovered job links.
 
-Supported structured ATS detection covers:
-
-* Greenhouse
-* Lever
-* Ashby
-* SmartRecruiters
-
-When a structured ATS is detected, the report recommends the structured connector instead of generic static-page parsing.
+Structured ATS detection covers Greenhouse, Lever, Ashby, and SmartRecruiters. When one is detected, the report recommends the structured ATS path instead of generic static-page parsing.
 
 ## Retry policy
-
-The audit reports a retry decision for each source.
 
 ### Permanent 404 or retired
 
@@ -43,11 +34,11 @@ A repeated 404, 410, or corroborating historical failure requires a configuratio
 
 ### DNS failure
 
-DNS failures receive a seven-day cooldown. After three observations, the source requires manual URL review and receives a longer cooldown.
+DNS failures receive a seven-day cooldown. After three observations, the source requires manual URL review and a longer cooldown.
 
 ### HTTP 403, authentication, or bot protection
 
-A protected response remains recoverable. It receives a fourteen-day cooldown and is never treated as permanently dead from one observation.
+A protected response remains recoverable. It receives a fourteen-day cooldown and is not treated as permanently dead from one observation.
 
 ### Rate limits and temporary server failures
 
@@ -72,9 +63,9 @@ The source-quality workflow supports two modes:
 
 Temporary failures, DNS failures below the limit, and protected pages are not disabled.
 
-Each approved update appends a Sprint 51 marker to `Config_Companies.notes`. Existing notes and historical `Runs` or `Source_Health` records remain unchanged.
+Each approved update appends a Sprint 51 marker to `Config_Companies.notes`. Existing notes and historical `Runs` and `Source_Health` records remain unchanged.
 
-## Four-week source-yield report
+## Source-yield report
 
 The default reporting period is four weeks and can be changed with `--weeks`.
 
@@ -96,15 +87,11 @@ The generated `Source_Yield` worksheet reports:
 * Review yield
 * Actionable conversion
 
-Rows are grouped by available evidence across:
+Rows are grouped by available evidence across Gmail alert or search, static company source, ATS platform, company, and source type.
 
-* Gmail alert or search
-* Static company source
-* ATS platform
-* Company
-* Source type
+The complete report also inventories active configured sources and searches with no observed leads during the reporting window. Zero-result configurations receive an advisory review recommendation. Strategic target-company sources receive `keep_strategic_coverage` instead of a retirement recommendation.
 
-The report uses unique job or rejection identities within each group to prevent duplicate source rows from inflating counts.
+Unique job or rejection identities are used within each group so duplicate source rows do not inflate counts.
 
 ## Yield recommendations
 
@@ -127,32 +114,33 @@ Sprint 51 creates two generated, read-only surfaces:
 * `Source_Audit`
 * `Source_Yield`
 
-The workflow replaces the generated contents idempotently. Neither worksheet is a canonical data-entry surface.
+The workflow replaces the generated contents idempotently and then applies the standard sheet-governance policy. The headers are gray, filters are enabled, and the surfaces are added to `Sheet_Guide`. Neither worksheet is a canonical data-entry surface.
 
 ## Commands
 
 Calculate without workbook writes:
 
 ```text
-python -m src.source_quality --dry-run --weeks 4
+python -m src.source_quality_report --dry-run --weeks 4
 ```
 
-Write the source audit and yield report:
+Write the source audit and complete yield report:
 
 ```text
-python -m src.source_quality --write-report --weeks 4
+python -m src.source_quality_report --write-report --weeks 4
+python -m src.sheet_governance --apply
 ```
 
 Run without live HTTP probes:
 
 ```text
-python -m src.source_quality --write-report --weeks 4 --skip-live-probes
+python -m src.source_quality_report --write-report --weeks 4 --skip-live-probes
 ```
 
 Apply one or more explicitly approved configuration updates:
 
 ```text
-python -m src.source_quality --write-report --weeks 4 --approved-company-id example_company
+python -m src.source_quality_report --write-report --weeks 4 --approved-company-id example_company
 ```
 
 Repeat `--approved-company-id` for multiple exact company identifiers.
@@ -167,9 +155,11 @@ The workflow:
 2. Migrates and validates the workbook schema.
 3. Audits current static sources.
 4. Writes `Source_Audit` and `Source_Yield`.
-5. Applies only explicitly approved cleanup when requested.
-6. Appends a `Runs` record.
-7. Writes classification, yield, and update counts to the GitHub Step Summary.
+5. Includes active zero-result configurations.
+6. Applies only explicitly approved cleanup when requested.
+7. Applies generated-surface governance.
+8. Appends a `Runs` record.
+9. Writes classification, yield, zero-result, and update counts to the GitHub Step Summary.
 
 All workbook writes use the shared `job-tracker-workbook-writes` concurrency group.
 
@@ -189,24 +179,18 @@ After merge:
 2. Confirm `Source_Audit` and `Source_Yield` are created or refreshed.
 3. Confirm permanent 404, DNS, protected, redirect, and ATS classifications are reasonable.
 4. Confirm temporary failures remain retryable.
-5. Confirm no source configuration changed in report mode.
-6. Review recommended changes and identify exact company IDs that are safe to update.
-7. Create a workbook backup before applying reviewed cleanup.
-8. Rerun in `apply_reviewed_cleanup` mode with only the approved company IDs.
-9. Confirm known repeated permanent 404 sources are no longer active static sources.
-10. Confirm temporary failures and strategic target-company sources remain recoverable.
-11. Run the normal daily workflow and confirm source-failure noise and runtime do not regress.
+5. Confirm active zero-result sources and searches are visible.
+6. Confirm strategic target-company sources are retained.
+7. Confirm no source configuration changed in report mode.
+8. Review recommended changes and identify exact company IDs that are safe to update.
+9. Create a workbook backup before applying reviewed cleanup.
+10. Rerun in `apply_reviewed_cleanup` mode with only approved company IDs.
+11. Confirm reviewed repeated permanent 404 sources are no longer active static sources.
+12. Confirm temporary failures and strategic target-company sources remain recoverable.
+13. Run the normal daily workflow and confirm source-failure noise and runtime do not regress.
 
 ## Scope boundaries
 
-Sprint 51 does not:
-
-* Change automatic scoring weights
-* Delete low-yield searches
-* Disable a source from one observation
-* Add paid APIs
-* Perform unrestricted web crawling
-* Delete source-health or run history
-* Change canonical `Jobs` fields
+Sprint 51 does not change automatic scoring weights, delete low-yield searches, disable a source from one observation, add paid APIs, perform unrestricted web crawling, delete source-health history, or change canonical `Jobs` fields.
 
 Complete system documentation and maintenance-readiness consolidation remain Sprint 52 scope.
