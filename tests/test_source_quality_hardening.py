@@ -7,6 +7,7 @@ from src.source_quality import (
     HEALTHY,
     MANUAL_REVIEW,
     PERMANENT_404,
+    STRUCTURED_ATS,
     SourceAuditFinding,
     apply_approved_source_updates,
     audit_static_sources,
@@ -314,3 +315,118 @@ def test_daily_static_run_reads_and_enforces_source_audit():
     assert '_read_optional_records(sheet_client, "Source_Audit")' in text
     assert "filter_static_sources_for_execution(company_rows, audit_rows)" in text
     assert 'status = "all_sources_in_cooldown"' in text
+
+def test_structured_ats_conversion_populates_required_source_slug():
+    cases = [
+        ("greenhouse", "https://boards.greenhouse.io/acme/jobs", "acme"),
+        ("lever", "https://jobs.lever.co/acme", "acme"),
+    ]
+    for platform, final_url, expected_slug in cases:
+        row = _company(source_url="https://example.com/careers", source_slug="")
+        finding = _finding(
+            source_url=row["source_url"],
+            final_url=final_url,
+            classification=STRUCTURED_ATS,
+            ats_platform=platform,
+            http_status=200,
+            retry_eligible=False,
+            requires_configuration_change=True,
+            failure_observations=0,
+            recommended_action="prefer_structured_ats",
+        )
+        client = FakeUpdateClient()
+
+        updates = apply_approved_source_updates(
+            [(2, row)],
+            [finding],
+            approved_company_ids={"example"},
+            sheet_client=client,
+        )
+
+        assert len(updates) == 1
+        updated = client.updates[0][2]
+        assert updated["source_slug"] == expected_slug
+        assert updated["source_type"] == platform
+        assert updates[0]["before"]["source_slug"] == ""
+        assert updates[0]["after"]["source_slug"] == expected_slug
+
+
+def test_structured_ats_conversion_refuses_unusable_slug():
+    row = _company(source_url="https://example.com/careers", source_slug="")
+    finding = _finding(
+        source_url=row["source_url"],
+        final_url="https://example.com/careers",
+        classification=STRUCTURED_ATS,
+        ats_platform="greenhouse",
+        http_status=200,
+        retry_eligible=False,
+        requires_configuration_change=True,
+        failure_observations=0,
+        recommended_action="prefer_structured_ats",
+    )
+    client = FakeUpdateClient()
+
+    updates = apply_approved_source_updates(
+        [(2, row)],
+        [finding],
+        approved_company_ids={"example"},
+        sheet_client=client,
+    )
+
+    assert updates == []
+    assert client.updates == []
+
+
+def test_no_probe_report_preserves_authoritative_source_audit(monkeypatch):
+    events = []
+
+    class FakeClient:
+        def read_records_with_row_numbers(self, worksheet_name):
+            return [(2, _company())]
+
+        def read_records(self, worksheet_name):
+            return []
+
+        def append_run(self, record):
+            events.append(("append_run", record))
+
+    monkeypatch.setattr("src.source_quality_report.build_source_yield_report", lambda **kwargs: [])
+    monkeypatch.setattr("src.source_quality_report.configured_zero_yield_rows", lambda **kwargs: [])
+    monkeypatch.setattr(
+        "src.source_quality_report.write_source_quality_surfaces",
+        lambda *args, **kwargs: events.append(("write_surfaces", kwargs["write_audit"])) or {
+            "source_audit_rows_written": 0,
+            "source_yield_rows_written": 0,
+        },
+    )
+
+    result = run_source_quality_report(
+        probe_sources=False,
+        write_report=True,
+        sheet_client=FakeClient(),
+    )
+
+    assert events[0] == ("write_surfaces", False)
+    assert result["source_audit_preserved"] is True
+    assert result["source_audit_rows_written"] == 0
+
+
+def test_no_probe_cleanup_is_rejected_before_writes():
+    class FakeClient:
+        def read_records_with_row_numbers(self, worksheet_name):
+            return [(2, _company())]
+
+        def read_records(self, worksheet_name):
+            return []
+
+    try:
+        run_source_quality_report(
+            probe_sources=False,
+            write_report=True,
+            approved_company_ids={"example"},
+            sheet_client=FakeClient(),
+        )
+    except ValueError as exc:
+        assert "requires live source probes" in str(exc)
+    else:
+        raise AssertionError("Expected no-probe cleanup to be rejected")

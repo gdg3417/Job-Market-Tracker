@@ -341,6 +341,8 @@ def main() -> None:
         )
     if approved and args.skip_live_probes:
         raise SystemExit("Approved cleanup requires live source probes.")
+    if approved and args.skip_live_probes:
+        raise SystemExit("Approved cleanup requires live source probes.")
     result = run_source_quality_report(
         weeks=max(1, args.weeks),
         probe_sources=not args.skip_live_probes,

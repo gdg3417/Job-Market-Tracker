@@ -737,6 +737,42 @@ def filter_static_sources_for_execution(
     return execute, skipped
 
 
+def _structured_ats_slug(
+    platform: str,
+    *,
+    row: dict[str, Any],
+    finding: SourceAuditFinding,
+) -> str:
+    platform = clean_text(platform).lower()
+    url_candidates = [finding.final_url, finding.source_url, row.get("source_url")]
+    for value in url_candidates:
+        candidate = normalize_url(value)
+        if not candidate:
+            continue
+        parts = urlsplit(candidate)
+        host = (parts.hostname or "").lower().removeprefix("www.")
+        path_parts = [part for part in parts.path.split("/") if part]
+        if platform == "greenhouse":
+            if host == "boards.greenhouse.io" and path_parts:
+                return path_parts[0]
+            if host == "boards-api.greenhouse.io" and "boards" in path_parts:
+                index = path_parts.index("boards")
+                if len(path_parts) > index + 1:
+                    return path_parts[index + 1]
+        elif platform == "lever":
+            if host in {"jobs.lever.co", "hire.lever.co"} and path_parts:
+                return path_parts[0]
+            if host == "api.lever.co" and "postings" in path_parts:
+                index = path_parts.index("postings")
+                if len(path_parts) > index + 1:
+                    return path_parts[index + 1]
+
+    existing = clean_text(row.get("source_slug")).strip("/")
+    if re.fullmatch(r"[A-Za-z0-9._-]+", existing):
+        return existing
+    return ""
+
+
 def apply_approved_source_updates(
     rows_with_numbers: Iterable[tuple[int, dict[str, Any]]],
     findings: Iterable[SourceAuditFinding],
@@ -768,7 +804,11 @@ def apply_approved_source_updates(
             updated["source_quality"] = "success"
         elif finding.classification == STRUCTURED_ATS and finding.ats_platform in {"greenhouse", "lever"}:
             platform = finding.ats_platform
+            source_slug = _structured_ats_slug(platform, row=row, finding=finding)
+            if not source_slug:
+                continue
             updated["source_type"] = platform
+            updated["source_slug"] = source_slug
             updated["ats_platform"] = platform
             updated["ingestion_mode"] = f"ats_{platform}"
             updated["source_quality"] = "success"
@@ -804,6 +844,7 @@ def apply_approved_source_updates(
                 "final_source_url": final_url,
                 "before": {
                     "source_type": row.get("source_type", ""),
+                    "source_slug": row.get("source_slug", ""),
                     "ats_platform": row.get("ats_platform", ""),
                     "ingestion_mode": row.get("ingestion_mode", ""),
                     "source_quality": row.get("source_quality", ""),
@@ -811,6 +852,7 @@ def apply_approved_source_updates(
                 },
                 "after": {
                     "source_type": updated.get("source_type", ""),
+                    "source_slug": updated.get("source_slug", ""),
                     "ats_platform": updated.get("ats_platform", ""),
                     "ingestion_mode": updated.get("ingestion_mode", ""),
                     "source_quality": updated.get("source_quality", ""),
@@ -1064,12 +1106,20 @@ def write_source_quality_surfaces(
     *,
     findings: Iterable[SourceAuditFinding],
     yield_rows: Iterable[SourceYieldRow],
+    write_audit: bool = True,
 ) -> dict[str, int]:
     finding_records = [finding.to_dict() for finding in findings]
     yield_records = [row.to_dict() for row in yield_rows]
+    audit_rows_written = 0
+    if write_audit:
+        audit_rows_written = _replace_generated_sheet(
+            sheet_client, SOURCE_AUDIT_SHEET, SOURCE_AUDIT_HEADERS, finding_records
+        )
     return {
-        "source_audit_rows_written": _replace_generated_sheet(sheet_client, SOURCE_AUDIT_SHEET, SOURCE_AUDIT_HEADERS, finding_records),
-        "source_yield_rows_written": _replace_generated_sheet(sheet_client, SOURCE_YIELD_SHEET, SOURCE_YIELD_HEADERS, yield_records),
+        "source_audit_rows_written": audit_rows_written,
+        "source_yield_rows_written": _replace_generated_sheet(
+            sheet_client, SOURCE_YIELD_SHEET, SOURCE_YIELD_HEADERS, yield_records
+        ),
     }
 
 
@@ -1141,7 +1191,12 @@ def run_source_quality(
 
     writes = {"source_audit_rows_written": 0, "source_yield_rows_written": 0}
     if write_report:
-        writes = write_source_quality_surfaces(client, findings=findings, yield_rows=yield_rows)
+        writes = write_source_quality_surfaces(
+            client,
+            findings=findings,
+            yield_rows=yield_rows,
+            write_audit=probe_sources,
+        )
 
     updates: list[dict[str, Any]] = []
     if approved_company_ids:
