@@ -2,13 +2,14 @@ from src.verification_health import calculate_verification_health
 from tests.verification_health_helpers import AS_OF, job, successful_daily_run
 
 
-def _calculate(jobs):
+def _calculate(jobs, *, resolution_rows=None):
     return calculate_verification_health(
         jobs=jobs,
         job_sources=[],
         queue_rows=[],
         evidence_rows=[],
         runs_rows=[successful_daily_run()],
+        resolution_rows=resolution_rows or [],
         as_of=AS_OF,
     )
 
@@ -103,3 +104,39 @@ def test_invalid_deferred_date_requires_correction_even_with_another_future_date
 
     assert result.actionable_summary["actionable_roles"] == 1
     assert result.blocker_counts == {"manual_review_required": 1}
+
+
+def test_manual_authoritative_url_is_manual_work_until_resolver_validation():
+    result = _calculate([
+        job(
+            "manual-url",
+            manual_authoritative_url="https://jobs.acme.com/manual-url",
+        )
+    ])
+
+    assert result.blocker_counts == {"manual_review_required": 1}
+    assert result.blocker_ownership_counts == {"manual_intervention": 1}
+    assert result.actionable_summary["manual_interventions_required"] == 1
+
+
+def test_validated_manual_authoritative_url_is_not_left_as_manual_url_work():
+    result = _calculate(
+        [
+            job(
+                "validated-manual-url",
+                score_status="verified",
+                verified_total_score=85,
+                manual_authoritative_url="https://jobs.acme.com/validated-manual-url",
+            )
+        ],
+        resolution_rows=[{
+            "job_key": "validated-manual-url",
+            "resolution_state": "manual_override",
+            "authoritative_url": "https://jobs.acme.com/validated-manual-url",
+            "match_confidence": 100,
+            "updated_at": "2026-06-26T17:00:00Z",
+        }],
+    )
+
+    assert result.blocker_counts == {}
+    assert result.actionable_summary["manual_interventions_required"] == 0
