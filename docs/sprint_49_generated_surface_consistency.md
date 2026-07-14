@@ -82,7 +82,9 @@ Normal review candidates exclude:
 * Closed roles
 * Rejected or withdrawn applications
 
-An active application remains visible for follow-up, current context, and dashboard tracking even when a later company preference change would otherwise suppress new leads. This prevents a current application from silently disappearing. It does not restore the role to `Review_Queue` as a normal candidate.
+A non-terminal active application remains visible for follow-up, current context, and dashboard tracking even when a later company preference change would otherwise suppress new leads. This prevents a current application from silently disappearing. It does not restore the role to `Review_Queue` as a normal candidate.
+
+Once lifecycle marks a job closed or expired, the role is removed from `Follow_Up_Queue` and `Weekly_Context` even when the prior active `application_status` remains populated. Dashboard reporting may retain the closed record for historical closure context.
 
 ## Surface freshness
 
@@ -114,6 +116,8 @@ The following workflows use the shared `job-tracker-workbook-writes` concurrency
 
 This prevents simultaneous workflows from rewriting generated tabs, writing health sections, or compacting workbook grids.
 
+Each workflow also uses `queue: max`. GitHub can therefore retain multiple pending workbook runs instead of canceling an older pending run when another workflow enters the shared concurrency group.
+
 Daily ingestion and production enrichment finish with the unified presentation refresh. The weekly workflow uses the same command rather than separately refreshing weekly tabs.
 
 ## Failure handling
@@ -141,12 +145,14 @@ Sprint 49 adds regression coverage for:
 * Consulting-company exclusions
 * Dismissed-role suppression
 * Closed and rejected-role suppression
+* Closed roles with stale active application statuses
 * Active application preservation
 * Deterministic refresh order
 * Idempotent reruns
 * Partial generated-surface failure
 * Surface freshness retention after failure
 * Shared workbook-write concurrency
+* Queued pending workbook runs
 
 The existing full test suite, regression readiness checks, and gold-standard evaluation remain required before merge.
 
