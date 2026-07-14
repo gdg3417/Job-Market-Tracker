@@ -7,11 +7,12 @@ def test_production_workflow_has_bounded_modes_and_nonoverlapping_concurrency():
     assert "workflow_run:" in text
     assert "Job Tracker Daily Run" in text
     assert 'cron: "0 14 * * 0"' in text
-    assert "job-tracker-enrichment-production" in text
+    assert "job-tracker-workbook-writes" in text
     assert "cancel-in-progress: false" in text
     assert "python -m src.enrichment.production" in text
+    assert "python -m src.presentation_refresh" in text
     assert "--mode" in text
-    assert "timeout-minutes: 45" in text
+    assert "timeout-minutes: 60" in text
 
 
 def test_production_workflow_summary_exposes_resolution_metrics():

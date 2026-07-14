@@ -28,7 +28,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: job-tracker-verification-health
+  group: job-tracker-workbook-writes
+  queue: max
   cancel-in-progress: false
 
 jobs:
@@ -141,16 +142,16 @@ jobs:
           detail = lines[-1] if lines else "Verification health command failed without stderr output."
           error_type = detail.split(":", 1)[0] if ":" in detail else "command_failed"
           print(json.dumps({
-              "overall_classification": "not calculated",
-              "overall_score": "",
-              "status": "failed",
-              "error_type": error_type,
-              "error_message": detail,
-              "history_action": "not written",
-              "dashboard_rows_written": 0,
-              "sla_breach_count": 0,
-              "blocker_counts": {},
-              "health_components": [],
+            "overall_classification": "not calculated",
+            "overall_score": "",
+            "status": "failed",
+            "error_type": error_type,
+            "error_message": detail,
+            "history_action": "not written",
+            "dashboard_rows_written": 0,
+            "sla_breach_count": 0,
+            "blocker_counts": {},
+            "health_components": [],
           }))
           PY
             echo "::error::Verification health calculation failed after a successful schema preflight. See the traceback and failure detail above."

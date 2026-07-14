@@ -8,6 +8,16 @@ on:
         required: false
         default: "12"
         type: string
+      as_of:
+        description: Optional YYYY-MM-DD data as-of date
+        required: false
+        default: ""
+        type: string
+      apply_governance:
+        description: Reapply workbook governance after generated surfaces refresh
+        required: false
+        default: false
+        type: boolean
   schedule:
     # Monday pre-email refresh. The normal daily refresh remains below.
     - cron: "0 12 * * 1"
@@ -17,13 +27,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: job-tracker-weekly-value-refresh
+  group: job-tracker-workbook-writes
+  queue: max
   cancel-in-progress: false
 
 jobs:
   weekly-value-refresh:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
       GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
@@ -72,21 +83,35 @@ jobs:
           PY
 
       - name: Run focused tests
-        run: pytest tests/test_weekly_value*.py tests/test_follow_up.py tests/test_weekly_context*.py
+        run: >-
+          pytest
+          tests/test_weekly_value*.py
+          tests/test_follow_up.py
+          tests/test_weekly_context*.py
+          tests/test_sheet_dates_shared.py
+          tests/test_generated_surface*.py
+          tests/test_presentation_refresh*.py
 
-      - name: Refresh Weekly Value dashboard
+      - name: Refresh generated presentation surfaces
         shell: bash
         env:
           BACKFILL_WEEKS: ${{ github.event.inputs.backfill_weeks || '12' }}
+          AS_OF: ${{ github.event.inputs.as_of || '' }}
+          APPLY_GOVERNANCE: ${{ github.event.inputs.apply_governance || false }}
         run: |
           set -o pipefail
-          python -m src.weekly_value_sheet_dates --refresh --backfill-weeks "${BACKFILL_WEEKS}" | tee "$RUNNER_TEMP/weekly_value.json"
-
-      - name: Refresh Weekly Context digest contract
-        shell: bash
-        run: |
-          set -o pipefail
-          python -m src.weekly_context_hotfix --refresh | tee "$RUNNER_TEMP/weekly_context.json"
+          args=(
+            --refresh
+            --source-run "weekly-value-workflow"
+            --backfill-weeks "${BACKFILL_WEEKS}"
+          )
+          if [ -n "${AS_OF}" ]; then
+            args+=(--as-of "${AS_OF}")
+          fi
+          if [ "${APPLY_GOVERNANCE}" = "true" ]; then
+            args+=(--governance)
+          fi
+          python -m src.presentation_refresh "${args[@]}" | tee "$RUNNER_TEMP/presentation_refresh.json"
 
       - name: Write GitHub Step Summary
         if: always()
@@ -98,26 +123,33 @@ jobs:
 
           from src.workflow_output import load_json_output
 
-          temp = Path(os.environ["RUNNER_TEMP"])
-          value_result = load_json_output(temp / "weekly_value.json")
-          context_result = load_json_output(temp / "weekly_context.json")
+          data = load_json_output(Path(os.environ["RUNNER_TEMP"]) / "presentation_refresh.json")
           rows = [
-              ("Status", value_result.get("status", "not_run")),
-              ("Weeks written", value_result.get("weeks_written", 0)),
-              ("Current week jobs added", value_result.get("current_jobs_added", 0)),
-              ("Current week jobs reviewed", value_result.get("current_jobs_reviewed", 0)),
-              ("Current review backlog", value_result.get("current_backlog", 0)),
-              ("Current follow-ups due", value_result.get("current_follow_ups_due", 0)),
-              ("Context status", context_result.get("status", "not_run")),
-              ("Context summary week", f"{context_result.get('summary_week_start', '')} through {context_result.get('summary_week_end', '')}"),
-              ("Context review items", context_result.get("review_items", 0)),
-              ("Context follow-up items", context_result.get("follow_up_items", 0)),
-              ("Context new matches", context_result.get("new_match_items", 0)),
+              ("Status", data.get("status", "not_run")),
+              ("Jobs snapshot rows", data.get("jobs_snapshot_rows", 0)),
+              ("Surfaces succeeded", data.get("surfaces_succeeded", 0)),
+              ("Surfaces failed", data.get("surfaces_failed", 0)),
+              ("Surfaces with warnings", data.get("surfaces_with_warnings", 0)),
+              ("Surface status written", "yes" if data.get("surface_status_written") else "no"),
+              ("Dashboard rows written", data.get("dashboard_rows_written", 0)),
+              ("Digest rows written", data.get("digest_rows_written", 0)),
+              ("Data as-of date", data.get("data_as_of_date", "")),
           ]
           with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as handle:
-              handle.write("### Weekly Value and Context Refresh\n\n")
+              handle.write("### Unified Generated Surface Refresh\n\n")
               handle.write("| Metric | Value |\n")
               handle.write("| --- | ---: |\n")
               for metric, value in rows:
                   handle.write(f"| {metric} | {value} |\n")
+              failures = [
+                  item for item in data.get("surface_status", [])
+                  if item.get("status") != "success"
+              ]
+              if failures:
+                  handle.write("\n#### Surface failures\n\n")
+                  for item in failures:
+                      handle.write(
+                          f"* {item.get('surface_name', 'unknown')}: "
+                          f"{item.get('warning_or_error', 'unknown error')}\n"
+                      )
           PY

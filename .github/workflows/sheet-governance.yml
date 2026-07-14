@@ -10,7 +10,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: job-tracker-sheet-ux-governance
+  group: job-tracker-workbook-writes
+  queue: max
   cancel-in-progress: false
 
 jobs:

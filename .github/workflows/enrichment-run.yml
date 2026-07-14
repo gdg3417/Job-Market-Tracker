@@ -31,14 +31,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: job-tracker-enrichment-production
+  group: job-tracker-workbook-writes
+  queue: max
   cancel-in-progress: false
 
 jobs:
   enrichment:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
       GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
@@ -118,6 +119,15 @@ jobs:
           fi
           python -m src.enrichment.production "${args[@]}" | tee "$RUNNER_TEMP/enrichment_production.json"
 
+      - name: Refresh generated presentation surfaces
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m src.presentation_refresh \
+            --refresh \
+            --source-run "enrichment-${{ steps.mode.outputs.mode }}" \
+            | tee "$RUNNER_TEMP/presentation_refresh.json"
+
       - name: Write GitHub Step Summary
         if: always()
         shell: bash
@@ -131,14 +141,15 @@ jobs:
 
           from src.workflow_output import load_json_output
 
-          data = load_json_output(Path(os.environ["RUNNER_TEMP"]) / "enrichment_production.json")
+          temp = Path(os.environ["RUNNER_TEMP"])
+          data = load_json_output(temp / "enrichment_production.json")
+          presentation = load_json_output(temp / "presentation_refresh.json")
           recovery = data.get("recovery") or {}
           direct = data.get("direct_link") or {}
           company = data.get("company_ats") or {}
           external = data.get("external_search") or {}
           lifecycle = data.get("lifecycle") or {}
           rescore = data.get("rescore") or {}
-          dashboard = data.get("dashboard") or {}
           health = data.get("health_metrics") or {}
           resolution = data.get("authoritative_resolution") or {}
 
@@ -167,9 +178,12 @@ jobs:
               ("Verified jobs after scoring", rescore.get("verified_jobs", 0)),
               ("Jobs marked likely closed", lifecycle.get("likely_closed", 0)),
               ("Jobs marked closed", int(lifecycle.get("confirmed_closed", 0)) + int(lifecycle.get("expired", 0))),
-              ("Dashboard rows written", dashboard.get("dashboard_rows_written", 0)),
               ("Dashboard health rows written", data.get("health_rows_written", 0)),
-              ("Digest rows written", dashboard.get("digest_rows_written", 0)),
+              ("Generated surfaces succeeded", presentation.get("surfaces_succeeded", 0)),
+              ("Generated surfaces failed", presentation.get("surfaces_failed", 0)),
+              ("Surface status written", "yes" if presentation.get("surface_status_written") else "no"),
+              ("Dashboard rows written", presentation.get("dashboard_rows_written", 0)),
+              ("Digest rows written", presentation.get("digest_rows_written", 0)),
               ("Final status", os.environ.get("FINAL_STATUS", "unknown")),
           ]
 
@@ -180,4 +194,6 @@ jobs:
               handle.write("| --- | ---: |\n")
               for metric, value in rows:
                   handle.write(f"| {metric} | {value} |\n")
+              if int(presentation.get("surfaces_failed") or 0):
+                  handle.write("\nOne or more generated surfaces failed after enrichment.\n")
           PY
