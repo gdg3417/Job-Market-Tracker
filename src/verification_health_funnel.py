@@ -37,17 +37,17 @@ CENTRAL_TIMEZONE = ZoneInfo("America/Chicago")
 
 FUNNEL_STAGES = [
     ("leads_received", "Leads received", ""),
-    ("jobs_normalized", "Jobs normalized", "leads_received"),
+    ("jobs_normalized", "Jobs normalized", ""),
     ("jobs_accepted", "Jobs accepted", "jobs_normalized"),
     ("high_potential", "High-potential jobs identified", "jobs_accepted"),
-    ("enrichment_eligible", "Enrichment eligible", "high_potential"),
-    ("enrichment_attempted", "Enrichment attempted", "enrichment_eligible"),
-    ("authoritative_posting_found", "Authoritative posting found", "enrichment_attempted"),
-    ("evidence_accepted", "Evidence accepted", "authoritative_posting_found"),
-    ("partially_verified", "Partially verified", "evidence_accepted"),
-    ("fully_verified", "Fully verified", "evidence_accepted"),
+    ("enrichment_eligible", "Enrichment eligible", ""),
+    ("enrichment_attempted", "Enrichment attempted", ""),
+    ("authoritative_posting_found", "Authoritative posting found", ""),
+    ("evidence_accepted", "Evidence accepted", ""),
+    ("partially_verified", "Partially verified", ""),
+    ("fully_verified", "Fully verified", ""),
     ("verified_strong_fit", "Verified strong fit", "fully_verified"),
-    ("human_reviewed", "Human reviewed", "verified_strong_fit"),
+    ("human_reviewed", "Human reviewed", ""),
     ("applied", "Applied", "human_reviewed"),
     ("dismissed", "Dismissed", "human_reviewed"),
     ("closed", "Closed", "jobs_accepted"),
@@ -100,6 +100,10 @@ def _stage_timestamp(stage: str, row: dict[str, Any]) -> str:
     return row_timestamp(row, *(fields.get(stage) or ("created_at", "first_seen_date", "updated_at")))
 
 
+def _job_keys(rows: list[dict[str, Any]]) -> set[str]:
+    return {str(row.get("job_key") or "").strip() for row in rows if str(row.get("job_key") or "").strip()}
+
+
 def calculate_funnel(
     jobs: list[dict[str, Any]],
     sources: list[dict[str, Any]],
@@ -116,11 +120,12 @@ def calculate_funnel(
         and str(row.get("company") or "").strip()
         and str(row.get("title") or "").strip()
     )
+    accepted = lambda row: normalized(row) and not is_excluded(row)
     predicates: dict[str, Callable[[dict[str, Any]], bool]] = {
         "jobs_normalized": normalized,
-        "jobs_accepted": lambda row: normalized(row) and not is_excluded(row),
-        "high_potential": lambda row: is_open(row) and is_high(row),
-        "enrichment_eligible": lambda row: is_open(row) and not is_verified(row) and (is_high(row) or is_medium_signal(row)),
+        "jobs_accepted": accepted,
+        "high_potential": lambda row: accepted(row) and is_open(row) and is_high(row),
+        "enrichment_eligible": lambda row: accepted(row) and is_open(row) and not is_verified(row) and (is_high(row) or is_medium_signal(row)),
         "enrichment_attempted": lambda row: safe_int((queues.get(str(row.get("job_key"))) or {}).get("attempt_count"), 0) > 0 or bool(row_timestamp(row, "enrichment_last_attempted_at")) or bool(row_timestamp(resolutions.get(str(row.get("job_key"))) or {}, "attempted_at")),
         "authoritative_posting_found": lambda row: authoritative(row, queues.get(str(row.get("job_key"))), thresholds, resolutions.get(str(row.get("job_key")))),
         "evidence_accepted": lambda row: str(row.get("job_key") or "") in accepted_keys,
@@ -130,7 +135,7 @@ def calculate_funnel(
         "human_reviewed": is_reviewed,
         "applied": is_applied,
         "dismissed": is_dismissed,
-        "closed": is_closed,
+        "closed": lambda row: accepted(row) and is_closed(row),
     }
     latest = daily_run(runs)
     daily_start, daily_end = _daily_window(latest, as_of)
@@ -140,23 +145,36 @@ def calculate_funnel(
     for stage in selected:
         if stage != "leads_received":
             selected[stage] = [row for row in jobs if predicates[stage](row)]
-    counts = {stage: len(rows) for stage, rows in selected.items()}
+
     metrics: list[FunnelMetric] = []
-    for stage, label, denominator in FUNNEL_STAGES:
+    for stage, label, configured_denominator in FUNNEL_STAGES:
         rows = selected[stage]
         timestamp = lambda row: job_timestamp(row) if stage == "leads_received" else _stage_timestamp(stage, row)
-        current = counts[stage]
-        prior = counts.get(denominator, 0)
         ages = [age_hours(timestamp(row), as_of) for row in rows]
         unresolved = ages if stage in {"high_potential", "enrichment_eligible", "partially_verified"} else []
+
+        denominator = configured_denominator
+        conversion_rate: float | None = None
+        metric_type = "population"
+        if denominator:
+            denominator_rows = selected[denominator]
+            numerator_keys = _job_keys(rows)
+            denominator_keys = _job_keys(denominator_rows)
+            if numerator_keys.issubset(denominator_keys) and denominator_keys:
+                conversion_rate = round(len(numerator_keys) / len(denominator_keys), 4)
+                metric_type = "conversion"
+            else:
+                denominator = ""
+
         metrics.append(FunnelMetric(
             stage=stage,
             label=label,
-            current_count=current,
+            current_count=len(rows),
             latest_daily_count=sum(1 for row in rows if daily_start and _within(timestamp(row), daily_start, daily_end)),
             latest_seven_day_count=sum(1 for row in rows if _within(timestamp(row), seven_start, as_of)),
-            conversion_rate=round(current / prior, 4) if denominator and prior else None,
+            conversion_rate=conversion_rate,
             denominator_stage=denominator,
+            metric_type=metric_type,
             median_age_hours=median_value(ages),
             oldest_unresolved_age_hours=max_value(unresolved),
         ))
