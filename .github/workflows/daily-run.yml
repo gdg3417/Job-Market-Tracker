@@ -226,9 +226,14 @@ jobs:
               IFS=',' read -ra selected_ids <<< "$raw_ids"
               for message_id in "${selected_ids[@]}"; do
                 trimmed="$(echo "$message_id" | xargs)"
-                if [ -n "$trimmed" ]; then
-                  args+=(--message-id "$trimmed")
+                if [ -z "$trimmed" ]; then
+                  continue
                 fi
+                if [[ ! "$trimmed" =~ ^[A-Za-z0-9_-]+$ ]]; then
+                  echo "::error::Invalid Gmail message ID: only letters, numbers, underscores, and hyphens are allowed."
+                  exit 1
+                fi
+                args+=(--message-id "$trimmed")
               done
               if [ "$FORCE_REPROCESS_SELECTED" = "true" ]; then
                 args+=(--force-reprocess-selected)
