@@ -12,6 +12,7 @@ from src.weekly_value import (
 
 TERMINAL_JOB_STATUSES = {"confirmed closed", "closed", "expired"}
 TERMINAL_REVIEW_STATUSES = {"dismissed", "rejected", "withdrawn", "closed"}
+TERMINAL_INTEREST_DECISIONS = {"dismissed", "not interested"}
 TERMINAL_APPLICATION_STATUSES = {"rejected", "withdrawn", "closed"}
 ACTIVE_APPLICATION_STATUSES = {
     "applied",
@@ -36,7 +37,10 @@ def is_terminal_job(job: JobPosting) -> bool:
 
 
 def is_terminal_review(job: JobPosting) -> bool:
-    return normalize_status(job.review_status) in TERMINAL_REVIEW_STATUSES
+    return (
+        normalize_status(job.review_status) in TERMINAL_REVIEW_STATUSES
+        or normalize_status(job.interest_decision) in TERMINAL_INTEREST_DECISIONS
+    )
 
 
 def is_terminal_application(job: JobPosting) -> bool:
