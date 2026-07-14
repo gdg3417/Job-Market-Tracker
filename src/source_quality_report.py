@@ -225,12 +225,18 @@ def run_source_quality_report(
         "source_audit_rows_written": 0,
         "source_yield_rows_written": 0,
     }
+    if approved_company_ids and not probe_sources:
+        raise ValueError("Approved cleanup requires live source probes.")
+
     if write_report:
-        # Persist the detailed evidence before any approved configuration mutation.
+        # Persist live audit evidence before any approved configuration mutation.
+        # A no-probe report refreshes Source_Yield but preserves the last authoritative
+        # Source_Audit so it cannot change daily execution policy.
         writes = write_source_quality_surfaces(
             client,
             findings=findings,
             yield_rows=yield_rows,
+            write_audit=probe_sources,
         )
 
     updates: list[dict[str, Any]] = []
@@ -266,6 +272,7 @@ def run_source_quality_report(
         "status": "success",
         "weeks": weeks,
         "probe_sources": probe_sources,
+        "source_audit_preserved": not probe_sources,
         "sources_audited": len(findings),
         "classification_counts": {
             classification: classification_counts.get(classification, 0)
@@ -332,6 +339,8 @@ def main() -> None:
         raise SystemExit(
             "Approved configuration updates require --write-report so the audit evidence is persisted."
         )
+    if approved and args.skip_live_probes:
+        raise SystemExit("Approved cleanup requires live source probes.")
     result = run_source_quality_report(
         weeks=max(1, args.weeks),
         probe_sources=not args.skip_live_probes,
