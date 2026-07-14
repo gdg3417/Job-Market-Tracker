@@ -61,3 +61,45 @@ def test_malformed_nonblank_row_is_audited_but_excluded_from_all_job_populations
     assert funnel["fully_verified"].current_count == 0
     assert funnel["human_reviewed"].current_count == 0
     assert funnel["applied"].current_count == 0
+
+
+def test_deferred_actionability_evaluates_both_supported_due_date_fields():
+    result = _calculate([
+        job(
+            "due-next-action",
+            review_status="deferred",
+            follow_up_date="6/30/26",
+            next_action_date="6/25/26",
+        )
+    ])
+
+    assert result.actionable_summary["actionable_roles"] == 1
+    assert result.actionable_summary["deferred_not_due_excluded"] == 0
+    assert "due-next-action" in result.high_potential_blockers
+
+
+def test_deferred_date_due_on_current_central_day_is_actionable():
+    result = _calculate([
+        job(
+            "due-today",
+            review_status="deferred",
+            follow_up_date="2026-06-26",
+        )
+    ])
+
+    assert result.actionable_summary["actionable_roles"] == 1
+    assert result.actionable_summary["deferred_not_due_excluded"] == 0
+
+
+def test_invalid_deferred_date_requires_correction_even_with_another_future_date():
+    result = _calculate([
+        job(
+            "invalid-date",
+            review_status="deferred",
+            follow_up_date="not-a-date",
+            next_action_date="2026-06-30",
+        )
+    ])
+
+    assert result.actionable_summary["actionable_roles"] == 1
+    assert result.blocker_counts == {"manual_review_required": 1}
