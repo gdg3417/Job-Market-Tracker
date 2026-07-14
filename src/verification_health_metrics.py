@@ -173,25 +173,33 @@ def calculate_verification_health(
     for job in actionable_jobs:
         key = str(job.get("job_key") or "").strip()
         state = actionability.get(key) or classify_actionability(job, as_of=now)
+        queue = queues.get(key)
+        resolution = resolutions.get(key)
+        manual_url = str(job.get("manual_authoritative_url") or "").strip()
         if state.reason in MANUAL_ACTIONABILITY_REASONS:
             blocker = Blocker("manual_review_required", state.detail)
+        elif manual_url and not authoritative(job, queue, limits, resolution):
+            blocker = Blocker(
+                "manual_review_required",
+                "Manual authoritative URL is pending resolver validation.",
+            )
         elif is_verified(job):
             continue
         else:
             blocker = classify_blocker(
                 job,
-                queues.get(key),
+                queue,
                 evidence_by_job.get(key, []),
-                resolutions.get(key),
+                resolution,
                 as_of=now,
                 thresholds=limits,
             )
         blockers[key] = blocker if blocker.reason in BLOCKER_REASONS else Blocker("other", blocker.detail)
         for gap in supporting_gaps(
             job,
-            queues.get(key),
+            queue,
             evidence_by_job.get(key, []),
-            resolutions.get(key),
+            resolution,
             thresholds=limits,
         ):
             if gap != blockers[key].reason:
