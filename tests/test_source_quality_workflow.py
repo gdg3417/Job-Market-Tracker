@@ -26,6 +26,7 @@ def test_cleanup_requires_exact_explicit_company_ids():
     assert "apply_reviewed_cleanup" in text
     assert "approved_company_ids" in text
     assert "apply_reviewed_cleanup requires at least one exact company_id" in text
+    assert "apply_reviewed_cleanup requires live source probes" in text
     assert "--approved-company-id" in text
     assert "No valid company_id values were supplied" in text
 
