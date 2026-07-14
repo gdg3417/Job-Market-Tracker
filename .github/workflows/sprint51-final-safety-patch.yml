@@ -40,10 +40,8 @@ jobs:
           python -m compileall -q src tests
           pytest tests/test_source_quality_hardening.py tests/test_source_quality_workflow.py
 
-      - name: Remove temporary patch machinery
-        run: |
-          rm scripts/sprint51_final_safety_patch.py
-          rm .github/workflows/sprint51-final-safety-patch.yml
+      - name: Remove temporary patch script
+        run: rm scripts/sprint51_final_safety_patch.py
 
       - name: Commit patched implementation
         run: |
