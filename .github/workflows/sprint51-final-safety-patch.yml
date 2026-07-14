@@ -48,10 +48,15 @@ jobs:
       - name: Apply planned patch
         run: python scripts/sprint51_final_safety_patch.py
 
+      - name: Exclude workflow-only changes from this commit
+        run: |
+          git checkout -- .github/workflows/source-quality.yml
+          git checkout -- tests/test_source_quality_workflow.py
+
       - name: Validate focused behavior
         run: |
           python -m compileall -q src tests
-          pytest tests/test_source_quality_hardening.py tests/test_source_quality_workflow.py
+          pytest tests/test_source_quality_hardening.py
 
       - name: Remove temporary patch script
         run: rm scripts/sprint51_final_safety_patch.py
