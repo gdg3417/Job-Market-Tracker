@@ -128,7 +128,7 @@ After merge, manually dispatch `Job Tracker Verification Health` in `run` mode a
 
 1. The workflow and live workbook schema validation succeed.
 2. Dismissed and terminal roles are excluded from actionable counts.
-3. Deferred roles are excluded only when both supported date fields are blank or future according to the documented rules.
+3. Deferred roles are excluded only when at least one supported date is present and all supplied dates are in the future.
 4. Either due date independently makes a deferred role actionable.
 5. A due date on the current Central calendar day is actionable.
 6. Pending manual authoritative URLs appear as manual intervention until resolver validation.
