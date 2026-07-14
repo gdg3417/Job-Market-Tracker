@@ -137,6 +137,8 @@ SHEET_POLICIES: dict[str, SheetPolicy] = {
     "Follow_Up_Queue": _policy("Follow_Up_Queue", frozen_columns=3, purpose="Generated follow-up surface; edit Jobs"),
     "Weekly_Value": _policy("Weekly_Value", purpose="Generated weekly metrics dashboard"),
     "Weekly_Context": _policy("Weekly_Context", purpose="Generated weekly email contract"),
+    "Source_Audit": _policy("Source_Audit", frozen_columns=3, purpose="Generated source-quality audit; edit Config_Companies"),
+    "Source_Yield": _policy("Source_Yield", frozen_columns=4, purpose="Generated source and search yield report"),
     "Dashboard": SheetPolicy("Dashboard", filter_enabled=False, purpose="Generated dashboard"),
     "Digest": SheetPolicy(
         "Digest",
@@ -168,6 +170,8 @@ GENERATED_SURFACE_NAMES = {
     "Follow_Up_Queue",
     "Weekly_Value",
     "Weekly_Context",
+    "Source_Audit",
+    "Source_Yield",
     "Dashboard",
     "Digest",
 }
