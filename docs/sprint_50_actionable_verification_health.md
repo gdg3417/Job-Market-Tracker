@@ -15,7 +15,7 @@ Actionable roles include:
 * Open and reopened roles that are not excluded
 * Interested, watch, and actively reviewed roles
 * Active applications and interviews
-* Deferred roles whose follow-up date is due
+* Deferred roles when either `follow_up_date` or `next_action_date` is due
 * Deferred roles with a missing or invalid due date, because they require manual correction
 * Likely closed or not-seen-once roles until authoritative closure is confirmed
 * Roles that still need an authoritative posting or manual resolution
@@ -28,10 +28,10 @@ The actionable set excludes:
 * Blocked companies
 * Hard scoring exclusions
 * Too-senior hard exclusions
-* Deferred roles whose follow-up date is still in the future
+* Deferred roles when all supplied follow-up and next-action dates are still in the future
 * Nonblank malformed rows without a job key, company, and title
 
-Google Sheets dates are normalized through `src.sheet_dates` before deferred-date evaluation and downstream health calculations.
+Google Sheets dates are normalized through `src.sheet_dates` and compared as Central calendar dates. This avoids UTC conversion shifting a due date into the prior day.
 
 ## Operational health and portfolio coverage
 
@@ -76,6 +76,8 @@ Primary blockers are divided into:
 
 Supporting gaps are counted separately. A role may therefore have one primary blocker while also retaining auditable secondary gaps such as missing description, location, compensation, work model, or authoritative URL.
 
+A `manual_authoritative_url` remains manual intervention until the resolver validates it and records an authoritative or manual-override resolution. The raw URL is not automatically trusted as authoritative evidence.
+
 ## Funnel semantics
 
 The existing 15-stage output remains available, but it is no longer presented as one fully nested funnel.
@@ -115,18 +117,21 @@ Required validation before merge:
 ```text
 python -m compileall -q src tests
 pytest
-python -m src.workflow_validation
 python -m src.production_readiness --evaluate-regression --fixture data/regression/sprint38_gold_standard_jobs.json
 ```
 
-The `Regression readiness` pull request workflow runs the full test suite and the gold-standard regression evaluation.
+The `Pull Request Tests` workflow runs compilation and the full test suite. The `Regression readiness` workflow reruns the full test suite and performs the gold-standard regression evaluation.
+
+`python -m src.workflow_validation` requires production Google Sheets credentials and appends a `Runs` record. It is therefore validated through the post-merge `Job Tracker Verification Health` workflow rather than from pull-request CI.
 
 After merge, manually dispatch `Job Tracker Verification Health` in `run` mode and confirm:
 
-1. The workflow succeeds.
+1. The workflow and live workbook schema validation succeed.
 2. Dismissed and terminal roles are excluded from actionable counts.
-3. Deferred roles with future follow-up dates are excluded.
-4. Deferred roles due now are included.
-5. No conversion exceeds 100 percent.
-6. Dashboard and GitHub summary show actionable health and portfolio coverage separately.
-7. The `Runs` record is written idempotently.
+3. Deferred roles are excluded only when both supported date fields are blank or future according to the documented rules.
+4. Either due date independently makes a deferred role actionable.
+5. A due date on the current Central calendar day is actionable.
+6. Pending manual authoritative URLs appear as manual intervention until resolver validation.
+7. No conversion exceeds 100 percent.
+8. Dashboard and GitHub summary show actionable health and portfolio coverage separately.
+9. The `Runs` record is written idempotently.
