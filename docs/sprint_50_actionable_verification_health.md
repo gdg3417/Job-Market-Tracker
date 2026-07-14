@@ -20,10 +20,10 @@ Actionable roles include:
 * Likely closed or not-seen-once roles until authoritative closure is confirmed
 * Roles that still need an authoritative posting or manual resolution
 
-The actionable set excludes:
+Terminal job and terminal application states always end actionability. An application already in progress remains actionable before lead-quality exclusions are applied, matching the canonical current-context and follow-up policy.
 
-* Confirmed closed, closed, and expired roles
-* Rejected, withdrawn, and closed applications
+When no application is active, the actionable set excludes:
+
 * Manually dismissed and other terminal review decisions
 * Blocked companies
 * Hard scoring exclusions
@@ -127,7 +127,7 @@ The `Pull Request Tests` workflow runs compilation and the full test suite. The 
 After merge, manually dispatch `Job Tracker Verification Health` in `run` mode and confirm:
 
 1. The workflow and live workbook schema validation succeed.
-2. Dismissed and terminal roles are excluded from actionable counts.
+2. Dismissed and terminal roles are excluded from actionable counts, except that an application already in progress remains actionable until it reaches a terminal application state.
 3. Deferred roles are excluded only when at least one supported date is present and all supplied dates are in the future.
 4. Either due date independently makes a deferred role actionable.
 5. A due date on the current Central calendar day is actionable.
