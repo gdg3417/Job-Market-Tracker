@@ -13,6 +13,7 @@ from src.sheets import SheetClient
 
 CENTRAL_TIMEZONE = ZoneInfo("America/Chicago")
 DAILY_COMPLETION_RUN_TYPE = "daily_workflow_completion"
+DAILY_ATTEMPT_RUN_TYPE = "daily_workflow_attempt"
 SCHEDULE_EARLIEST_CENTRAL_HOUR = 6
 SCHEDULE_EARLIEST_CENTRAL_MINUTE = 30
 
@@ -97,15 +98,15 @@ def daily_run_gate_decision(
     }
 
 
-def build_daily_completion_record(*, gate_result: str = "workflow_completed") -> dict[str, Any]:
+def _base_workflow_record(*, run_type: str, status: str, gate_result: str) -> dict[str, Any]:
     now = utc_now_iso()
     timestamp = now.replace(":", "").replace("-", "").replace("+00:00", "Z")
     return {
-        "run_id": f"daily_workflow_completion_{timestamp}",
-        "run_type": DAILY_COMPLETION_RUN_TYPE,
+        "run_id": f"{run_type}_{timestamp}",
+        "run_type": run_type,
         "source_type": "workflow",
         "source_name": "GitHub Actions daily run",
-        "status": "success",
+        "status": status,
         "started_at": now,
         "finished_at": now,
         "duration_seconds": 0,
@@ -119,10 +120,54 @@ def build_daily_completion_record(*, gate_result: str = "workflow_completed") ->
         "companies_read": 0,
         "searches_read": 0,
         "error_message": "",
-        "notes": json.dumps({"central_date": central_date().isoformat(), "gate_result": gate_result}, sort_keys=True),
+        "notes": json.dumps(
+            {
+                "central_date": central_date().isoformat(),
+                "gate_result": gate_result,
+            },
+            sort_keys=True,
+        ),
         "created_at": now,
         "updated_at": now,
     }
+
+
+def build_daily_completion_record(*, gate_result: str = "workflow_completed") -> dict[str, Any]:
+    return _base_workflow_record(
+        run_type=DAILY_COMPLETION_RUN_TYPE,
+        status="success",
+        gate_result=gate_result,
+    )
+
+
+def build_daily_attempt_record(
+    *,
+    status: str,
+    gate_result: str = "workflow_attempt_completed",
+    gmail_status: str = "",
+    gmail_failed: int = 0,
+    gmail_quarantined: int = 0,
+) -> dict[str, Any]:
+    normalized_status = str(status or "unknown").strip().lower()
+    record = _base_workflow_record(
+        run_type=DAILY_ATTEMPT_RUN_TYPE,
+        status=normalized_status,
+        gate_result=gate_result,
+    )
+    record["records_failed"] = max(0, int(gmail_failed))
+    record["error_message"] = "" if normalized_status == "success" else f"Daily workflow attempt ended as {normalized_status}"
+    record["notes"] = json.dumps(
+        {
+            "central_date": central_date().isoformat(),
+            "gate_result": gate_result,
+            "gmail_status": str(gmail_status or ""),
+            "gmail_failed": max(0, int(gmail_failed)),
+            "gmail_quarantined": max(0, int(gmail_quarantined)),
+            "successful_completion_recorded": normalized_status == "success" and max(0, int(gmail_failed)) == 0,
+        },
+        sort_keys=True,
+    )
+    return record
 
 
 def check_daily_run_gate(*, event_name: str) -> dict[str, Any]:
@@ -137,22 +182,59 @@ def mark_daily_run_success(*, gate_result: str = "workflow_completed") -> dict[s
     return {"status": "success", "run_id": record["run_id"], "central_date": central_date().isoformat()}
 
 
+def mark_daily_run_attempt(
+    *,
+    status: str,
+    gate_result: str = "workflow_attempt_completed",
+    gmail_status: str = "",
+    gmail_failed: int = 0,
+    gmail_quarantined: int = 0,
+) -> dict[str, Any]:
+    sheet_client = SheetClient.from_settings(load_settings())
+    record = build_daily_attempt_record(
+        status=status,
+        gate_result=gate_result,
+        gmail_status=gmail_status,
+        gmail_failed=gmail_failed,
+        gmail_quarantined=gmail_quarantined,
+    )
+    sheet_client.append_run(record)
+    return {
+        "status": "recorded",
+        "attempt_status": record["status"],
+        "run_id": record["run_id"],
+        "central_date": central_date().isoformat(),
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Gate the daily workflow by Central calendar date")
     parser.add_argument("--check", action="store_true", help="Check whether the daily workflow should run")
     parser.add_argument("--mark-success", action="store_true", help="Append the successful daily completion record")
+    parser.add_argument("--mark-attempt", action="store_true", help="Append a daily workflow attempt record")
     parser.add_argument("--event-name", default=os.getenv("GITHUB_EVENT_NAME", "workflow_dispatch"))
     parser.add_argument("--gate-result", default="workflow_completed")
+    parser.add_argument("--status", default="unknown")
+    parser.add_argument("--gmail-status", default="")
+    parser.add_argument("--gmail-failed", type=int, default=0)
+    parser.add_argument("--gmail-quarantined", type=int, default=0)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    result = (
-        mark_daily_run_success(gate_result=args.gate_result)
-        if args.mark_success
-        else check_daily_run_gate(event_name=args.event_name)
-    )
+    if args.mark_attempt:
+        result = mark_daily_run_attempt(
+            status=args.status,
+            gate_result=args.gate_result,
+            gmail_status=args.gmail_status,
+            gmail_failed=args.gmail_failed,
+            gmail_quarantined=args.gmail_quarantined,
+        )
+    elif args.mark_success:
+        result = mark_daily_run_success(gate_result=args.gate_result)
+    else:
+        result = check_daily_run_gate(event_name=args.event_name)
     print(json.dumps(result, indent=2))
 
 

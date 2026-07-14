@@ -3,11 +3,30 @@ name: Job Tracker Daily Run
 on:
   workflow_dispatch:
     inputs:
-      force_reprocess:
-        description: Reprocess Gmail messages already marked complete
+      replay_mode:
+        description: Gmail replay scope
+        required: false
+        default: normal
+        type: choice
+        options:
+          - normal
+          - failed_only
+          - selected
+      message_ids:
+        description: Comma-separated Gmail message IDs for selected replay
+        required: false
+        default: ""
+        type: string
+      force_reprocess_selected:
+        description: Reprocess explicitly selected messages even when already complete
         required: false
         default: false
         type: boolean
+      max_message_attempts:
+        description: Quarantine isolated failures after this many attempts
+        required: false
+        default: "3"
+        type: string
   schedule:
     - cron: "30 11 * * *"
     - cron: "30 12 * * *"
@@ -186,13 +205,43 @@ jobs:
         id: gmail_ingestion
         if: steps.daily_gate.outputs.should_run == 'true' && steps.credentials.outputs.gmail_ready == 'true'
         shell: bash
+        env:
+          REPLAY_MODE: ${{ inputs.replay_mode || 'normal' }}
+          SELECTED_MESSAGE_IDS: ${{ inputs.message_ids }}
+          FORCE_REPROCESS_SELECTED: ${{ inputs.force_reprocess_selected || false }}
+          MAX_MESSAGE_ATTEMPTS: ${{ inputs.max_message_attempts || '3' }}
         run: |
           set +e
-          force_arg=""
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.force_reprocess }}" = "true" ]; then
-            force_arg="--force-reprocess"
+          args=(--max-message-attempts "${MAX_MESSAGE_ATTEMPTS:-3}")
+          replay_mode="${REPLAY_MODE:-normal}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ "$replay_mode" = "failed_only" ]; then
+              args+=(--retry-failed-only)
+            elif [ "$replay_mode" = "selected" ]; then
+              raw_ids="${SELECTED_MESSAGE_IDS:-}"
+              if [ -z "${raw_ids// }" ]; then
+                echo "::error::Selected Gmail replay requires at least one exact message ID."
+                exit 1
+              fi
+              IFS=',' read -ra selected_ids <<< "$raw_ids"
+              for message_id in "${selected_ids[@]}"; do
+                trimmed="$(echo "$message_id" | xargs)"
+                if [ -z "$trimmed" ]; then
+                  continue
+                fi
+                if [[ ! "$trimmed" =~ ^[A-Za-z0-9_-]+$ ]]; then
+                  echo "::error::Invalid Gmail message ID: only letters, numbers, underscores, and hyphens are allowed."
+                  exit 1
+                fi
+                args+=(--message-id "$trimmed")
+              done
+              if [ "$FORCE_REPROCESS_SELECTED" = "true" ]; then
+                args+=(--force-reprocess-selected)
+              fi
+            fi
           fi
-          python -m src.gmail_ingestion --run $force_arg | tee "$RUNNER_TEMP/gmail_alerts.json"
+
+          python -m src.gmail_ingestion --run "${args[@]}" | tee "$RUNNER_TEMP/gmail_alerts.json"
           ingestion_status=${PIPESTATUS[0]}
           python - <<'PY'
           import os
@@ -205,23 +254,40 @@ jobs:
               path,
               {
                   "status": "command_failed",
+                  "processing_failures": 1,
                   "failed_messages": 1,
+                  "quarantined_messages": 0,
                   "backlog_remaining": 0,
+                  "ingestion_run_recorded": False,
               },
           )
           backlog = int(data.get("backlog_remaining") or 0)
           failed = int(data.get("failed_messages") or 0)
+          quarantined = int(data.get("quarantined_messages") or 0)
           status = str(data.get("status") or "unknown")
           with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as handle:
               handle.write(f"failed_messages={failed}\n")
+              handle.write(f"quarantined_messages={quarantined}\n")
               handle.write(f"ingestion_status={status}\n")
+              handle.write(f"systemic_failure_category={data.get('systemic_failure_category', '')}\n")
+              handle.write(f"systemic_failure_stage={data.get('systemic_failure_stage', '')}\n")
+              handle.write(f"ingestion_run_recorded={'true' if data.get('ingestion_run_recorded') else 'false'}\n")
           if status == "command_failed":
               print("::error::Gmail ingestion exited before producing a valid JSON summary. Review the Gmail ingestion log above for the original exception.")
               raise SystemExit(1)
           if backlog:
               print(f"::warning::Gmail backlog remains after this run: {backlog} message(s).")
           if failed:
-              print(f"::warning::Gmail processing failed for {failed} message(s); the daily completion record will be withheld so a later invocation can retry them.")
+              print(f"::warning::Gmail processing left {failed} retryable message failure(s); the daily completion record will be withheld.")
+          if quarantined:
+              print(f"::warning::Gmail quarantined {quarantined} isolated message failure(s) for manual review.")
+          if data.get("systemic_failure_category"):
+              print(
+                  "::error::Systemic Gmail failure: "
+                  f"{data.get('systemic_failure_category')} at {data.get('systemic_failure_stage') or 'unknown_stage'}."
+              )
+          if not data.get("ingestion_run_recorded"):
+              print("::error::The Gmail ingestion run record was not written.")
           PY
           validation_status=$?
           if [ "$ingestion_status" -ne 0 ]; then
@@ -234,7 +300,7 @@ jobs:
         shell: bash
         run: |
           cat > "$RUNNER_TEMP/gmail_alerts.json" <<'JSON'
-          {"status":"skipped","messages_fetched":0,"pages_fetched":0,"messages_already_processed":0,"new_messages_processed":0,"failed_messages":0,"backlog_remaining":0,"jobs_accepted":0,"alerts_rejected":0}
+          {"status":"skipped","messages_fetched":0,"pages_fetched":0,"messages_already_processed":0,"new_messages_processed":0,"processing_failures":0,"failed_messages":0,"quarantined_messages":0,"backlog_remaining":0,"jobs_accepted":0,"alerts_rejected":0,"ingestion_run_recorded":false}
           JSON
           echo "Skipping optional Gmail alert ingestion because Gmail secrets are not configured."
 
@@ -256,10 +322,41 @@ jobs:
         if: >-
           steps.daily_gate.outputs.should_run == 'true' &&
           (steps.credentials.outputs.gmail_ready != 'true' ||
-          steps.gmail_ingestion.outputs.failed_messages == '0')
+          (steps.gmail_ingestion.outputs.failed_messages == '0' &&
+          steps.gmail_ingestion.outputs.ingestion_status != 'command_failed' &&
+          steps.gmail_ingestion.outputs.ingestion_status != 'systemic_failure' &&
+          steps.gmail_ingestion.outputs.ingestion_status != 'run_record_failure'))
         shell: bash
         run: |
           python -m src.daily_run_gate --mark-success --gate-result "${{ steps.daily_gate.outputs.gate_result }}" | tee "$RUNNER_TEMP/daily_completion.json"
+
+      - name: Record daily workflow attempt
+        id: daily_attempt
+        if: always() && steps.daily_gate.outputs.should_run == 'true'
+        continue-on-error: true
+        shell: bash
+        env:
+          PRIOR_JOB_STATUS: ${{ job.status }}
+          GMAIL_STATUS: ${{ steps.gmail_ingestion.outputs.ingestion_status }}
+          GMAIL_FAILED: ${{ steps.gmail_ingestion.outputs.failed_messages }}
+          GMAIL_QUARANTINED: ${{ steps.gmail_ingestion.outputs.quarantined_messages }}
+        run: |
+          attempt_status="${PRIOR_JOB_STATUS:-unknown}"
+          gmail_failed="${GMAIL_FAILED:-0}"
+          gmail_quarantined="${GMAIL_QUARANTINED:-0}"
+          gmail_status="${GMAIL_STATUS:-not_run}"
+          if [ "$gmail_failed" != "0" ] || [ "$gmail_status" = "systemic_failure" ] || [ "$gmail_status" = "run_record_failure" ] || [ "$gmail_status" = "command_failed" ]; then
+            attempt_status="incomplete"
+          fi
+          set -o pipefail
+          python -m src.daily_run_gate \
+            --mark-attempt \
+            --status "$attempt_status" \
+            --gate-result "${{ steps.daily_gate.outputs.gate_result }}" \
+            --gmail-status "$gmail_status" \
+            --gmail-failed "$gmail_failed" \
+            --gmail-quarantined "$gmail_quarantined" \
+            | tee "$RUNNER_TEMP/daily_attempt.json"
 
       - name: Write GitHub Step Summary
         if: always()
@@ -278,9 +375,11 @@ jobs:
           static = load_json_output(temp / "static_pages.json")
           gmail = load_json_output(
               temp / "gmail_alerts.json",
-              {"status": "not_run", "failed_messages": 0},
+              {"status": "not_run", "failed_messages": 0, "quarantined_messages": 0},
           )
           dashboard = load_json_output(temp / "dashboard.json")
+          completion = load_json_output(temp / "daily_completion.json")
+          attempt = load_json_output(temp / "daily_attempt.json")
 
           static_upsert = static.get("upsert_summary") or {}
           static_records_seen = int(static_upsert.get("records_seen") or static.get("jobs_found") or 0)
@@ -291,14 +390,23 @@ jobs:
               ("Daily run gate result", os.environ.get("DAILY_GATE_RESULT") or "not_checked"),
               ("Static jobs found", static.get("jobs_found", 0)),
               ("Static jobs rejected", static_rejected),
+              ("Gmail ingestion status", gmail.get("status", "not_run")),
+              ("Gmail replay mode", gmail.get("replay_mode", "normal")),
               ("Gmail messages fetched", gmail.get("messages_fetched", 0)),
-              ("Gmail pages fetched", gmail.get("pages_fetched", 0)),
-              ("Gmail messages newly processed", gmail.get("new_messages_processed", 0)),
-              ("Gmail messages skipped as already processed", gmail.get("messages_already_processed", 0)),
-              ("Gmail messages failed", gmail.get("failed_messages", 0)),
+              ("Gmail messages already processed", gmail.get("messages_already_processed", 0)),
+              ("Gmail messages successfully processed", gmail.get("successfully_processed", gmail.get("new_messages_processed", 0))),
+              ("Gmail processing failures", gmail.get("processing_failures", 0)),
+              ("Gmail retryable failures", gmail.get("failed_messages", 0)),
+              ("Gmail quarantined messages", gmail.get("quarantined_messages", 0)),
               ("Gmail backlog remaining", gmail.get("backlog_remaining", 0)),
+              ("Gmail systemic failure category", gmail.get("systemic_failure_category", "") or "none"),
+              ("Gmail systemic failure stage", gmail.get("systemic_failure_stage", "") or "none"),
+              ("Gmail ingestion run recorded", "yes" if gmail.get("ingestion_run_recorded") else "no"),
+              ("Gmail diagnostics recorded", "yes" if gmail.get("diagnostics_recorded", True) else "no"),
               ("Gmail jobs accepted", gmail.get("jobs_accepted", 0)),
               ("Gmail alerts rejected", gmail.get("alerts_rejected", 0)),
+              ("Daily attempt recorded", "yes" if attempt.get("status") == "recorded" else "no"),
+              ("Successful daily completion recorded", "yes" if completion.get("status") == "success" else "no"),
               ("Dashboard rows written", dashboard.get("dashboard_rows_written", 0)),
               ("Digest rows written", dashboard.get("digest_rows_written", 0)),
               ("Final status", os.environ.get("FINAL_STATUS", "unknown")),
@@ -315,6 +423,13 @@ jobs:
                   handle.write("\nGmail ingestion skipped because optional Gmail secrets are not configured.\n")
               elif gmail.get("status") == "command_failed":
                   handle.write("\nGmail ingestion failed before producing its structured summary.\n")
-              elif int(gmail.get("failed_messages") or 0):
-                  handle.write("\nDaily completion was withheld because retryable Gmail failures remain.\n")
+              elif gmail.get("systemic_failure_category"):
+                  handle.write(
+                      "\nSystemic Gmail failure detected: "
+                      f"{gmail.get('systemic_failure_category')} at {gmail.get('systemic_failure_stage') or 'unknown_stage'}.\n"
+                  )
+              if int(gmail.get("failed_messages") or 0):
+                  handle.write("\nSuccessful daily completion was withheld because retryable Gmail failures remain.\n")
+              if int(gmail.get("quarantined_messages") or 0):
+                  handle.write("\nQuarantined Gmail messages require manual review but will not be replayed automatically.\n")
           PY
