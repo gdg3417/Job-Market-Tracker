@@ -82,7 +82,7 @@ def include_on_follow_up_queue(job: JobPosting) -> bool:
 
 
 def include_in_current_context(job: JobPosting) -> bool:
-    if is_terminal_application(job):
+    if is_terminal_job(job) or is_terminal_application(job):
         return False
     if has_active_application(job):
         return True
