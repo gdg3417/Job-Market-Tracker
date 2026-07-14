@@ -1189,6 +1189,9 @@ def run_source_quality(
         weeks=weeks,
     )
 
+    if approved_company_ids and not probe_sources:
+        raise ValueError("Approved cleanup requires live source probes.")
+
     writes = {"source_audit_rows_written": 0, "source_yield_rows_written": 0}
     if write_report:
         writes = write_source_quality_surfaces(
@@ -1255,6 +1258,8 @@ def main() -> None:
     approved = {clean_text(value) for value in args.approved_company_id if clean_text(value)}
     if approved and not args.write_report:
         raise SystemExit("Approved configuration updates require --write-report so the audit evidence is persisted.")
+    if approved and args.skip_live_probes:
+        raise SystemExit("Approved cleanup requires live source probes.")
     result = run_source_quality(
         weeks=max(1, args.weeks),
         probe_sources=not args.skip_live_probes,

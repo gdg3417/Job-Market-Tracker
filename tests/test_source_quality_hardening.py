@@ -16,6 +16,7 @@ from src.source_quality import (
     filter_static_sources_for_execution,
     prior_failure_observations,
     probe_source,
+    run_source_quality,
 )
 from src.source_quality_inventory import configured_static_source_rows_for_audit
 from src.source_quality_report import configured_zero_yield_rows, run_source_quality_report
@@ -430,3 +431,24 @@ def test_no_probe_cleanup_is_rejected_before_writes():
         assert "requires live source probes" in str(exc)
     else:
         raise AssertionError("Expected no-probe cleanup to be rejected")
+
+def test_legacy_no_probe_cleanup_is_rejected_before_writes():
+    class FakeClient:
+        def read_records_with_row_numbers(self, worksheet_name):
+            return [(2, _company())]
+
+        def read_records(self, worksheet_name):
+            return []
+
+    try:
+        run_source_quality(
+            probe_sources=False,
+            write_report=True,
+            approved_company_ids={"example"},
+            sheet_client=FakeClient(),
+        )
+    except ValueError as exc:
+        assert "requires live source probes" in str(exc)
+    else:
+        raise AssertionError("Expected legacy no-probe cleanup to be rejected")
+
