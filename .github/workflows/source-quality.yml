@@ -185,6 +185,7 @@ jobs:
                   "retryable_sources": 0,
                   "yield_rows": 0,
                   "zero_result_rows": 0,
+                  "attribution_unavailable_rows": 0,
                   "yield_recommendation_counts": {},
                   "approved_updates": [],
                   "source_audit_rows_written": 0,
@@ -207,6 +208,7 @@ jobs:
               handle.write(f"| Retryable sources | {data.get('retryable_sources', 0)} |\n")
               handle.write(f"| Source yield rows | {data.get('yield_rows', 0)} |\n")
               handle.write(f"| Zero-result configuration rows | {data.get('zero_result_rows', 0)} |\n")
+              handle.write(f"| Configured searches with unavailable attribution | {data.get('attribution_unavailable_rows', 0)} |\n")
               handle.write(f"| Source_Audit rows written | {data.get('source_audit_rows_written', 0)} |\n")
               handle.write(f"| Source_Yield rows written | {data.get('source_yield_rows_written', 0)} |\n")
               handle.write(f"| Approved updates applied | {len(updates)} |\n")
@@ -230,6 +232,7 @@ jobs:
                   for update in updates:
                       handle.write(
                           f"* {update.get('company_name') or update.get('company_id')}: "
-                          f"{update.get('action')} ({update.get('classification')})\n"
+                          f"{update.get('action')} ({update.get('classification')}); "
+                          f"{update.get('original_source_url', '')} -> {update.get('final_source_url', '')}\n"
                       )
           PY
