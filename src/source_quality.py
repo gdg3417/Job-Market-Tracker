@@ -296,6 +296,15 @@ def _percent(numerator: int, denominator: int) -> float:
     return round((numerator / denominator) * 100, 1) if denominator else 0.0
 
 
+def _optional_number(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(str(value).replace(",", "").strip())
+    except (TypeError, ValueError):
+        return None
+
+
 def _host(url: Any) -> str:
     try:
         return urlsplit(str(url or "")).netloc.lower().split("@")[-1].split(":")[0].removeprefix("www.")
@@ -542,7 +551,7 @@ def _run_failure_classification(run: dict[str, Any]) -> str:
     notes = clean_text(run.get("notes")).lower()
     error = clean_text(run.get("error_message")).lower()
     combined = f"{status} {notes} {error}"
-    if status in {"success", "no_jobs", "no_jobs_found", "no_jobs_extracted", "healthy"}:
+    if status in {"success", "empty", "no_jobs", "no_jobs_found", "no_jobs_extracted", "healthy"}:
         return HEALTHY
     if any(marker in combined for marker in ("404", "410", "not found", "retired", " gone")):
         return PERMANENT_404
@@ -1017,8 +1026,8 @@ def build_source_yield_report(
                 metrics.strong_fit.add(job_key)
             if _is_stretch_fit(job):
                 metrics.stretch_fit.add(job_key)
-            score = _number(job.get("potential_priority_score"))
-            if score:
+            score = _optional_number(job.get("potential_priority_score"))
+            if score is not None:
                 metrics.potential_scores.append(score)
 
     for index, rejected in enumerate(rejected_jobs):

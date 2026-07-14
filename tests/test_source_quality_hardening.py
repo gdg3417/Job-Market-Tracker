@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime
 from pathlib import Path
 
+from src.main import build_sprint10_run_record
 from src.source_quality import (
     HEALTHY,
     MANUAL_REVIEW,
@@ -315,7 +316,9 @@ def test_daily_static_run_reads_and_enforces_source_audit():
     text = Path("src/main.py").read_text(encoding="utf-8")
     assert '_read_optional_records(sheet_client, "Source_Audit")' in text
     assert "filter_static_sources_for_execution(company_rows, audit_rows)" in text
-    assert 'status = "all_sources_in_cooldown"' in text
+    assert "_all_sources_skipped_status" in text
+    assert '"all_sources_in_cooldown"' in text
+    assert '"all_sources_blocked_by_policy"' in text
 
 def test_structured_ats_conversion_populates_required_source_slug():
     cases = [
@@ -451,4 +454,94 @@ def test_legacy_no_probe_cleanup_is_rejected_before_writes():
         assert "requires live source probes" in str(exc)
     else:
         raise AssertionError("Expected legacy no-probe cleanup to be rejected")
+
+def test_empty_static_run_resets_prior_failure_streak():
+    runs = [
+        {
+            "source_type": "static_page",
+            "source_name": "static_page:Example Co",
+            "status": "failed",
+            "finished_at": "2026-07-01T12:00:00Z",
+            "notes": "url=https://example.com/jobs; http_status=404",
+        },
+        {
+            "source_type": "static_page",
+            "source_name": "static_page:Example Co",
+            "status": "empty",
+            "finished_at": "2026-07-05T12:00:00Z",
+            "notes": "url=https://example.com/jobs; http_status=200",
+        },
+        {
+            "source_type": "static_page",
+            "source_name": "static_page:Example Co",
+            "status": "failed",
+            "finished_at": "2026-07-10T12:00:00Z",
+            "notes": "url=https://example.com/jobs; http_status=404",
+        },
+    ]
+    count = prior_failure_observations(
+        runs,
+        company_name="Example Co",
+        source_url="https://example.com/jobs",
+        classification=PERMANENT_404,
+        as_of=datetime(2026, 7, 14, tzinfo=UTC),
+    )
+    assert count == 1
+
+
+def test_zero_potential_scores_are_included_in_source_average():
+    rows = build_source_yield_report(
+        jobs=[
+            {"job_key": "job0", "company": "Example Co", "potential_priority_score": "0"},
+            {"job_key": "job80", "company": "Example Co", "potential_priority_score": "80"},
+        ],
+        job_sources=[
+            {
+                "source_key": "s0",
+                "job_key": "job0",
+                "company": "Example Co",
+                "source_primary": "static_page",
+                "source_type": "static_page",
+                "source_url": "https://example.com/jobs",
+                "first_seen_date": "2026-07-10",
+            },
+            {
+                "source_key": "s80",
+                "job_key": "job80",
+                "company": "Example Co",
+                "source_primary": "static_page",
+                "source_type": "static_page",
+                "source_url": "https://example.com/jobs",
+                "first_seen_date": "2026-07-11",
+            },
+        ],
+        rejected_jobs=[],
+        weeks=4,
+        as_of=date(2026, 7, 14),
+    )
+    row = next(item for item in rows if item.group_type == "static_company_source")
+    assert row.average_potential_score == 40.0
+
+
+def test_static_summary_distinguishes_cooldown_from_policy_blocks():
+    common = {
+        "jobs_found": 0,
+        "source_count": 0,
+        "source_failures": 0,
+        "search_count": 0,
+        "low_confidence_count": 0,
+        "summary": {},
+        "skipped_sources": 1,
+    }
+    cooldown = build_sprint10_run_record(
+        **common,
+        skip_reasons=("cooldown_active",),
+    )
+    blocked = build_sprint10_run_record(
+        **common,
+        skip_reasons=("configuration_change_required",),
+    )
+    assert cooldown["status"] == "all_sources_in_cooldown"
+    assert blocked["status"] == "all_sources_blocked_by_policy"
+    assert "configuration_change_required" in blocked["notes"]
 
