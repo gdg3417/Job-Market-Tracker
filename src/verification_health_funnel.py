@@ -126,15 +126,26 @@ def calculate_funnel(
         "jobs_accepted": accepted,
         "high_potential": lambda row: accepted(row) and is_open(row) and is_high(row),
         "enrichment_eligible": lambda row: accepted(row) and is_open(row) and not is_verified(row) and (is_high(row) or is_medium_signal(row)),
-        "enrichment_attempted": lambda row: safe_int((queues.get(str(row.get("job_key"))) or {}).get("attempt_count"), 0) > 0 or bool(row_timestamp(row, "enrichment_last_attempted_at")) or bool(row_timestamp(resolutions.get(str(row.get("job_key"))) or {}, "attempted_at")),
-        "authoritative_posting_found": lambda row: authoritative(row, queues.get(str(row.get("job_key"))), thresholds, resolutions.get(str(row.get("job_key")))),
-        "evidence_accepted": lambda row: str(row.get("job_key") or "") in accepted_keys,
-        "partially_verified": is_partial,
-        "fully_verified": is_verified,
-        "verified_strong_fit": lambda row: is_verified(row) and safe_int(row.get("verified_total_score") or row.get("total_score"), 0) >= thresholds.strong_fit_score,
-        "human_reviewed": is_reviewed,
-        "applied": is_applied,
-        "dismissed": is_dismissed,
+        "enrichment_attempted": lambda row: normalized(row) and (
+            safe_int((queues.get(str(row.get("job_key"))) or {}).get("attempt_count"), 0) > 0
+            or bool(row_timestamp(row, "enrichment_last_attempted_at"))
+            or bool(row_timestamp(resolutions.get(str(row.get("job_key"))) or {}, "attempted_at"))
+        ),
+        "authoritative_posting_found": lambda row: normalized(row) and authoritative(
+            row,
+            queues.get(str(row.get("job_key"))),
+            thresholds,
+            resolutions.get(str(row.get("job_key"))),
+        ),
+        "evidence_accepted": lambda row: normalized(row) and str(row.get("job_key") or "") in accepted_keys,
+        "partially_verified": lambda row: normalized(row) and is_partial(row),
+        "fully_verified": lambda row: normalized(row) and is_verified(row),
+        "verified_strong_fit": lambda row: normalized(row) and is_verified(row) and safe_int(
+            row.get("verified_total_score") or row.get("total_score"), 0
+        ) >= thresholds.strong_fit_score,
+        "human_reviewed": lambda row: normalized(row) and is_reviewed(row),
+        "applied": lambda row: normalized(row) and is_applied(row),
+        "dismissed": lambda row: normalized(row) and is_dismissed(row),
         "closed": lambda row: accepted(row) and is_closed(row),
     }
     latest = daily_run(runs)
