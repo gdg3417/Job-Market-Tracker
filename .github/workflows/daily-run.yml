@@ -212,7 +212,7 @@ jobs:
           MAX_MESSAGE_ATTEMPTS: ${{ inputs.max_message_attempts || '3' }}
         run: |
           set +e
-          args=(--run --max-message-attempts "${MAX_MESSAGE_ATTEMPTS:-3}")
+          args=(--max-message-attempts "${MAX_MESSAGE_ATTEMPTS:-3}")
           replay_mode="${REPLAY_MODE:-normal}"
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             if [ "$replay_mode" = "failed_only" ]; then
@@ -236,7 +236,7 @@ jobs:
             fi
           fi
 
-          python -m src.gmail_ingestion "${args[@]}" | tee "$RUNNER_TEMP/gmail_alerts.json"
+          python -m src.gmail_ingestion --run "${args[@]}" | tee "$RUNNER_TEMP/gmail_alerts.json"
           ingestion_status=${PIPESTATUS[0]}
           python - <<'PY'
           import os
@@ -273,7 +273,7 @@ jobs:
           if backlog:
               print(f"::warning::Gmail backlog remains after this run: {backlog} message(s).")
           if failed:
-              print(f"::warning::Gmail processing left {failed} retryable message failure(s); successful daily completion will be withheld.")
+              print(f"::warning::Gmail processing left {failed} retryable message failure(s); the daily completion record will be withheld.")
           if quarantined:
               print(f"::warning::Gmail quarantined {quarantined} isolated message failure(s) for manual review.")
           if data.get("systemic_failure_category"):
