@@ -147,7 +147,7 @@ jobs:
             fi
           fi
 
-          printf '%q ' "${args[@]}" > "$RUNNER_TEMP/source_quality_args.txt"
+          printf '%s\n' "${args[@]}" > "$RUNNER_TEMP/source_quality_args.txt"
           echo "mode=${MODE}" >> "$GITHUB_OUTPUT"
           echo "window_weeks=${WINDOW_WEEKS}" >> "$GITHUB_OUTPUT"
 
@@ -155,9 +155,9 @@ jobs:
         id: source_quality
         shell: bash
         run: |
-          set -o pipefail
-          eval "set -- $(cat \"$RUNNER_TEMP/source_quality_args.txt\")"
-          python -m src.source_quality_report "$@" | tee "$RUNNER_TEMP/source_quality.json"
+          set -euo pipefail
+          mapfile -t source_quality_args < "$RUNNER_TEMP/source_quality_args.txt"
+          python -m src.source_quality_report "${source_quality_args[@]}" | tee "$RUNNER_TEMP/source_quality.json"
 
       - name: Apply generated-surface governance
         shell: bash
