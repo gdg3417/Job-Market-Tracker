@@ -20,11 +20,36 @@ from src.sheets import SheetClient, with_quota_backoff
 SOURCE_AUDIT_SHEET = "Source_Audit"
 SOURCE_YIELD_SHEET = "Source_Yield"
 DEFAULT_WINDOW_WEEKS = 4
+
 SUPPORTED_STRUCTURED_ATS = {
-    "greenhouse": ("greenhouse.io", "boards.greenhouse.io"),
-    "lever": ("lever.co", "jobs.lever.co"),
-    "ashby": ("ashbyhq.com", "jobs.ashbyhq.com"),
-    "smartrecruiters": ("smartrecruiters.com", "jobs.smartrecruiters.com"),
+    "greenhouse": ("greenhouse.io",),
+    "lever": ("lever.co",),
+    "ashby": ("ashbyhq.com",),
+    "smartrecruiters": ("smartrecruiters.com",),
+}
+ATS_CONTENT_SIGNATURES = {
+    "greenhouse": (
+        r"boards\.greenhouse\.io",
+        r"greenhouse\.io/(?:embed|users/sign_in)",
+        r"\bgh_jid=\d+",
+        r"greenhouse-job-board",
+    ),
+    "lever": (
+        r"jobs\.lever\.co",
+        r"api\.lever\.co",
+        r"lever-job(?:s|site)?",
+        r"data-lever-job",
+    ),
+    "ashby": (
+        r"jobs\.ashbyhq\.com",
+        r"api\.ashbyhq\.com",
+        r"ashby-job-board",
+    ),
+    "smartrecruiters": (
+        r"jobs\.smartrecruiters\.com",
+        r"api\.smartrecruiters\.com",
+        r"smartrecruiters-job-widget",
+    ),
 }
 
 HEALTHY = "healthy"
@@ -48,11 +73,12 @@ AUDIT_CLASSIFICATIONS = {
     DNS_FAILURE,
     MANUAL_REVIEW,
 }
-
-RETRYABLE_CLASSIFICATIONS = {
-    EMPTY_VALID,
+FAILURE_CLASSIFICATIONS = {
     TEMPORARILY_BLOCKED,
+    AUTH_OR_BOT_PROTECTION,
+    PERMANENT_404,
     DNS_FAILURE,
+    MANUAL_REVIEW,
 }
 
 SOURCE_YIELD_HEADERS = [
@@ -272,31 +298,27 @@ def _percent(numerator: int, denominator: int) -> float:
 
 def _host(url: Any) -> str:
     try:
-        return urlsplit(str(url or "")).netloc.lower().replace("www.", "")
+        return urlsplit(str(url or "")).netloc.lower().split("@")[-1].split(":")[0].removeprefix("www.")
     except ValueError:
         return ""
 
 
 def detect_structured_ats(url: Any, content: Any = "") -> str:
-    material = f"{str(url or '').lower()} {str(content or '').lower()}"
-    for platform, host_terms in SUPPORTED_STRUCTURED_ATS.items():
-        if any(term in material for term in host_terms):
+    host = _host(url)
+    for platform, host_suffixes in SUPPORTED_STRUCTURED_ATS.items():
+        if any(host == suffix or host.endswith(f".{suffix}") for suffix in host_suffixes):
             return platform
-    if "greenhouse" in material:
-        return "greenhouse"
-    if "lever" in material:
-        return "lever"
-    if "ashby" in material:
-        return "ashby"
-    if "smartrecruiters" in material:
-        return "smartrecruiters"
+
+    material = str(content or "").lower()
+    for platform, signatures in ATS_CONTENT_SIGNATURES.items():
+        if any(re.search(signature, material, flags=re.IGNORECASE) for signature in signatures):
+            return platform
     return ""
 
 
 def _has_job_signal(content: Any) -> bool:
-    text = clean_text(content).lower()
-    if not text:
-        return False
+    raw = str(content or "")
+    text = clean_text(raw).lower()
     signals = (
         "jobposting",
         "job-title",
@@ -308,7 +330,10 @@ def _has_job_signal(content: Any) -> bool:
         "apply now",
         "career opportunities",
     )
-    return any(signal in text for signal in signals)
+    if any(signal in text for signal in signals):
+        return True
+    compact = re.sub(r"\s+", "", raw.lower())
+    return '"@type":"jobposting"' in compact or "'@type':'jobposting'" in compact
 
 
 def _is_dns_error(exc: BaseException) -> bool:
@@ -388,43 +413,32 @@ def probe_source(
     content = getattr(response, "text", "") or ""
     detected_ats = detect_structured_ats(final_url, content)
     job_signal = _has_job_signal(content)
+    redirected = bool(final_url and normalize_url(final_url) != normalize_url(url))
 
     if status in {401, 407}:
-        classification = AUTH_OR_BOT_PROTECTION
-        category = "authentication_required"
+        classification, category = AUTH_OR_BOT_PROTECTION, "authentication_required"
     elif status == 403:
-        classification = AUTH_OR_BOT_PROTECTION
-        category = "blocked_or_bot_protection"
-    elif status == 404:
-        classification = PERMANENT_404
-        category = "not_found"
-    elif status == 410:
-        classification = PERMANENT_404
-        category = "retired"
+        classification, category = AUTH_OR_BOT_PROTECTION, "blocked_or_bot_protection"
+    elif status in {404, 410}:
+        classification, category = PERMANENT_404, "retired" if status == 410 else "not_found"
     elif status == 429:
-        classification = TEMPORARILY_BLOCKED
-        category = "rate_limited"
+        classification, category = TEMPORARILY_BLOCKED, "rate_limited"
     elif status >= 500:
-        classification = TEMPORARILY_BLOCKED
-        category = "temporary_server_failure"
+        classification, category = TEMPORARILY_BLOCKED, "temporary_server_failure"
     elif status >= 400:
-        classification = MANUAL_REVIEW
-        category = f"http_{status}"
+        classification, category = MANUAL_REVIEW, f"http_{status}"
     elif detected_ats:
-        classification = STRUCTURED_ATS
-        category = "structured_ats_detected"
-    elif final_url and normalize_url(final_url) != normalize_url(url):
-        classification = REDIRECT_REQUIRED
-        category = "redirect"
+        classification, category = STRUCTURED_ATS, "structured_ats_detected"
+    elif redirected and job_signal:
+        classification, category = REDIRECT_REQUIRED, "validated_career_redirect"
+    elif redirected:
+        classification, category = MANUAL_REVIEW, "redirect_without_job_signal"
     elif 200 <= status < 300 and job_signal:
-        classification = HEALTHY
-        category = "success"
+        classification, category = HEALTHY, "success"
     elif 200 <= status < 300:
-        classification = EMPTY_VALID
-        category = "empty_success"
+        classification, category = EMPTY_VALID, "empty_success"
     else:
-        classification = MANUAL_REVIEW
-        category = "unknown_response"
+        classification, category = MANUAL_REVIEW, "unknown_response"
 
     return SourceProbe(
         source_url=url,
@@ -449,21 +463,27 @@ def retry_decision(
     now = (as_of or datetime.now(UTC)).astimezone(UTC)
     failures = max(1, int(failure_observations or 1))
 
-    if probe.classification in {HEALTHY, STRUCTURED_ATS, REDIRECT_REQUIRED}:
-        return RetryDecision(False, requires_configuration_change=probe.classification != HEALTHY, reason="Configuration action is required before another static fetch." if probe.classification != HEALTHY else "Source is healthy.")
+    if probe.classification == HEALTHY:
+        return RetryDecision(False, reason="Source is healthy.")
+    if probe.classification in {STRUCTURED_ATS, REDIRECT_REQUIRED}:
+        return RetryDecision(
+            False,
+            requires_configuration_change=True,
+            reason="A validated configuration change is required before another static fetch.",
+        )
     if probe.classification == PERMANENT_404:
         if failures < 2:
             return RetryDecision(
                 True,
                 (now + timedelta(days=7)).isoformat().replace("+00:00", "Z"),
                 False,
-                "One 404 observation is insufficient for retirement. Retry after a conservative validation interval.",
+                "One 404 observation is insufficient for retirement. Retry after a validation interval.",
             )
         return RetryDecision(
             False,
             "",
             True,
-            "Repeated 404 or retired evidence requires a URL or configuration change before retry.",
+            "Consecutive 404 or retired evidence requires a URL or configuration change before retry.",
         )
     if probe.classification == DNS_FAILURE:
         delay_days = 7 if failures < 3 else 30
@@ -471,17 +491,17 @@ def retry_decision(
             failures < 3,
             (now + timedelta(days=delay_days)).isoformat().replace("+00:00", "Z"),
             failures >= 3,
-            "DNS failures use a bounded cooldown. Repeated failures require manual URL review.",
+            "DNS failures use a bounded cooldown. Consecutive failures require manual URL review.",
         )
     if probe.classification == AUTH_OR_BOT_PROTECTION:
         return RetryDecision(
             True,
             (now + timedelta(days=14)).isoformat().replace("+00:00", "Z"),
             False,
-            "A blocked or protected response is temporary until corroborated. Do not retire the source from one observation.",
+            "A blocked or protected response remains recoverable and is not permanent evidence.",
         )
     if probe.classification == TEMPORARILY_BLOCKED:
-        delay = timedelta(hours=24) if probe.http_status == 429 else timedelta(days=1 if failures < 3 else 7)
+        delay = timedelta(days=1 if failures < 3 else 7)
         return RetryDecision(
             True,
             (now + delay).isoformat().replace("+00:00", "Z"),
@@ -491,7 +511,7 @@ def retry_decision(
     if probe.classification == EMPTY_VALID:
         return RetryDecision(
             True,
-            (now + timedelta(days=7)).isoformat().replace("+00:00", "Z"),
+            (now + timedelta(days=14)).isoformat().replace("+00:00", "Z"),
             False,
             "A valid empty source remains enabled but should run at a reduced cadence.",
         )
@@ -501,13 +521,35 @@ def retry_decision(
 def _run_matches_source(run: dict[str, Any], company_name: str, source_url: str) -> bool:
     if _normalized(run.get("source_type")) != "static_page":
         return False
-    material = " ".join(
-        clean_text(run.get(field)).lower()
-        for field in ("source_name", "notes", "error_message")
-    )
+    material = " ".join(clean_text(run.get(field)).lower() for field in ("source_name", "notes", "error_message"))
+    normalized_url = normalize_url(source_url).lower()
+    if normalized_url and normalized_url in material:
+        return True
     company = clean_text(company_name).lower()
-    url = normalize_url(source_url).lower()
-    return (company and company in material) or (url and url in material)
+    source_name = clean_text(run.get("source_name")).lower()
+    return bool(company and source_name in {company, f"static_page:{company}", f"static page:{company}"})
+
+
+def _run_observed_at(run: dict[str, Any]) -> datetime:
+    return _parse_datetime(run.get("finished_at") or run.get("started_at") or run.get("created_at")) or datetime.min.replace(tzinfo=UTC)
+
+
+def _run_failure_classification(run: dict[str, Any]) -> str:
+    status = _normalized(run.get("status"))
+    notes = clean_text(run.get("notes")).lower()
+    error = clean_text(run.get("error_message")).lower()
+    combined = f"{status} {notes} {error}"
+    if status in {"success", "no_jobs", "no_jobs_found", "no_jobs_extracted", "healthy"}:
+        return HEALTHY
+    if any(marker in combined for marker in ("404", "410", "not found", "retired", " gone")):
+        return PERMANENT_404
+    if any(marker in combined for marker in ("dns", "failed to resolve", "getaddrinfo", "name resolution")):
+        return DNS_FAILURE
+    if any(marker in combined for marker in ("403", "401", "forbidden", "bot protection", "authentication")):
+        return AUTH_OR_BOT_PROTECTION
+    if status in {"failed", "partial_failure", "retryable_failure", "error"}:
+        return TEMPORARILY_BLOCKED
+    return ""
 
 
 def prior_failure_observations(
@@ -521,25 +563,23 @@ def prior_failure_observations(
 ) -> int:
     now = (as_of or datetime.now(UTC)).astimezone(UTC)
     earliest = now - timedelta(days=max(1, lookback_days))
+    matching = [
+        dict(run)
+        for run in runs
+        if _run_matches_source(run, company_name, source_url) and _run_observed_at(run) >= earliest
+    ]
+    matching.sort(key=_run_observed_at, reverse=True)
+
     count = 0
-    for run in runs:
-        if not _run_matches_source(run, company_name, source_url):
+    for run in matching:
+        observed_classification = _run_failure_classification(run)
+        if observed_classification == HEALTHY:
+            break
+        if not observed_classification:
             continue
-        observed = _parse_datetime(run.get("finished_at") or run.get("started_at") or run.get("created_at"))
-        if observed is not None and observed < earliest:
-            continue
-        status = _normalized(run.get("status"))
-        notes = clean_text(run.get("notes")).lower()
-        error = clean_text(run.get("error_message")).lower()
-        combined = f"{status} {notes} {error}"
-        if classification == PERMANENT_404 and any(marker in combined for marker in ("404", "not found", "retired", "gone")):
-            count += 1
-        elif classification == DNS_FAILURE and any(marker in combined for marker in ("dns", "resolve", "getaddrinfo", "name resolution")):
-            count += 1
-        elif classification == AUTH_OR_BOT_PROTECTION and any(marker in combined for marker in ("403", "401", "blocked", "forbidden", "bot")):
-            count += 1
-        elif classification == TEMPORARILY_BLOCKED and status in {"failed", "partial_failure", "retryable_failure"}:
-            count += 1
+        if observed_classification != classification:
+            break
+        count += 1
     return count
 
 
@@ -553,17 +593,15 @@ def _recommendation_for_probe(probe: SourceProbe, decision: RetryDecision) -> tu
     if probe.classification == EMPTY_VALID:
         return "reduce_cadence", "Source is reachable but currently produces no visible job signal."
     if probe.classification == REDIRECT_REQUIRED:
-        return "replace_source_url", f"Update the configured URL to the validated canonical destination {probe.final_url}."
+        return "replace_source_url", f"Update the configured URL to the validated career destination {probe.final_url}."
     if probe.classification == STRUCTURED_ATS:
         return "prefer_structured_ats", f"Use the {probe.detected_ats or 'detected'} structured ATS path instead of generic static scraping."
     if probe.classification == PERMANENT_404:
-        action = "replace_or_retire_source" if decision.requires_configuration_change else "recheck_after_cooldown"
-        return action, decision.reason
+        return ("replace_or_retire_source" if decision.requires_configuration_change else "recheck_after_cooldown"), decision.reason
     if probe.classification == DNS_FAILURE:
-        action = "manual_url_review" if decision.requires_configuration_change else "retry_after_cooldown"
-        return action, decision.reason
+        return ("manual_url_review" if decision.requires_configuration_change else "retry_after_cooldown"), decision.reason
     if probe.classification == AUTH_OR_BOT_PROTECTION:
-        return "move_to_manual_review", decision.reason
+        return "retry_after_cooldown", decision.reason
     if probe.classification == TEMPORARILY_BLOCKED:
         return "retry_after_cooldown", decision.reason
     return "manual_review", decision.reason
@@ -577,33 +615,23 @@ def audit_static_sources(
     probe_sources: bool = True,
     as_of: datetime | None = None,
 ) -> list[SourceAuditFinding]:
+    from src.sources.static_pages import static_page_company_rows
+
     now = (as_of or datetime.now(UTC)).astimezone(UTC)
     run_rows = list(runs)
     findings: list[SourceAuditFinding] = []
+    eligible_rows = static_page_company_rows([dict(row) for row in company_rows])
 
-    for row in company_rows:
-        if not _truthy(row.get("active"), default=True):
-            continue
+    for row in eligible_rows:
         source_url = normalize_url(row.get("source_url", ""))
-        source_type = _source_type(row)
-        source_material = " ".join(
-            clean_text(row.get(field)).lower()
-            for field in ("source_type", "ingestion_mode", "source_quality", "ats_platform", "source_url")
-        )
-        if not source_url and "gmail_only" in source_material:
-            continue
-        if not any(term in source_material for term in ("static", "career", "job", "workday", "icims", "oracle", "ashby", "smartrecruiters")):
-            continue
-
         if probe_sources:
             probe = probe_source(source_url, session=session, observed_at=now.isoformat().replace("+00:00", "Z"))
         else:
             configured_ats = detect_structured_ats(source_url, row.get("ats_platform"))
-            classification = STRUCTURED_ATS if configured_ats else MANUAL_REVIEW
             probe = SourceProbe(
                 source_url=source_url,
                 final_url=source_url,
-                classification=classification,
+                classification=STRUCTURED_ATS if configured_ats else MANUAL_REVIEW,
                 detected_ats=configured_ats,
                 observed_at=now.isoformat().replace("+00:00", "Z"),
             )
@@ -615,7 +643,8 @@ def audit_static_sources(
             classification=probe.classification,
             as_of=now,
         )
-        failure_observations = prior + (1 if probe.classification not in {HEALTHY, EMPTY_VALID, REDIRECT_REQUIRED, STRUCTURED_ATS} else 0)
+        current_failure = 1 if probe.classification in FAILURE_CLASSIFICATIONS else 0
+        failure_observations = prior + current_failure
         decision = retry_decision(probe, failure_observations=max(1, failure_observations), as_of=now)
         action, reason = _recommendation_for_probe(probe, decision)
         findings.append(
@@ -624,7 +653,7 @@ def audit_static_sources(
                 company_name=clean_text(row.get("company_name")),
                 source_url=probe.source_url,
                 final_url=probe.final_url,
-                source_type=source_type,
+                source_type=_source_type(row),
                 ats_platform=probe.detected_ats or clean_text(row.get("ats_platform")),
                 classification=probe.classification,
                 http_status=probe.http_status,
@@ -640,6 +669,71 @@ def audit_static_sources(
     return findings
 
 
+def _audit_key(company_id: Any, source_url: Any) -> tuple[str, str]:
+    return clean_text(company_id).lower(), normalize_url(source_url).lower()
+
+
+def filter_static_sources_for_execution(
+    company_rows: Iterable[dict[str, Any]],
+    audit_rows: Iterable[dict[str, Any]],
+    *,
+    as_of: datetime | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    from src.sources.static_pages import static_page_company_rows
+
+    now = (as_of or datetime.now(UTC)).astimezone(UTC)
+    latest: dict[tuple[str, str], dict[str, Any]] = {}
+    for raw in audit_rows:
+        row = dict(raw)
+        key = _audit_key(row.get("company_id"), row.get("source_url"))
+        if not all(key):
+            continue
+        existing = latest.get(key)
+        if existing is None or (_parse_datetime(row.get("observed_at")) or datetime.min.replace(tzinfo=UTC)) > (
+            _parse_datetime(existing.get("observed_at")) or datetime.min.replace(tzinfo=UTC)
+        ):
+            latest[key] = row
+
+    eligible = static_page_company_rows([dict(row) for row in company_rows])
+    execute: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for row in eligible:
+        key = _audit_key(row.get("company_id"), row.get("source_url"))
+        finding = latest.get(key)
+        if finding is None:
+            execute.append(row)
+            continue
+
+        classification = clean_text(finding.get("classification"))
+        retry_after = _parse_datetime(finding.get("retry_after"))
+        requires_change = _truthy(finding.get("requires_configuration_change"), default=False)
+        retry_eligible = _truthy(finding.get("retry_eligible"), default=False)
+        reason = ""
+        if requires_change:
+            reason = "configuration_change_required"
+        elif retry_after is not None and retry_after > now:
+            reason = "cooldown_active"
+        elif classification in {REDIRECT_REQUIRED, STRUCTURED_ATS, MANUAL_REVIEW}:
+            reason = "manual_or_configuration_review_required"
+        elif classification != HEALTHY and not retry_eligible:
+            reason = "retry_not_eligible"
+
+        if reason:
+            skipped.append(
+                {
+                    "company_id": clean_text(row.get("company_id")),
+                    "company_name": clean_text(row.get("company_name")),
+                    "source_url": normalize_url(row.get("source_url")),
+                    "classification": classification,
+                    "retry_after": clean_text(finding.get("retry_after")),
+                    "reason": reason,
+                }
+            )
+        else:
+            execute.append(row)
+    return execute, skipped
+
+
 def apply_approved_source_updates(
     rows_with_numbers: Iterable[tuple[int, dict[str, Any]]],
     findings: Iterable[SourceAuditFinding],
@@ -648,19 +742,25 @@ def apply_approved_source_updates(
     sheet_client: Any,
 ) -> list[dict[str, Any]]:
     approved = {clean_text(value).lower() for value in approved_company_ids if clean_text(value)}
-    findings_by_company = {finding.company_id.lower(): finding for finding in findings if finding.company_id}
+    findings_by_source = {
+        _audit_key(finding.company_id, finding.source_url): finding
+        for finding in findings
+        if finding.company_id and finding.source_url
+    }
     updates: list[dict[str, Any]] = []
 
-    for row_number, row in rows_with_numbers:
+    for row_number, raw_row in rows_with_numbers:
+        row = dict(raw_row)
         company_id = clean_text(row.get("company_id")).lower()
         if company_id not in approved:
             continue
-        finding = findings_by_company.get(company_id)
+        original_url = normalize_url(row.get("source_url"))
+        finding = findings_by_source.get(_audit_key(company_id, original_url))
         if finding is None:
             continue
 
         updated = dict(row)
-        if finding.classification == REDIRECT_REQUIRED and finding.final_url:
+        if finding.classification == REDIRECT_REQUIRED and finding.final_url and finding.http_status and 200 <= finding.http_status < 300:
             updated["source_url"] = finding.final_url
             updated["source_quality"] = "success"
         elif finding.classification == STRUCTURED_ATS and finding.ats_platform in {"greenhouse", "lever"}:
@@ -678,23 +778,43 @@ def apply_approved_source_updates(
         else:
             continue
 
+        final_url = normalize_url(updated.get("source_url"))
         marker = (
-            f"Sprint 51 approved source update: classification={finding.classification}; "
-            f"action={finding.recommended_action}; observed_at={finding.observed_at}"
+            "Sprint 51 approved source update: "
+            f"classification={finding.classification}; action={finding.recommended_action}; "
+            f"original_source_url={original_url}; final_source_url={final_url}; observed_at={finding.observed_at}"
         )
         existing_notes = clean_text(updated.get("notes"))
         if marker not in existing_notes:
             updated["notes"] = f"{existing_notes} | {marker}" if existing_notes else marker
-        if updated != row:
-            sheet_client.update_record("Config_Companies", row_number, updated)
-            updates.append(
-                {
-                    "company_id": company_id,
-                    "company_name": clean_text(row.get("company_name")),
-                    "classification": finding.classification,
-                    "action": finding.recommended_action,
-                }
-            )
+        if updated == row:
+            continue
+
+        sheet_client.update_record("Config_Companies", row_number, updated)
+        updates.append(
+            {
+                "company_id": company_id,
+                "company_name": clean_text(row.get("company_name")),
+                "classification": finding.classification,
+                "action": finding.recommended_action,
+                "original_source_url": original_url,
+                "final_source_url": final_url,
+                "before": {
+                    "source_type": row.get("source_type", ""),
+                    "ats_platform": row.get("ats_platform", ""),
+                    "ingestion_mode": row.get("ingestion_mode", ""),
+                    "source_quality": row.get("source_quality", ""),
+                    "active": row.get("active", ""),
+                },
+                "after": {
+                    "source_type": updated.get("source_type", ""),
+                    "ats_platform": updated.get("ats_platform", ""),
+                    "ingestion_mode": updated.get("ingestion_mode", ""),
+                    "source_quality": updated.get("source_quality", ""),
+                    "active": updated.get("active", ""),
+                },
+            }
+        )
     return updates
 
 
@@ -703,10 +823,7 @@ def _job_source_group_keys(source: dict[str, Any], job: dict[str, Any]) -> list[
     source_url = normalize_url(source.get("source_url") or source.get("canonical_url") or job.get("canonical_url"))
     company = clean_text(job.get("company") or source.get("company")) or "Unknown company"
     primary = _normalized(source.get("source_primary") or job.get("source_primary"))
-    keys = [
-        ("source_type", source_type or "unknown"),
-        ("company", company),
-    ]
+    keys = [("source_type", source_type or "unknown"), ("company", company)]
     if source_type == "static_page" or primary == "static_page":
         keys.append(("static_company_source", f"{company} | {source_url or 'unknown URL'}"))
     ats = detect_structured_ats(source_url, f"{source_type} {primary}")
@@ -722,11 +839,13 @@ def _rejected_group_keys(row: dict[str, Any]) -> list[tuple[str, str]]:
     company = clean_text(row.get("company")) or "Unknown company"
     subject = clean_text(row.get("subject"))
     keys = [("source_type", source), ("company", company)]
-    if subject:
-        keys.append(("gmail_alert_or_search", subject))
-    else:
-        keys.append(("gmail_alert_or_search", source))
+    keys.append(("gmail_alert_or_search", subject or source))
     return keys
+
+
+def _is_applied(job: dict[str, Any]) -> bool:
+    states = {"applied", "interviewing", "offer"}
+    return _normalized(job.get("application_status")) in states or _normalized(job.get("review_status")) in states
 
 
 def _is_surfaced(job: dict[str, Any]) -> bool:
@@ -741,7 +860,11 @@ def _is_surfaced(job: dict[str, Any]) -> bool:
         return False
     if potential == "excluded" or score_status == "excluded":
         return False
-    return review in {"review_now", "reviewing", "interested", "watch", "deferred", "applied", "interviewing", "offer"} or potential in {"high", "medium"}
+    return (
+        review in {"review_now", "reviewing", "interested", "watch", "deferred", "applied", "interviewing", "offer"}
+        or potential in {"high", "medium"}
+        or _is_applied(job)
+    )
 
 
 def _is_dismissed(job: dict[str, Any]) -> bool:
@@ -752,35 +875,18 @@ def _is_interested(job: dict[str, Any]) -> bool:
     return _normalized(job.get("interest_decision")) in {"interested", "applied"} or _normalized(job.get("review_status")) == "interested"
 
 
-def _is_applied(job: dict[str, Any]) -> bool:
-    states = {"applied", "interviewing", "offer"}
-    return _normalized(job.get("application_status")) in states or _normalized(job.get("review_status")) in states
-
-
 def _is_strong_fit(job: dict[str, Any]) -> bool:
-    material = " ".join(
-        clean_text(job.get(field)).lower()
-        for field in ("verified_alert_tier", "alert_tier", "score_explanation", "potential_priority_reason")
-    )
-    if "strong fit" in material or "verified strong" in material:
-        return True
-    verified = _number(job.get("verified_total_score"))
-    return verified >= 80
+    material = " ".join(clean_text(job.get(field)).lower() for field in ("verified_alert_tier", "alert_tier", "score_explanation", "potential_priority_reason"))
+    return "strong fit" in material or "verified strong" in material or _number(job.get("verified_total_score")) >= 80
 
 
 def _is_stretch_fit(job: dict[str, Any]) -> bool:
-    material = " ".join(
-        clean_text(job.get(field)).lower()
-        for field in ("title", "score_explanation", "potential_priority_reason", "review_notes")
-    )
+    material = " ".join(clean_text(job.get(field)).lower() for field in ("title", "score_explanation", "potential_priority_reason", "review_notes"))
     return "stretch fit" in material or "stretch_fit" in material
 
 
 def _reason_flags(row: dict[str, Any]) -> tuple[bool, bool, bool]:
-    material = " ".join(
-        clean_text(row.get(field)).lower()
-        for field in ("rejection_reason", "extraction_notes", "raw_evidence", "title", "company")
-    )
+    material = " ".join(clean_text(row.get(field)).lower() for field in ("rejection_reason", "extraction_notes", "raw_evidence", "title", "company"))
     blocked = any(marker in material for marker in ("blocked_company", "blocked company", "company excluded", "consulting firm"))
     junior = any(marker in material for marker in ("too_junior", "too junior", "role_too_junior", "entry level", "analyst"))
     senior = any(marker in material for marker in ("too_senior", "too senior", "role_too_senior", "vice president", "senior director"))
@@ -795,16 +901,12 @@ def _strategic_companies(target_company_rows: Iterable[dict[str, Any]]) -> set[s
     }
 
 
-def _yield_recommendation(
-    *,
-    metrics: YieldMetrics,
-    strategic_target: bool,
-) -> tuple[str, str]:
+def _yield_recommendation(*, metrics: YieldMetrics, strategic_target: bool) -> tuple[str, str]:
     leads = len(metrics.leads_received)
     accepted = len(metrics.jobs_accepted)
     rejected = len(metrics.auto_rejected)
     surfaced = len(metrics.surfaced_for_review)
-    positive = len(metrics.interested | metrics.applied)
+    positive = len((metrics.interested | metrics.applied) & metrics.surfaced_for_review)
     too_senior = len(metrics.too_senior_rejects)
     too_junior = len(metrics.too_junior_rejects)
     blocked = len(metrics.blocked_company_rejects)
@@ -900,7 +1002,8 @@ def build_source_yield_report(
         company = companies[0] if len(companies) == 1 else "Multiple" if companies else ""
         strategic_target = any(name.lower() in strategic for name in companies)
         recommendation, reason = _yield_recommendation(metrics=metrics, strategic_target=strategic_target)
-        positive = len(metrics.interested | metrics.applied)
+        surfaced_positive = len((metrics.interested | metrics.applied) & metrics.surfaced_for_review)
+        all_positive = len(metrics.interested | metrics.applied)
         average_score = round(sum(metrics.potential_scores) / len(metrics.potential_scores), 1) if metrics.potential_scores else 0.0
         rows.append(
             SourceYieldRow(
@@ -924,13 +1027,12 @@ def build_source_yield_report(
                 strong_fit_count=len(metrics.strong_fit),
                 stretch_fit_count=len(metrics.stretch_fit),
                 average_potential_score=average_score,
-                review_yield_percent=_percent(positive, len(metrics.surfaced_for_review)),
-                actionable_conversion_percent=_percent(positive, len(metrics.leads_received)),
+                review_yield_percent=_percent(surfaced_positive, len(metrics.surfaced_for_review)),
+                actionable_conversion_percent=_percent(all_positive, len(metrics.leads_received)),
                 recommendation=recommendation,
                 recommendation_reason=reason,
             )
         )
-
     return sorted(rows, key=lambda row: (row.group_type, -row.leads_received, row.group_key.lower()))
 
 
@@ -946,10 +1048,7 @@ def _replace_generated_sheet(sheet_client: Any, worksheet_name: str, headers: li
             lambda: worksheet.resize(rows=max(100, len(rows) + 5), cols=max(len(headers), 10)),
             operation_name=f"resize generated worksheet {worksheet_name}",
         )
-    with_quota_backoff(
-        lambda: worksheet.clear(),
-        operation_name=f"clear generated worksheet {worksheet_name}",
-    )
+    with_quota_backoff(lambda: worksheet.clear(), operation_name=f"clear generated worksheet {worksheet_name}")
     with_quota_backoff(
         lambda: worksheet.update(range_name="A1", values=rows, value_input_option="USER_ENTERED"),
         operation_name=f"write generated worksheet {worksheet_name}",
@@ -1028,24 +1127,19 @@ def run_source_quality(
     client = sheet_client or SheetClient.from_settings(load_settings())
     company_rows_with_numbers = client.read_records_with_row_numbers("Config_Companies")
     company_rows = [row for _, row in company_rows_with_numbers]
-    runs = client.read_records("Runs")
-    jobs = client.read_records("Jobs")
-    job_sources = client.read_records("Job_Sources")
-    rejected_jobs = client.read_records("Rejected_Jobs")
-    target_companies = client.read_records("Target_Companies")
-
-    findings = audit_static_sources(
-        company_rows,
-        runs=runs,
-        probe_sources=probe_sources,
-    )
+    findings = audit_static_sources(company_rows, runs=client.read_records("Runs"), probe_sources=probe_sources)
     yield_rows = build_source_yield_report(
-        jobs=jobs,
-        job_sources=job_sources,
-        rejected_jobs=rejected_jobs,
-        target_companies=target_companies,
+        jobs=client.read_records("Jobs"),
+        job_sources=client.read_records("Job_Sources"),
+        rejected_jobs=client.read_records("Rejected_Jobs"),
+        target_companies=client.read_records("Target_Companies"),
         weeks=weeks,
     )
+
+    writes = {"source_audit_rows_written": 0, "source_yield_rows_written": 0}
+    if write_report:
+        writes = write_source_quality_surfaces(client, findings=findings, yield_rows=yield_rows)
+
     updates: list[dict[str, Any]] = []
     if approved_company_ids:
         updates = apply_approved_source_updates(
@@ -1055,9 +1149,7 @@ def run_source_quality(
             sheet_client=client,
         )
 
-    writes = {"source_audit_rows_written": 0, "source_yield_rows_written": 0}
     if write_report:
-        writes = write_source_quality_surfaces(client, findings=findings, yield_rows=yield_rows)
         client.append_run(build_run_record(findings=findings, yield_rows=yield_rows, updates=updates, weeks=weeks))
 
     classification_counts = {
@@ -1067,7 +1159,6 @@ def run_source_quality(
     recommendation_counts: dict[str, int] = defaultdict(int)
     for row in yield_rows:
         recommendation_counts[row.recommendation] += 1
-
     return {
         "status": "success",
         "weeks": weeks,
