@@ -32,6 +32,7 @@ permissions:
 
 concurrency:
   group: job-tracker-workbook-writes
+  queue: max
   cancel-in-progress: false
 
 jobs:
