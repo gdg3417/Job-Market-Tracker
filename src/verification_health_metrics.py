@@ -41,11 +41,8 @@ def _rows_with_job_key(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _job_rows_with_identity_signal(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Keep malformed nonblank Jobs rows visible to the actionability audit."""
-    return [
-        row for row in rows
-        if any(str(row.get(field) or "").strip() for field in ("job_key", "company", "title", "canonical_url"))
-    ]
+    """Keep every nonblank Jobs row visible to the identity audit."""
+    return [row for row in rows if any(str(value or "").strip() for value in row.values())]
 
 
 def _portfolio_coverage(
