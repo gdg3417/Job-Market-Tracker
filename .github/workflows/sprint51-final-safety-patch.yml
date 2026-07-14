@@ -1,19 +1,18 @@
 name: Sprint 51 Final Safety Patch
 
 on:
-  push:
+  pull_request:
     branches:
-      - agent/sprint-51-source-quality-yield
-    paths:
-      - scripts/sprint51_final_safety_patch.py
-      - .github/workflows/sprint51-final-safety-patch.yml
+      - main
+    types:
+      - synchronize
 
 permissions:
   contents: write
 
 jobs:
   patch:
-    if: github.actor != 'github-actions[bot]'
+    if: github.event.pull_request.head.ref == 'agent/sprint-51-source-quality-yield' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
