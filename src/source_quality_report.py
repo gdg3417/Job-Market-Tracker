@@ -6,7 +6,6 @@ from collections import Counter
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Iterable
 
-from src.models import utc_now_iso
 from src.normalize import clean_text, normalize_url
 from src.settings import load_settings
 from src.sheets import SheetClient
@@ -38,44 +37,8 @@ def _strategic_companies(rows: Iterable[dict[str, Any]]) -> set[str]:
     return {
         clean_text(row.get("company_name")).lower()
         for row in rows
-        if _truthy(row.get("active"), default=True)
-        and clean_text(row.get("company_name"))
+        if _truthy(row.get("active"), default=True) and clean_text(row.get("company_name"))
     }
-
-
-def _looks_like_static_source(row: dict[str, Any]) -> bool:
-    if not _truthy(row.get("active"), default=True):
-        return False
-    source_url = normalize_url(row.get("source_url"))
-    if not source_url:
-        return False
-    material = " ".join(
-        clean_text(row.get(field)).lower()
-        for field in (
-            "source_type",
-            "ingestion_mode",
-            "source_quality",
-            "ats_platform",
-            "source_url",
-            "notes",
-        )
-    )
-    if any(term in material for term in ("gmail_only", "manual_review_only", "disabled")):
-        return False
-    return any(
-        term in material
-        for term in (
-            "static",
-            "career",
-            "job",
-            "custom",
-            "workday",
-            "icims",
-            "oracle",
-            "ashby",
-            "smartrecruiters",
-        )
-    )
 
 
 def _zero_row(
@@ -87,8 +50,15 @@ def _zero_row(
     source_type: str,
     company: str = "",
     strategic_target: bool = False,
+    attribution_unavailable: bool = False,
 ) -> SourceYieldRow:
-    if strategic_target:
+    if attribution_unavailable:
+        recommendation = "attribution_unavailable"
+        reason = (
+            "Current Gmail lineage does not preserve Config_Searches.search_id for accepted jobs. "
+            "Do not interpret this row as zero yield or use it to narrow or retire the search."
+        )
+    elif strategic_target:
         recommendation = "keep_strategic_coverage"
         reason = "Retain strategic target-company coverage unless a validated replacement source is available."
     else:
@@ -131,6 +101,8 @@ def configured_zero_yield_rows(
     weeks: int = DEFAULT_WINDOW_WEEKS,
     as_of: date | None = None,
 ) -> list[SourceYieldRow]:
+    from src.sources.static_pages import static_page_company_rows
+
     end = as_of or datetime.now(UTC).date()
     start = end - timedelta(days=max(1, int(weeks or DEFAULT_WINDOW_WEEKS)) * 7 - 1)
     existing = {(row.group_type, row.group_key) for row in existing_rows}
@@ -138,9 +110,7 @@ def configured_zero_yield_rows(
     output: list[SourceYieldRow] = []
     companies_added: set[str] = set()
 
-    for row in company_rows:
-        if not _looks_like_static_source(row):
-            continue
+    for row in static_page_company_rows([dict(item) for item in company_rows]):
         company = clean_text(row.get("company_name")) or "Unknown company"
         source_url = normalize_url(row.get("source_url"))
         group_key = f"{company} | {source_url or 'unknown URL'}"
@@ -201,6 +171,7 @@ def configured_zero_yield_rows(
                 group_type=key[0],
                 group_key=key[1],
                 source_type="configured_search",
+                attribution_unavailable=True,
             )
         )
         existing.add(key)
@@ -238,7 +209,7 @@ def run_source_quality_report(
         target_companies=target_companies,
         weeks=weeks,
     )
-    zero_rows = configured_zero_yield_rows(
+    supplemental_rows = configured_zero_yield_rows(
         company_rows=company_rows,
         search_rows=search_rows,
         target_companies=target_companies,
@@ -246,9 +217,21 @@ def run_source_quality_report(
         weeks=weeks,
     )
     yield_rows = sorted(
-        [*yield_rows, *zero_rows],
+        [*yield_rows, *supplemental_rows],
         key=lambda row: (row.group_type, -row.leads_received, row.group_key.lower()),
     )
+
+    writes = {
+        "source_audit_rows_written": 0,
+        "source_yield_rows_written": 0,
+    }
+    if write_report:
+        # Persist the detailed evidence before any approved configuration mutation.
+        writes = write_source_quality_surfaces(
+            client,
+            findings=findings,
+            yield_rows=yield_rows,
+        )
 
     updates: list[dict[str, Any]] = []
     if approved_company_ids:
@@ -259,16 +242,7 @@ def run_source_quality_report(
             sheet_client=client,
         )
 
-    writes = {
-        "source_audit_rows_written": 0,
-        "source_yield_rows_written": 0,
-    }
     if write_report:
-        writes = write_source_quality_surfaces(
-            client,
-            findings=findings,
-            yield_rows=yield_rows,
-        )
         client.append_run(
             build_run_record(
                 findings=findings,
@@ -280,6 +254,14 @@ def run_source_quality_report(
 
     classification_counts = Counter(finding.classification for finding in findings)
     recommendation_counts = Counter(row.recommendation for row in yield_rows)
+    static_zero_rows = [
+        row
+        for row in supplemental_rows
+        if row.recommendation in {"review_or_reduce_cadence", "keep_strategic_coverage"}
+    ]
+    attribution_unavailable_rows = [
+        row for row in supplemental_rows if row.recommendation == "attribution_unavailable"
+    ]
     return {
         "status": "success",
         "weeks": weeks,
@@ -292,11 +274,10 @@ def run_source_quality_report(
         "configuration_changes_required": len(
             [finding for finding in findings if finding.requires_configuration_change]
         ),
-        "retryable_sources": len(
-            [finding for finding in findings if finding.retry_eligible]
-        ),
+        "retryable_sources": len([finding for finding in findings if finding.retry_eligible]),
         "yield_rows": len(yield_rows),
-        "zero_result_rows": len(zero_rows),
+        "zero_result_rows": len(static_zero_rows),
+        "attribution_unavailable_rows": len(attribution_unavailable_rows),
         "yield_recommendation_counts": dict(sorted(recommendation_counts.items())),
         "approved_updates": updates,
         **writes,
