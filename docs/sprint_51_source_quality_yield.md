@@ -8,7 +8,7 @@ The implementation is conservative. It does not disable a source from one failur
 
 ## Source audit classifications
 
-`python -m src.source_quality_report` classifies the same active static-source population used by normal ingestion as one of:
+`python -m src.source_quality_report` audits active configured static and career-page sources, including failed and manual-review configurations that normal ingestion currently excludes. Each audited source receives one of:
 
 * `healthy`
 * `empty_but_valid`
@@ -138,7 +138,7 @@ Subject-level Gmail evidence remains visible separately. Search-level optimizati
 
 ### Zero-result sources
 
-Active static company sources with no observed leads receive an advisory `review_or_reduce_cadence` recommendation. Strategic target-company sources receive `keep_strategic_coverage` instead.
+Active configured static company sources with no observed leads receive an advisory `review_or_reduce_cadence` recommendation. Strategic target-company sources receive `keep_strategic_coverage` instead.
 
 No recommendation changes configuration automatically.
 
@@ -188,7 +188,7 @@ The workflow:
 
 1. Runs the full test suite.
 2. Migrates and validates the workbook schema.
-3. Audits current static sources.
+3. Audits current and execution-blocked configured static sources.
 4. Builds four-week source yield.
 5. Inventories actual zero-result static sources.
 6. Marks configured searches with unavailable attribution separately.
@@ -216,17 +216,18 @@ After merge:
 2. Confirm `Source_Audit` and `Source_Yield` are created or refreshed.
 3. Confirm report mode changed no `Config_Companies` rows.
 4. Review permanent 404, DNS, protected, redirect, ATS, and manual-review classifications.
-5. Confirm temporary and empty-valid sources have future retry dates.
-6. Confirm configured searches show `attribution_unavailable`, not zero-yield retirement advice.
-7. Confirm strategic target-company sources retain coverage.
-8. Back up the workbook.
-9. Identify exact company IDs and exact current source URLs for reviewed cleanup candidates.
-10. Rerun in `apply_reviewed_cleanup` mode only for approved company IDs.
-11. Confirm the Step Summary reports the original and final source URLs for each applied change.
-12. Run the normal static-page workflow.
-13. Confirm sources in active cooldown are listed under `source_policy_skips` and are not requested.
-14. Confirm eligible healthy or expired-cooldown sources still run.
-15. Confirm reviewed permanent 404 rows no longer qualify as active static sources.
+5. Confirm failed and manual-review configured static sources remain visible in the audit even though normal ingestion excludes them.
+6. Confirm temporary and empty-valid sources have future retry dates.
+7. Confirm configured searches show `attribution_unavailable`, not zero-yield retirement advice.
+8. Confirm strategic target-company sources retain coverage.
+9. Back up the workbook.
+10. Identify exact company IDs and exact current source URLs for reviewed cleanup candidates.
+11. Rerun in `apply_reviewed_cleanup` mode only for approved company IDs.
+12. Confirm the Step Summary reports the original and final source URLs for each applied change.
+13. Run the normal static-page workflow.
+14. Confirm sources in active cooldown are listed under `source_policy_skips` and are not requested.
+15. Confirm eligible healthy or expired-cooldown sources still run.
+16. Confirm reviewed permanent 404 rows no longer qualify as active static sources.
 
 ## Scope boundaries
 
