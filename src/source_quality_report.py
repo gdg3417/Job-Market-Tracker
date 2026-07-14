@@ -19,6 +19,7 @@ from src.source_quality import (
     build_source_yield_report,
     write_source_quality_surfaces,
 )
+from src.source_quality_inventory import configured_static_source_rows_for_audit
 
 
 def _truthy(value: Any, *, default: bool = True) -> bool:
@@ -101,8 +102,6 @@ def configured_zero_yield_rows(
     weeks: int = DEFAULT_WINDOW_WEEKS,
     as_of: date | None = None,
 ) -> list[SourceYieldRow]:
-    from src.sources.static_pages import static_page_company_rows
-
     end = as_of or datetime.now(UTC).date()
     start = end - timedelta(days=max(1, int(weeks or DEFAULT_WINDOW_WEEKS)) * 7 - 1)
     existing = {(row.group_type, row.group_key) for row in existing_rows}
@@ -110,7 +109,7 @@ def configured_zero_yield_rows(
     output: list[SourceYieldRow] = []
     companies_added: set[str] = set()
 
-    for row in static_page_company_rows([dict(item) for item in company_rows]):
+    for row in configured_static_source_rows_for_audit(company_rows):
         company = clean_text(row.get("company_name")) or "Unknown company"
         source_url = normalize_url(row.get("source_url"))
         group_key = f"{company} | {source_url or 'unknown URL'}"
@@ -197,8 +196,9 @@ def run_source_quality_report(
     rejected_jobs = client.read_records("Rejected_Jobs")
     target_companies = client.read_records("Target_Companies")
 
+    audit_company_rows = configured_static_source_rows_for_audit(company_rows)
     findings = audit_static_sources(
-        company_rows,
+        audit_company_rows,
         runs=runs,
         probe_sources=probe_sources,
     )
