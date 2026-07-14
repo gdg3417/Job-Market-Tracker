@@ -90,6 +90,24 @@ def read_canonical_snapshot(sheet_client: SheetClient) -> CanonicalSnapshot:
     )
 
 
+def review_queue_snapshot_rows(
+    jobs_with_rows: list[tuple[int, JobPosting]],
+) -> list[tuple[int, JobPosting]]:
+    """Suppress queue candidates without shortening the canonical Jobs filter range.
+
+    The existing Review Queue writer also reapplies the filter and freeze settings
+    on `Jobs` using the number of supplied rows. Excluded rows are therefore
+    represented by identity-free placeholders rather than removed from the list.
+    The queue builder ignores those placeholders while the `Jobs` filter retains
+    the full canonical row extent.
+    """
+
+    return [
+        (row_number, job if include_on_review_queue(job) else JobPosting())
+        for row_number, job in jobs_with_rows
+    ]
+
+
 def _safe_error(exc: Exception) -> str:
     text = " ".join(str(exc).split())
     return f"{exc.__class__.__name__}: {text}"[:500]
@@ -124,7 +142,8 @@ def _run_surface(
     action: Callable[[], dict[str, Any]],
 ) -> tuple[SurfaceOutcome, dict[str, Any]]:
     try:
-        payload = action()
+        payload = dict(action())
+        payload.setdefault("status", "success")
         return (
             SurfaceOutcome(
                 surface_name=name,
@@ -135,13 +154,14 @@ def _run_surface(
             payload,
         )
     except Exception as exc:
+        error = _safe_error(exc)
         return (
             SurfaceOutcome(
                 surface_name=name,
                 status="failed",
-                warning_or_error=_safe_error(exc),
+                warning_or_error=error,
             ),
-            {"status": "failed", "error": _safe_error(exc)},
+            {"status": "failed", "error": error},
         )
 
 
@@ -191,6 +211,25 @@ def _dashboard_result(
     )
 
 
+def _add_warning(
+    outcomes: list[SurfaceOutcome],
+    results: dict[str, dict[str, Any]],
+    surface_names: set[str],
+    warning: str,
+) -> None:
+    for outcome in outcomes:
+        if outcome.surface_name not in surface_names:
+            continue
+        outcome.warning_or_error = "; ".join(
+            value for value in (outcome.warning_or_error, warning) if value
+        )[:500]
+        payload = results.get(outcome.surface_name)
+        if payload is not None:
+            warnings = payload.setdefault("warnings", [])
+            if isinstance(warnings, list):
+                warnings.append(warning)
+
+
 def apply_presentation_refresh(
     sheet_client: SheetClient,
     *,
@@ -201,16 +240,18 @@ def apply_presentation_refresh(
     config_path: str | None = None,
 ) -> dict[str, Any]:
     attempted_at = utc_now_iso()
-    normalized_as_of = normalize_sheet_date(as_of) if as_of not in (None, "") else today_iso()
+    normalized_as_of = (
+        normalize_sheet_date(as_of) if as_of not in (None, "") else today_iso()
+    )
     data_as_of_date = str(normalized_as_of or today_iso())
     snapshot = read_canonical_snapshot(sheet_client)
     results: dict[str, dict[str, Any]] = {}
     outcomes: list[SurfaceOutcome] = []
 
-    review_jobs_with_rows = [
-        pair for pair in snapshot.jobs_with_rows if include_on_review_queue(pair[1])
-    ]
-    review_client = SnapshotSheetClient(sheet_client, review_jobs_with_rows)
+    review_client = SnapshotSheetClient(
+        sheet_client,
+        review_queue_snapshot_rows(snapshot.jobs_with_rows),
+    )
     outcome, payload = _run_surface(
         "Review_Queue",
         lambda: apply_review_queue(review_client).to_dict(),
@@ -324,9 +365,24 @@ def apply_presentation_refresh(
     outcomes.append(outcome)
     results["Digest"] = payload
 
-    if results["Dashboard"].get("status") == "success" and results["Digest"].get("status") == "success":
-        combined = _dashboard_result(dashboard_jobs, digest_values, dashboard_values)
-        sheet_client.append_run(dashboard.build_dashboard_run_record(combined))
+    if (
+        results["Dashboard"].get("status") == "success"
+        and results["Digest"].get("status") == "success"
+    ):
+        try:
+            combined = _dashboard_result(
+                dashboard_jobs,
+                digest_values,
+                dashboard_values,
+            )
+            sheet_client.append_run(dashboard.build_dashboard_run_record(combined))
+        except Exception as exc:
+            _add_warning(
+                outcomes,
+                results,
+                {"Dashboard", "Digest"},
+                f"Dashboard run history was not recorded: {_safe_error(exc)}",
+            )
 
     if apply_governance:
         outcome, payload = _run_surface(
@@ -359,7 +415,9 @@ def apply_presentation_refresh(
             )
         )
     warnings = [
-        item for item in merged_outcomes if item.status == "success" and item.warning_or_error
+        item
+        for item in merged_outcomes
+        if item.status == "success" and item.warning_or_error
     ]
     overall_status = "success" if not failures else "partial_failure"
 
@@ -370,7 +428,9 @@ def apply_presentation_refresh(
         "data_as_of_date": data_as_of_date,
         "jobs_snapshot_rows": len(snapshot.jobs_with_rows),
         "surface_order": [item.surface_name for item in merged_outcomes],
-        "surfaces_succeeded": sum(1 for item in merged_outcomes if item.status == "success"),
+        "surfaces_succeeded": sum(
+            1 for item in merged_outcomes if item.status == "success"
+        ),
         "surfaces_failed": len(failures),
         "surfaces_with_warnings": len(warnings),
         "surface_status_written": not bool(surface_status_error),
