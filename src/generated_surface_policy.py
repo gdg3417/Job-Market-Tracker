@@ -47,12 +47,27 @@ def is_terminal_application(job: JobPosting) -> bool:
     return normalize_status(job.application_status) in TERMINAL_APPLICATION_STATUSES
 
 
+def is_auto_rejected(job: JobPosting) -> bool:
+    """Expose the canonical scoring rejection policy without private imports elsewhere."""
+    return _is_auto_rejected_job(job)
+
+
+def is_blocked_company(job: JobPosting) -> bool:
+    """Return whether canonical scoring policy blocks the employer."""
+    return _is_blocked_company_job(job)
+
+
+def is_too_senior_hard_exclusion(job: JobPosting) -> bool:
+    """Return whether the role is outside the supported seniority range."""
+    return _is_too_senior_job(job)
+
+
 def is_hard_excluded(job: JobPosting) -> bool:
     explanation = str(job.score_explanation or "").lower()
     return (
-        _is_auto_rejected_job(job)
-        or _is_blocked_company_job(job)
-        or _is_too_senior_job(job)
+        is_auto_rejected(job)
+        or is_blocked_company(job)
+        or is_too_senior_hard_exclusion(job)
         or normalize_status(job.score_status) == "excluded"
         or normalize_status(job.potential_priority) == "excluded"
         or "hard_exclude=true" in explanation
