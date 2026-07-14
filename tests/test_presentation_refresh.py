@@ -252,3 +252,4 @@ def test_generated_write_workflows_share_one_concurrency_group():
     for workflow_name in workflow_names:
         text = (root / ".github" / "workflows" / workflow_name).read_text(encoding="utf-8")
         assert "group: job-tracker-workbook-writes" in text
+        assert "queue: max" in text
