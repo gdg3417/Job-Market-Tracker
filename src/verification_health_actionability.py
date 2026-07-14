@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -18,11 +18,11 @@ from src.generated_surface_policy import (
     normalize_status,
 )
 from src.sheet_dates import normalize_record_dates, normalize_sheet_date, normalized_job_from_record
-from src.verification_health_models import parse_datetime
 
 CENTRAL_TIMEZONE = ZoneInfo("America/Chicago")
 DEFERRED_STATUSES = {"deferred"}
 LIKELY_CLOSED_STATUSES = {"likely closed", "not seen once"}
+DEFERRED_DATE_FIELDS = ("follow_up_date", "next_action_date")
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,8 +40,23 @@ def has_valid_job_identity(row: dict[str, Any]) -> bool:
     )
 
 
-def _due_date_value(row: dict[str, Any]) -> Any:
-    return row.get("follow_up_date") or row.get("next_action_date")
+def _deferred_date_values(row: dict[str, Any]) -> list[tuple[str, Any]]:
+    return [
+        (field, row.get(field))
+        for field in DEFERRED_DATE_FIELDS
+        if str(row.get(field) or "").strip()
+    ]
+
+
+def _normalized_calendar_date(value: Any) -> date | None:
+    normalized = normalize_sheet_date(value)
+    text = str(normalized or "").strip()
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
 
 
 def _deferred_state(row: dict[str, Any], as_of: datetime) -> Actionability | None:
@@ -51,34 +66,45 @@ def _deferred_state(row: dict[str, Any], as_of: datetime) -> Actionability | Non
     if review_status not in DEFERRED_STATUSES and interest_decision not in DEFERRED_STATUSES:
         return None
 
-    raw_due = normalize_sheet_date(_due_date_value(row))
-    if raw_due in (None, ""):
+    raw_values = _deferred_date_values(row)
+    if not raw_values:
         return Actionability(
             True,
             "deferred_missing_due_date",
-            "Deferred role has no follow-up date and requires manual correction.",
+            "Deferred role has no follow-up or next-action date and requires manual correction.",
         )
 
-    due = parse_datetime(raw_due, end_of_day=True)
-    if due is None:
+    parsed_dates: list[tuple[str, date]] = []
+    invalid_fields: list[str] = []
+    for field, value in raw_values:
+        parsed = _normalized_calendar_date(value)
+        if parsed is None:
+            invalid_fields.append(field)
+        else:
+            parsed_dates.append((field, parsed))
+
+    if invalid_fields:
         return Actionability(
             True,
             "deferred_invalid_due_date",
-            "Deferred role has an unreadable follow-up date and requires manual correction.",
+            "Deferred role has an unreadable date in " + ", ".join(sorted(invalid_fields)) + ".",
         )
 
-    local_as_of = as_of.astimezone(CENTRAL_TIMEZONE)
-    local_due = due.astimezone(CENTRAL_TIMEZONE)
-    if local_due.date() > local_as_of.date():
+    local_as_of_date = as_of.astimezone(CENTRAL_TIMEZONE).date()
+    due_dates = [due for _, due in parsed_dates if due <= local_as_of_date]
+    if due_dates:
+        earliest_due = min(due_dates)
         return Actionability(
-            False,
-            "deferred_not_due",
-            f"Deferred until {local_due.date().isoformat()}.",
+            True,
+            "deferred_due",
+            f"Deferred follow-up was due on {earliest_due.isoformat()}.",
         )
+
+    next_due = min(due for _, due in parsed_dates)
     return Actionability(
-        True,
-        "deferred_due",
-        f"Deferred follow-up was due on {local_due.date().isoformat()}.",
+        False,
+        "deferred_not_due",
+        f"Deferred until {next_due.isoformat()}.",
     )
 
 
