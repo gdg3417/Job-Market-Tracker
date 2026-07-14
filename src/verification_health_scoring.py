@@ -8,9 +8,9 @@ from src.verification_health_state import (
     authoritative,
     daily_run,
     enrichment_run,
+    is_closed,
     is_high,
     is_medium_signal,
-    is_open,
     is_verified,
     latest_run,
     parse_notes,
@@ -62,6 +62,7 @@ def calculate_components(
     as_of: datetime,
     thresholds: HealthThresholds,
 ) -> tuple[list[HealthComponent], list[str]]:
+    """Score operational health using only roles that remain actionable."""
     components: list[HealthComponent] = []
     overrides: list[str] = []
     latest = daily_run(runs)
@@ -138,28 +139,33 @@ def calculate_components(
         },
     ))
 
-    priority_open = [job for job in jobs if is_open(job) and (is_high(job) or is_medium_signal(job))]
-    high_open = [job for job in jobs if is_open(job) and is_high(job)]
+    active = lambda row: not is_closed(row)
+    priority_actionable = [job for job in jobs if active(job) and (is_high(job) or is_medium_signal(job))]
+    high_actionable = [job for job in jobs if active(job) and is_high(job)]
     breached_keys = {str(row.get("job_key") or "") for row in breaches}
-    high_keys = {str(job.get("job_key") or "") for job in high_open}
+    high_keys = {str(job.get("job_key") or "") for job in high_actionable}
     breached_high = high_keys & breached_keys
-    breach_rate = len(breached_high) / max(1, len(high_open))
-    verified_high = sum(1 for job in high_open if is_verified(job))
-    conversion_rate = verified_high / max(1, len(high_open))
+    breach_rate = len(breached_high) / max(1, len(high_actionable))
+    verified_high = sum(1 for job in high_actionable if is_verified(job))
+    conversion_rate = verified_high / max(1, len(high_actionable))
     breach_score = _inverse_score(breach_rate, thresholds.verification_watch_breach_rate, thresholds.verification_degraded_breach_rate)
     conversion_score = _positive_score(conversion_rate, thresholds.verification_watch_conversion_rate, thresholds.verification_degraded_conversion_rate)
-    verification_score = round(0.60 * breach_score + 0.40 * conversion_score) if high_open else 100
+    verification_score = round(0.60 * breach_score + 0.40 * conversion_score) if high_actionable else 100
     components.append(_component(
-        "verification_health", "Verification health", verification_score,
+        "verification_health", "Actionable verification health", verification_score,
         {
-            "high_potential_open": len(high_open), "high_potential_verified": verified_high,
-            "verified_conversion_rate": round(conversion_rate, 4), "service_level_breaches": len(breached_high),
-            "breach_rate": round(breach_rate, 4), "breach_score": breach_score,
-            "conversion_score": conversion_score, "queue_rows": len(queues),
+            "actionable_high_potential": len(high_actionable),
+            "actionable_high_potential_verified": verified_high,
+            "verified_conversion_rate": round(conversion_rate, 4),
+            "actionable_service_level_breaches": len(breached_high),
+            "breach_rate": round(breach_rate, 4),
+            "breach_score": breach_score,
+            "conversion_score": conversion_score,
+            "queue_rows": len(queues),
         },
     ))
 
-    evidence_scores = [safe_int(job.get("evidence_completeness_score"), 0) for job in priority_open]
+    evidence_scores = [safe_int(job.get("evidence_completeness_score"), 0) for job in priority_actionable]
     average_evidence = round(sum(evidence_scores) / len(evidence_scores), 1) if evidence_scores else 100.0
     if average_evidence >= thresholds.evidence_watch_score:
         evidence_score = 100
@@ -168,13 +174,16 @@ def calculate_components(
     else:
         evidence_score = round(40 * average_evidence / max(1, thresholds.evidence_degraded_score))
     components.append(_component(
-        "evidence_completeness", "Evidence completeness", evidence_score,
-        {"average_priority_evidence_score": average_evidence, "accepted_evidence_rows": sum(1 for row in evidence if truthy(row.get("accepted")))},
+        "evidence_completeness", "Actionable evidence completeness", evidence_score,
+        {
+            "average_actionable_priority_evidence_score": average_evidence,
+            "accepted_evidence_rows": sum(1 for row in evidence if truthy(row.get("accepted"))),
+        },
     ))
 
     lifecycle = [
         job for job in jobs
-        if is_open(job) and (
+        if active(job) and (
             is_verified(job)
             or authoritative(job, queues.get(str(job.get("job_key") or "")), thresholds, resolutions.get(str(job.get("job_key") or "")))
         )
@@ -190,10 +199,11 @@ def calculate_components(
     stale = sum(1 for value in lifecycle_ages if value is None or value > thresholds.lifecycle_stale_hours)
     stale_rate = stale / max(1, len(lifecycle))
     components.append(_component(
-        "lifecycle_health", "Lifecycle health",
+        "lifecycle_health", "Actionable lifecycle health",
         _inverse_score(stale_rate, thresholds.lifecycle_watch_stale_rate, thresholds.lifecycle_degraded_stale_rate),
         {
             "eligible_jobs": len(lifecycle),
+            "actionable_eligible_jobs": len(lifecycle),
             "unchecked_jobs": unchecked,
             "stale_jobs": stale,
             "stale_rate": round(stale_rate, 4),
@@ -201,13 +211,13 @@ def calculate_components(
     ))
 
     ready = [
-        job for job in priority_open
+        job for job in priority_actionable
         if is_verified(job) and safe_int(job.get("verified_total_score") or job.get("total_score"), 0) >= thresholds.strong_fit_score
     ]
-    ready_rate = len(ready) / max(1, len(priority_open))
+    ready_rate = len(ready) / max(1, len(priority_actionable))
     components.append(_component(
-        "decision_readiness_health", "Decision-readiness health",
+        "decision_readiness_health", "Actionable decision-readiness health",
         _positive_score(ready_rate, thresholds.decision_watch_ready_rate, thresholds.decision_degraded_ready_rate),
-        {"priority_open": len(priority_open), "decision_ready": len(ready), "ready_rate": round(ready_rate, 4)},
+        {"actionable_priority_roles": len(priority_actionable), "decision_ready": len(ready), "ready_rate": round(ready_rate, 4)},
     ))
     return components, overrides
