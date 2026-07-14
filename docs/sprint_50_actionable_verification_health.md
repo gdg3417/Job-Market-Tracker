@@ -82,7 +82,7 @@ The existing 15-stage output remains available, but it is no longer presented as
 
 Each metric is labeled as either:
 
-* `conversion`, when the numerator is a strict subset of the denominator
+* `conversion`, when the numerator is a nested subset of the denominator
 * `population`, when the stage is an independent or non-nested portfolio population
 
 A conversion is emitted only when the observed job keys are a subset of the denominator job keys. No displayed conversion can exceed 100 percent.
@@ -113,12 +113,13 @@ The deterministic verification run identifier and existing `Runs` schema remain 
 Required validation before merge:
 
 ```text
-python -m compileall -q src
+python -m compileall -q src tests
 pytest
 python -m src.workflow_validation
-python -m src.regression_readiness
-python -m src.regression_evaluation
+python -m src.production_readiness --evaluate-regression --fixture data/regression/sprint38_gold_standard_jobs.json
 ```
+
+The `Regression readiness` pull request workflow runs the full test suite and the gold-standard regression evaluation.
 
 After merge, manually dispatch `Job Tracker Verification Health` in `run` mode and confirm:
 
