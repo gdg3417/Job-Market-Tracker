@@ -75,7 +75,7 @@ jobs:
           PY
 
       - name: Run focused tests
-        run: pytest tests/test_workbook_capacity.py tests/test_workbook_capacity_workflow.py
+        run: pytest tests/test_workbook_capacity.py tests/test_workbook_capacity_hotfix.py tests/test_workbook_capacity_workflow.py
 
       - name: Validate live workbook schema
         run: python -m src.schema --validate
@@ -85,7 +85,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          python -m src.workbook_capacity --audit --enforce-critical \
+          python -m src.workbook_capacity_hotfix --audit --enforce-critical \
             | tee "$RUNNER_TEMP/workbook_capacity.json"
 
       - name: Apply explicit safe compaction
@@ -99,7 +99,7 @@ jobs:
           if [ "${ALLOW_TRIM_BLANK_FORMATTING}" = "true" ]; then
             extra_args+=(--allow-trim-blank-formatting)
           fi
-          python -m src.workbook_capacity --compact --apply --enforce-critical "${extra_args[@]}" \
+          python -m src.workbook_capacity_hotfix --compact --apply --enforce-critical "${extra_args[@]}" \
             | tee "$RUNNER_TEMP/workbook_capacity.json"
 
       - name: Upload capacity report
