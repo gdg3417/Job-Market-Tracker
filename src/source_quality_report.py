@@ -160,7 +160,7 @@ def configured_zero_yield_rows(
         group_key = search_id or bucket or role_family
         if not group_key:
             continue
-        key = ("gmail_alert_or_search", group_key)
+        key = ("configured_search", group_key)
         if key in existing:
             continue
         output.append(
