@@ -1,0 +1,62 @@
+name: Inspect Source Quality Failure
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  inspect:
+    if: github.event.pull_request.head.ref == 'automation/inspect-source-quality-failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download failed job log
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl --fail --location \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/jobs/87232045792/logs" \
+            --output "$RUNNER_TEMP/source-quality.log"
+
+      - name: Print failure context only
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          path = Path(os.environ["RUNNER_TEMP"]) / "source-quality.log"
+          text = path.read_text(encoding="utf-8", errors="replace")
+          lines = text.splitlines()
+          patterns = re.compile(
+              r"Traceback|Exception|Error:|KeyError|ValueError|TypeError|AttributeError|"
+              r"WorksheetNotFound|APIError|gspread|##\[error\]|::error::|Process completed with exit code",
+              re.IGNORECASE,
+          )
+          matches = [index for index, line in enumerate(lines) if patterns.search(line)]
+          selected: set[int] = set()
+          for index in matches:
+              selected.update(range(max(0, index - 18), min(len(lines), index + 24)))
+          if not selected:
+              selected.update(range(max(0, len(lines) - 250), len(lines)))
+          print("=== FAILURE CONTEXT ===")
+          previous = None
+          for index in sorted(selected):
+              if previous is not None and index > previous + 1:
+                  print("... omitted ...")
+              print(lines[index])
+              previous = index
+          print("=== END FAILURE CONTEXT ===")
+          PY
