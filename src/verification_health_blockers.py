@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from src.verification_health_models import Blocker, HealthThresholds, identity, row_timestamp, safe_int, truthy
-from src.verification_health_state import authoritative, is_deferred
+from src.verification_health_state import authoritative
 
 
 def classify_blocker(
@@ -16,6 +16,12 @@ def classify_blocker(
     as_of: datetime,
     thresholds: HealthThresholds,
 ) -> Blocker:
+    """Assign the primary technical verification blocker for an actionable role.
+
+    Deferred-state decisions are owned by verification_health_actionability so
+    raw date formatting cannot change blocker ownership.
+    """
+    del as_of
     queue = queue_row or {}
     resolution = resolution_row or {}
     resolution_state = identity(resolution.get("resolution_state"))
@@ -39,8 +45,6 @@ def classify_blocker(
     attempts = safe_int(queue.get("attempt_count"), safe_int(job.get("enrichment_attempt_count"), 0))
     confidence = safe_int(queue.get("match_confidence") or job.get("enrichment_match_confidence"), 0)
 
-    if is_deferred(job, as_of):
-        return Blocker("manual_review_required", "Manually deferred without a due follow-up")
     if status == "retryable failure" or row_timestamp(queue, "next_attempt_at"):
         return Blocker("retry_scheduled", error_message or "Retry is scheduled")
     if "blocked" in error_text or "forbidden" in error_text or "unauthorized" in error_text:
