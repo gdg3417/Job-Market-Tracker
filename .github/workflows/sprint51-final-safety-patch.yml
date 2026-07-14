@@ -1,0 +1,55 @@
+name: Sprint 51 Final Safety Patch
+
+on:
+  push:
+    branches:
+      - agent/sprint-51-source-quality-yield
+    paths:
+      - scripts/sprint51_final_safety_patch.py
+      - .github/workflows/sprint51-final-safety-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/sprint-51-source-quality-yield
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Apply planned patch
+        run: python scripts/sprint51_final_safety_patch.py
+
+      - name: Validate focused behavior
+        run: |
+          python -m compileall -q src tests
+          pytest tests/test_source_quality_hardening.py tests/test_source_quality_workflow.py
+
+      - name: Remove temporary patch machinery
+        run: |
+          rm scripts/sprint51_final_safety_patch.py
+          rm .github/workflows/sprint51-final-safety-patch.yml
+
+      - name: Commit patched implementation
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Fix Sprint 51 ATS conversion and no-probe safety"
+          git push origin HEAD:agent/sprint-51-source-quality-yield
