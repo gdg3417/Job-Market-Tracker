@@ -144,6 +144,7 @@ jobs:
           print(json.dumps({
             "overall_classification": "not calculated",
             "overall_score": "",
+            "overall_reasons": [],
             "status": "failed",
             "error_type": error_type,
             "error_message": detail,
@@ -151,6 +152,10 @@ jobs:
             "dashboard_rows_written": 0,
             "sla_breach_count": 0,
             "blocker_counts": {},
+            "secondary_gap_counts": {},
+            "actionable_summary": {},
+            "portfolio_coverage": {},
+            "actionability_exclusions": {},
             "health_components": [],
           }))
           PY
@@ -174,8 +179,13 @@ jobs:
           summary_default = {
               "overall_classification": "not calculated",
               "overall_score": "",
+              "overall_reasons": [],
               "sla_breach_count": 0,
               "blocker_counts": {},
+              "secondary_gap_counts": {},
+              "actionable_summary": {},
+              "portfolio_coverage": {},
+              "actionability_exclusions": {},
               "history_action": "not written",
               "dashboard_rows_written": 0,
               "health_components": [],
@@ -194,6 +204,12 @@ jobs:
                       continue
               return total
 
+          def _safe_percent(value):
+              try:
+                  return f"{float(value or 0) * 100:.1f}%"
+              except (TypeError, ValueError):
+                  return "not calculated"
+
           output_path = Path(os.environ["RUNNER_TEMP"]) / "verification_health.json"
           data = load_json_output(
               output_path,
@@ -203,12 +219,32 @@ jobs:
           components = data.get("health_components") or []
           if not isinstance(components, list):
               components = []
+          actionable = data.get("actionable_summary") or {}
+          if not isinstance(actionable, dict):
+              actionable = {}
+          portfolio = data.get("portfolio_coverage") or {}
+          if not isinstance(portfolio, dict):
+              portfolio = {}
+          exclusions = data.get("actionability_exclusions") or {}
+          if not isinstance(exclusions, dict):
+              exclusions = {}
+          reasons = data.get("overall_reasons") or []
+          if not isinstance(reasons, list):
+              reasons = []
 
           rows = [
               ("Overall classification", data.get("overall_classification", "not calculated")),
               ("Overall score", data.get("overall_score", "")),
-              ("SLA breaches", data.get("sla_breach_count", 0)),
-              ("Unresolved blocker rows", _safe_count_sum(data.get("blocker_counts"))),
+              ("Actionable open roles", actionable.get("actionable_open_roles", 0)),
+              ("Actionable high-potential roles", actionable.get("actionable_high_potential", 0)),
+              ("Aged actionable roles", actionable.get("aged_actionable_roles", 0)),
+              ("Manual interventions required", actionable.get("manual_interventions_required", 0)),
+              ("Dismissed roles excluded", actionable.get("dismissed_roles_excluded", 0)),
+              ("Deferred roles not yet due", actionable.get("deferred_not_due_excluded", 0)),
+              ("Portfolio evidence coverage", _safe_percent(portfolio.get("portfolio_coverage_rate"))),
+              ("Actionable SLA breaches", data.get("sla_breach_count", 0)),
+              ("Actionable primary blocker rows", _safe_count_sum(data.get("blocker_counts"))),
+              ("Supporting secondary gaps", _safe_count_sum(data.get("secondary_gap_counts"))),
               ("History action", data.get("history_action", "not written")),
               ("Dashboard rows written", data.get("dashboard_rows_written", 0)),
               ("Final workflow status", os.environ.get("FINAL_STATUS", "unknown")),
@@ -221,6 +257,16 @@ jobs:
               handle.write("| --- | ---: |\n")
               for metric, value in rows:
                   handle.write(f"| {metric} | {value} |\n")
+              if reasons:
+                  handle.write("\n#### Classification reasons\n\n")
+                  for reason in reasons[:5]:
+                      handle.write(f"* {str(reason).replace(chr(10), ' ')}\n")
+              if exclusions:
+                  handle.write("\n#### Excluded from actionable health\n\n")
+                  handle.write("| Reason | Rows |\n")
+                  handle.write("| --- | ---: |\n")
+                  for reason, count in sorted(exclusions.items()):
+                      handle.write(f"| {reason} | {count} |\n")
               if components:
                   handle.write("\n| Component | Score | Classification |\n")
                   handle.write("| --- | ---: | --- |\n")

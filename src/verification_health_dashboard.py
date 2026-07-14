@@ -29,14 +29,31 @@ def _job_rows(title: str, jobs: list[dict[str, Any]]) -> list[list[Any]]:
     return rows
 
 
+def _mapping_rows(title: str, values: dict[str, Any]) -> list[list[Any]]:
+    rows: list[list[Any]] = [[title], ["Metric", "Value"]]
+    if not values:
+        rows.append(["None", 0])
+        return rows
+    rows.extend([[key, value] for key, value in values.items()])
+    return rows
+
+
 def build_dashboard_section(result: VerificationHealthResult) -> list[list[Any]]:
     rows: list[list[Any]] = [
         [DASHBOARD_START],
         ["Generated at", result.generated_at],
-        ["Overall verification health", result.overall_classification, result.overall_score],
+        ["Overall actionable verification health", result.overall_classification, result.overall_score],
+        ["Overall reasons", "; ".join(result.overall_reasons)],
     ]
     if result.critical_overrides:
         rows.append(["Critical overrides", "; ".join(result.critical_overrides)])
+
+    rows.extend([[""]])
+    rows.extend(_mapping_rows("Actionable role summary", result.actionable_summary))
+    rows.extend([[""]])
+    rows.extend(_mapping_rows("Portfolio evidence coverage", result.portfolio_coverage))
+    rows.extend([[""]])
+    rows.extend(_mapping_rows("Roles excluded from actionable health", result.actionability_exclusions))
 
     rows.extend([[""], ["Health component scores"], ["Component", "Score", "Classification", "Critical", "Supporting metrics"]])
     for item in result.health_components:
@@ -46,18 +63,18 @@ def build_dashboard_section(result: VerificationHealthResult) -> list[list[Any]]
             json.dumps(item.supporting_metrics, sort_keys=True),
         ])
 
-    rows.extend([[""], ["Verification funnel"], [
-        "Stage", "Current", "Latest daily run", "Latest seven days", "Conversion",
+    rows.extend([[""], ["Verification funnel and portfolio populations"], [
+        "Stage", "Metric type", "Current", "Latest daily run", "Latest seven days", "Conversion",
         "Denominator", "Median age hours", "Oldest unresolved hours",
     ]])
     for item in result.funnel:
         rows.append([
-            item.label, item.current_count, item.latest_daily_count, item.latest_seven_day_count,
+            item.label, item.metric_type, item.current_count, item.latest_daily_count, item.latest_seven_day_count,
             _display_rate(item.conversion_rate), item.denominator_stage,
             _display_hours(item.median_age_hours), _display_hours(item.oldest_unresolved_age_hours),
         ])
 
-    rows.extend([[""], ["Verification aging"], [
+    rows.extend([[""], ["Verification aging (actionable roles)"], [
         "Category", "Current", "Median age hours", "Oldest age hours", "Service level hours", "Breaches",
     ]])
     for item in result.aging:
@@ -68,7 +85,7 @@ def build_dashboard_section(result: VerificationHealthResult) -> list[list[Any]]
             item.breach_count,
         ])
 
-    rows.extend([[""], ["Service-level breaches"], [
+    rows.extend([[""], ["Service-level breaches (actionable roles)"], [
         "Company", "Title", "Age hours", "Service level hours", "Category", "Blocker", "URL",
     ]])
     if result.sla_breaches:
@@ -81,17 +98,18 @@ def build_dashboard_section(result: VerificationHealthResult) -> list[list[Any]]
     else:
         rows.append(["None", "", "", "", "", "", ""])
 
-    rows.extend([[""], ["Top blocker reasons"], ["Blocker", "Count"]])
-    rows.extend(
-        [[reason, count] for reason, count in list(result.blocker_counts.items())[:10]]
-        if result.blocker_counts else [["None", 0]]
-    )
     rows.extend([[""]])
-    rows.extend(_job_rows("Oldest unresolved high-potential jobs", result.oldest_high_potential))
+    rows.extend(_mapping_rows("Top blocker reasons (actionable primary blockers)", result.blocker_counts))
     rows.extend([[""]])
-    rows.extend(_job_rows("Oldest unresolved target-company jobs", result.oldest_target_company))
+    rows.extend(_mapping_rows("Supporting secondary verification gaps", result.secondary_gap_counts))
     rows.extend([[""]])
-    rows.extend(_job_rows("Jobs requiring manual intervention", result.manual_intervention))
+    rows.extend(_mapping_rows("Primary blocker ownership", result.blocker_ownership_counts))
+    rows.extend([[""]])
+    rows.extend(_job_rows("Oldest unresolved high-potential jobs (actionable)", result.oldest_high_potential))
+    rows.extend([[""]])
+    rows.extend(_job_rows("Oldest unresolved target-company jobs (actionable)", result.oldest_target_company))
+    rows.extend([[""]])
+    rows.extend(_job_rows("Jobs requiring manual intervention (actionable)", result.manual_intervention))
     rows.append([DASHBOARD_END])
     return rows
 

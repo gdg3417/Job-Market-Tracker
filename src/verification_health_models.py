@@ -107,6 +107,7 @@ class FunnelMetric:
     denominator_stage: str
     median_age_hours: float | None
     oldest_unresolved_age_hours: float | None
+    metric_type: str = "population"
 
 
 @dataclass(slots=True)
@@ -136,15 +137,21 @@ class VerificationHealthResult:
     generated_at: str
     overall_score: int
     overall_classification: str
+    overall_reasons: list[str]
     funnel: list[FunnelMetric]
     aging: list[AgingMetric]
     blocker_counts: dict[str, int]
+    secondary_gap_counts: dict[str, int]
+    blocker_ownership_counts: dict[str, int]
     high_potential_blockers: dict[str, str]
     sla_breaches: list[dict[str, Any]]
     health_components: list[HealthComponent]
     oldest_high_potential: list[dict[str, Any]]
     oldest_target_company: list[dict[str, Any]]
     manual_intervention: list[dict[str, Any]]
+    actionable_summary: dict[str, int]
+    portfolio_coverage: dict[str, Any]
+    actionability_exclusions: dict[str, int]
     critical_overrides: list[str]
     thresholds: HealthThresholds
     records_read: dict[str, int]
@@ -155,14 +162,20 @@ class VerificationHealthResult:
             "generated_at": self.generated_at,
             "overall_score": self.overall_score,
             "overall_classification": self.overall_classification,
+            "overall_reasons": self.overall_reasons,
             "funnel": [asdict(item) for item in self.funnel],
             "aging": [asdict(item) for item in self.aging],
             "blocker_counts": self.blocker_counts,
+            "secondary_gap_counts": self.secondary_gap_counts,
+            "blocker_ownership_counts": self.blocker_ownership_counts,
             "high_potential_blockers": dict(
                 list(self.high_potential_blockers.items())[: self.thresholds.run_history_blocker_limit]
             ),
             "sla_breach_count": len(self.sla_breaches),
             "health_components": [asdict(item) for item in self.health_components],
+            "actionable_summary": self.actionable_summary,
+            "portfolio_coverage": self.portfolio_coverage,
+            "actionability_exclusions": self.actionability_exclusions,
             "critical_overrides": self.critical_overrides,
             "thresholds": asdict(self.thresholds),
             "records_read": self.records_read,

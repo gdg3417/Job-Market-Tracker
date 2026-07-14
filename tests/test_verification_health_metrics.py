@@ -57,7 +57,9 @@ def test_mixed_funnel_aging_and_blockers_are_calculated():
     }
     for stage, count in expected.items():
         assert funnel[stage].current_count == count
-    assert funnel["fully_verified"].denominator_stage == "evidence_accepted"
+    assert funnel["fully_verified"].denominator_stage == ""
+    assert funnel["fully_verified"].metric_type == "population"
+    assert funnel["fully_verified"].conversion_rate is None
     assert result.blocker_counts["enrichment_not_attempted"] >= 1
     assert result.oldest_high_potential
     assert result.oldest_target_company
