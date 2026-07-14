@@ -8,19 +8,17 @@ from zoneinfo import ZoneInfo
 
 from src.generated_surface_policy import (
     has_active_application,
+    is_auto_rejected,
+    is_blocked_company,
     is_hard_excluded,
     is_terminal_application,
     is_terminal_job,
     is_terminal_review,
+    is_too_senior_hard_exclusion,
     normalize_status,
 )
 from src.sheet_dates import normalize_record_dates, normalize_sheet_date, normalized_job_from_record
 from src.verification_health_models import parse_datetime
-from src.weekly_value import (
-    _is_auto_rejected_job,
-    _is_blocked_company_job,
-    _is_too_senior_job,
-)
 
 CENTRAL_TIMEZONE = ZoneInfo("America/Chicago")
 DEFERRED_STATUSES = {"deferred"}
@@ -99,18 +97,20 @@ def classify_actionability(row: dict[str, Any], *, as_of: datetime) -> Actionabi
             "terminal_application",
             f"Application status is {normalize_status(job.application_status)}.",
         )
-    if _is_blocked_company_job(job):
+    if is_blocked_company(job):
         return Actionability(False, "blocked_company", "Company is blocked by canonical policy.")
-    if _is_too_senior_job(job):
+    if is_too_senior_hard_exclusion(job):
         return Actionability(False, "too_senior_hard_exclusion", "Role is a hard seniority exclusion.")
-    if _is_auto_rejected_job(job) or is_hard_excluded(job):
+    if is_auto_rejected(job) or is_hard_excluded(job):
         return Actionability(False, "hard_excluded", "Role is excluded by canonical scoring policy.")
 
-    # Current applications take precedence over stale review fields. This matches
-    # the generated-surface policy used by current context and follow-up queues.
+    # Current applications take precedence over stale review and dismissal fields.
+    # This matches current-context and follow-up queue behavior.
     if has_active_application(job):
         return Actionability(True, "active_application", "Application remains active.")
 
+    if normalize_status(job.dismissal_reason):
+        return Actionability(False, "dismissed", "Role has a manual dismissal reason.")
     if is_terminal_review(job):
         review = normalize_status(job.review_status)
         interest = normalize_status(job.interest_decision)
