@@ -2,12 +2,12 @@ from src.verification_health import calculate_verification_health
 from tests.verification_health_helpers import AS_OF, job, successful_daily_run
 
 
-def _calculate(jobs, *, resolution_rows=None):
+def _calculate(jobs, *, resolution_rows=None, evidence_rows=None):
     return calculate_verification_health(
         jobs=jobs,
         job_sources=[],
         queue_rows=[],
-        evidence_rows=[],
+        evidence_rows=evidence_rows or [],
         runs_rows=[successful_daily_run()],
         resolution_rows=resolution_rows or [],
         as_of=AS_OF,
@@ -175,3 +175,22 @@ def test_validated_manual_authoritative_url_is_not_left_as_manual_url_work():
 
     assert result.blocker_counts == {}
     assert result.actionable_summary["manual_interventions_required"] == 0
+
+
+def test_actionable_evidence_component_excludes_historical_portfolio_evidence():
+    result = _calculate(
+        [
+            job("actionable", evidence_completeness_score=80),
+            job("historical", review_status="dismissed", evidence_completeness_score=100),
+        ],
+        evidence_rows=[
+            {"job_key": "actionable", "accepted": "TRUE"},
+            {"job_key": "historical", "accepted": "TRUE"},
+        ],
+    )
+
+    component = next(
+        item for item in result.health_components
+        if item.component == "evidence_completeness"
+    )
+    assert component.supporting_metrics["actionable_accepted_evidence_rows"] == 1
