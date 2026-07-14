@@ -229,6 +229,13 @@ def build_sprint8_run_record(
     }
 
 
+def _all_sources_skipped_status(skip_reasons: list[str] | tuple[str, ...]) -> str:
+    reasons = {str(reason or "").strip() for reason in skip_reasons if str(reason or "").strip()}
+    if not reasons or reasons == {"cooldown_active"}:
+        return "all_sources_in_cooldown"
+    return "all_sources_blocked_by_policy"
+
+
 def build_sprint10_run_record(
     *,
     jobs_found: int,
@@ -238,11 +245,12 @@ def build_sprint10_run_record(
     low_confidence_count: int,
     summary: dict[str, Any],
     skipped_sources: int = 0,
+    skip_reasons: list[str] | tuple[str, ...] = (),
 ) -> dict[str, Any]:
     now = utc_now_iso()
     run_timestamp = now.replace(":", "").replace("-", "").replace("+0000", "Z").replace("+00:00", "Z")
     if source_count == 0 and skipped_sources:
-        status = "all_sources_in_cooldown"
+        status = _all_sources_skipped_status(skip_reasons)
     elif source_count == 0:
         status = "no_static_page_sources"
     elif source_failures:
@@ -255,6 +263,7 @@ def build_sprint10_run_record(
         "upsert_summary": summary,
         "low_confidence_count": low_confidence_count,
         "runtime_policy_skips": skipped_sources,
+        "runtime_policy_skip_reasons": sorted({reason for reason in skip_reasons if reason}),
     }
     return {
         "run_id": f"sprint10_static_pages_{run_timestamp}",
@@ -398,10 +407,13 @@ def run_static_pages_smoke_test() -> dict[str, object]:
             low_confidence_count=low_confidence_count,
             summary=upsert_summary.to_dict(),
             skipped_sources=len(skipped_sources),
+            skip_reasons=tuple(item.get("reason", "") for item in skipped_sources),
         )
     )
     if not results and skipped_sources:
-        status = "all_sources_in_cooldown"
+        status = _all_sources_skipped_status(
+            tuple(item.get("reason", "") for item in skipped_sources)
+        )
     elif not results:
         status = "no_static_page_sources"
     elif source_failures:
