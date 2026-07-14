@@ -13,6 +13,7 @@ from src.normalize import normalize_raw_job
 from src.scoring import load_scoring_rules, score_job
 from src.settings import load_settings
 from src.sheets import SheetClient, run_sprint2_smoke_test
+from src.source_quality import filter_static_sources_for_execution
 from src.sources.greenhouse import greenhouse_company_rows, run_greenhouse_companies
 from src.sources.lever import lever_company_rows, run_lever_companies
 from src.sources.static_pages import run_static_page_companies, static_page_company_rows
@@ -27,6 +28,15 @@ SAMPLE_JOB = {
     "source_job_id": "sample-123",
     "description": "Own revenue growth, margin expansion, pricing strategy, operating cadence, and executive leadership reporting for a business unit.",
 }
+
+
+def _read_optional_records(sheet_client: Any, worksheet_name: str) -> list[dict[str, Any]]:
+    try:
+        return sheet_client.read_records(worksheet_name)
+    except Exception as exc:
+        if exc.__class__.__name__ == "WorksheetNotFound":
+            return []
+        raise
 
 
 def run_dry_smoke_test() -> dict[str, object]:
@@ -227,10 +237,13 @@ def build_sprint10_run_record(
     search_count: int,
     low_confidence_count: int,
     summary: dict[str, Any],
+    skipped_sources: int = 0,
 ) -> dict[str, Any]:
     now = utc_now_iso()
     run_timestamp = now.replace(":", "").replace("-", "").replace("+0000", "Z").replace("+00:00", "Z")
-    if source_count == 0:
+    if source_count == 0 and skipped_sources:
+        status = "all_sources_in_cooldown"
+    elif source_count == 0:
         status = "no_static_page_sources"
     elif source_failures:
         status = "partial_failure"
@@ -238,7 +251,11 @@ def build_sprint10_run_record(
         status = "no_jobs_found"
     else:
         status = "success"
-    notes = {"upsert_summary": summary, "low_confidence_count": low_confidence_count}
+    notes = {
+        "upsert_summary": summary,
+        "low_confidence_count": low_confidence_count,
+        "runtime_policy_skips": skipped_sources,
+    }
     return {
         "run_id": f"sprint10_static_pages_{run_timestamp}",
         "run_type": "sprint_10_static_page_smoke_test",
@@ -253,7 +270,7 @@ def build_sprint10_run_record(
         "records_updated": summary.get("jobs_updated", 0),
         "records_failed": source_failures,
         "rows_read": source_count + search_count,
-        "config_companies_rows": source_count,
+        "config_companies_rows": source_count + skipped_sources,
         "config_searches_rows": search_count,
         "companies_read": source_count,
         "searches_read": search_count,
@@ -355,7 +372,9 @@ def run_static_pages_smoke_test() -> dict[str, object]:
     sheet_client = SheetClient.from_settings(settings)
     company_rows = sheet_client.read_records("Config_Companies")
     search_rows = sheet_client.read_records("Config_Searches")
-    static_rows = static_page_company_rows(company_rows)
+    audit_rows = _read_optional_records(sheet_client, "Source_Audit")
+    configured_static_rows = static_page_company_rows(company_rows)
+    static_rows, skipped_sources = filter_static_sources_for_execution(company_rows, audit_rows)
     rules = load_scoring_rules(settings.scoring_rules_path)
     seen_date = today_iso()
     jobs, results = run_static_page_companies(
@@ -378,9 +397,12 @@ def run_static_pages_smoke_test() -> dict[str, object]:
             search_count=len(search_rows),
             low_confidence_count=low_confidence_count,
             summary=upsert_summary.to_dict(),
+            skipped_sources=len(skipped_sources),
         )
     )
-    if not results:
+    if not results and skipped_sources:
+        status = "all_sources_in_cooldown"
+    elif not results:
         status = "no_static_page_sources"
     elif source_failures:
         status = "partial_failure"
@@ -393,12 +415,15 @@ def run_static_pages_smoke_test() -> dict[str, object]:
         "status": status,
         "config_companies_rows": len(company_rows),
         "config_searches_rows": len(search_rows),
+        "static_page_sources_configured": len(configured_static_rows),
         "static_page_sources": len(results),
+        "static_page_sources_skipped": len(skipped_sources),
         "static_page_failures": len(source_failures),
         "jobs_found": len(jobs),
         "low_confidence_jobs": low_confidence_count,
         "upsert_summary": upsert_summary.to_dict(),
         "runs_rows_appended": len(results) + 1,
+        "source_policy_skips": skipped_sources,
         "source_results": [result.to_summary() for result in results],
         "top_jobs": [
             {
