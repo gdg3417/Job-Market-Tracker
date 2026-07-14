@@ -1,0 +1,310 @@
+from __future__ import annotations
+
+from datetime import UTC, date, datetime
+from pathlib import Path
+
+from src.source_quality import (
+    HEALTHY,
+    MANUAL_REVIEW,
+    PERMANENT_404,
+    SourceAuditFinding,
+    apply_approved_source_updates,
+    audit_static_sources,
+    build_source_yield_report,
+    detect_structured_ats,
+    filter_static_sources_for_execution,
+    prior_failure_observations,
+    probe_source,
+)
+from src.source_quality_report import configured_zero_yield_rows, run_source_quality_report
+
+
+class FakeResponse:
+    def __init__(self, status_code=200, text="", url="https://example.com/careers", history=None):
+        self.status_code = status_code
+        self.text = text
+        self.url = url
+        self.history = list(history or [])
+        self.headers = {}
+
+
+class FakeSession:
+    def __init__(self, response):
+        self.response = response
+
+    def get(self, url, *, timeout, headers, allow_redirects):
+        return self.response
+
+
+class FakeUpdateClient:
+    def __init__(self):
+        self.updates = []
+
+    def update_record(self, worksheet_name, row_number, record):
+        self.updates.append((worksheet_name, row_number, dict(record)))
+
+
+def _company(company_id="example", source_url="https://example.com/jobs", **overrides):
+    row = {
+        "company_id": company_id,
+        "company_name": "Example Co",
+        "source_type": "static_page",
+        "source_url": source_url,
+        "ingestion_mode": "static_direct",
+        "active": "TRUE",
+    }
+    row.update(overrides)
+    return row
+
+
+def _finding(company_id="example", source_url="https://example.com/jobs", **overrides):
+    values = {
+        "company_id": company_id,
+        "company_name": "Example Co",
+        "source_url": source_url,
+        "final_url": source_url,
+        "source_type": "static_page",
+        "ats_platform": "",
+        "classification": PERMANENT_404,
+        "http_status": 404,
+        "retry_eligible": False,
+        "retry_after": "",
+        "requires_configuration_change": True,
+        "failure_observations": 2,
+        "recommended_action": "replace_or_retire_source",
+        "recommendation_reason": "Repeated 404",
+        "observed_at": "2026-07-14T12:00:00Z",
+    }
+    values.update(overrides)
+    return SourceAuditFinding(**values)
+
+
+def test_plain_language_leverage_does_not_trigger_lever_ats():
+    assert detect_structured_ats(
+        "https://example.com/careers",
+        "We leverage technology to improve customer outcomes.",
+    ) == ""
+
+
+def test_platform_domain_and_exact_metadata_still_detect_ats():
+    assert detect_structured_ats("https://jobs.lever.co/example") == "lever"
+    assert detect_structured_ats("https://example.com/careers", "lever") == "lever"
+
+
+def test_redirect_without_job_signal_requires_manual_review():
+    response = FakeResponse(
+        status_code=200,
+        text="Welcome to our corporate homepage",
+        url="https://example.com/",
+        history=[FakeResponse(status_code=301)],
+    )
+    result = probe_source(
+        "https://example.com/old-careers",
+        session=FakeSession(response),
+    )
+    assert result.classification == MANUAL_REVIEW
+    assert result.error_category == "redirect_without_job_signal"
+
+
+def test_successful_recovery_resets_prior_failure_streak():
+    runs = [
+        {
+            "source_type": "static_page",
+            "source_name": "static_page:Example Co",
+            "status": "failed",
+            "finished_at": "2026-07-01T12:00:00Z",
+            "notes": "url=https://example.com/jobs; http_status=404",
+        },
+        {
+            "source_type": "static_page",
+            "source_name": "static_page:Example Co",
+            "status": "success",
+            "finished_at": "2026-07-05T12:00:00Z",
+            "notes": "url=https://example.com/jobs",
+        },
+        {
+            "source_type": "static_page",
+            "source_name": "static_page:Example Co",
+            "status": "failed",
+            "finished_at": "2026-07-10T12:00:00Z",
+            "notes": "url=https://example.com/jobs; http_status=404",
+        },
+    ]
+    count = prior_failure_observations(
+        runs,
+        company_name="Example Co",
+        source_url="https://example.com/jobs",
+        classification=PERMANENT_404,
+        as_of=datetime(2026, 7, 14, tzinfo=UTC),
+    )
+    assert count == 1
+
+
+def test_runtime_gate_skips_active_cooldown_and_configuration_changes():
+    companies = [_company()]
+    cooldown_audit = [
+        {
+            "company_id": "example",
+            "source_url": "https://example.com/jobs",
+            "classification": "temporarily_blocked",
+            "retry_eligible": "TRUE",
+            "retry_after": "2026-07-20T00:00:00Z",
+            "requires_configuration_change": "FALSE",
+            "observed_at": "2026-07-14T12:00:00Z",
+        }
+    ]
+    execute, skipped = filter_static_sources_for_execution(
+        companies,
+        cooldown_audit,
+        as_of=datetime(2026, 7, 15, tzinfo=UTC),
+    )
+    assert execute == []
+    assert skipped[0]["reason"] == "cooldown_active"
+
+    execute, skipped = filter_static_sources_for_execution(
+        companies,
+        cooldown_audit,
+        as_of=datetime(2026, 7, 21, tzinfo=UTC),
+    )
+    assert len(execute) == 1
+    assert skipped == []
+
+    change_required = [{**cooldown_audit[0], "requires_configuration_change": "TRUE", "retry_after": ""}]
+    execute, skipped = filter_static_sources_for_execution(
+        companies,
+        change_required,
+        as_of=datetime(2026, 7, 21, tzinfo=UTC),
+    )
+    assert execute == []
+    assert skipped[0]["reason"] == "configuration_change_required"
+
+
+def test_approved_update_matches_exact_company_and_source_url():
+    rows = [
+        (2, _company(source_url="https://example.com/one")),
+        (3, _company(source_url="https://example.com/two")),
+    ]
+    finding = _finding(source_url="https://example.com/two")
+    client = FakeUpdateClient()
+
+    updates = apply_approved_source_updates(
+        rows,
+        [finding],
+        approved_company_ids={"example"},
+        sheet_client=client,
+    )
+
+    assert len(updates) == 1
+    assert client.updates[0][1] == 3
+    assert updates[0]["original_source_url"] == "https://example.com/two"
+    assert updates[0]["before"]["active"] == "TRUE"
+    assert updates[0]["after"]["active"] == "FALSE"
+
+
+def test_review_yield_is_bounded_for_application_status_only():
+    rows = build_source_yield_report(
+        jobs=[
+            {
+                "job_key": "job1",
+                "company": "Example Co",
+                "source_primary": "static_page",
+                "status": "open",
+                "review_status": "not_reviewed",
+                "application_status": "applied",
+                "potential_priority": "low",
+            }
+        ],
+        job_sources=[
+            {
+                "source_key": "s1",
+                "job_key": "job1",
+                "company": "Example Co",
+                "source_primary": "static_page",
+                "source_type": "static_page",
+                "source_url": "https://example.com/jobs",
+                "first_seen_date": "2026-07-10",
+            }
+        ],
+        rejected_jobs=[],
+        weeks=4,
+        as_of=date(2026, 7, 14),
+    )
+    row = next(item for item in rows if item.group_type == "static_company_source")
+    assert row.surfaced_for_review == 1
+    assert row.applied == 1
+    assert row.review_yield_percent == 100.0
+
+
+def test_audit_uses_same_static_source_population_as_ingestion():
+    companies = [
+        _company(company_id="custom", source_type="custom", source_url="https://example.com/careers"),
+        _company(company_id="blocked", source_quality="failed"),
+    ]
+    findings = audit_static_sources(
+        companies,
+        session=FakeSession(FakeResponse(text="Current openings")),
+        as_of=datetime(2026, 7, 14, tzinfo=UTC),
+    )
+    assert [finding.company_id for finding in findings] == ["custom"]
+    assert findings[0].classification == HEALTHY
+
+
+def test_configured_search_is_marked_attribution_unavailable_not_zero_yield():
+    rows = configured_zero_yield_rows(
+        company_rows=[],
+        search_rows=[{"search_id": "dallas_strategy_manager", "active": "TRUE"}],
+        target_companies=[],
+        existing_rows=[],
+        weeks=4,
+        as_of=date(2026, 7, 14),
+    )
+    assert len(rows) == 1
+    assert rows[0].recommendation == "attribution_unavailable"
+    assert "Do not interpret" in rows[0].recommendation_reason
+
+
+def test_report_persists_evidence_before_approved_configuration_update(monkeypatch):
+    events = []
+
+    class FakeClient:
+        def read_records_with_row_numbers(self, worksheet_name):
+            assert worksheet_name == "Config_Companies"
+            return [(2, _company())]
+
+        def read_records(self, worksheet_name):
+            return []
+
+        def append_run(self, record):
+            events.append("append_run")
+
+    finding = _finding()
+    monkeypatch.setattr("src.source_quality_report.audit_static_sources", lambda *args, **kwargs: [finding])
+    monkeypatch.setattr("src.source_quality_report.build_source_yield_report", lambda **kwargs: [])
+    monkeypatch.setattr("src.source_quality_report.configured_zero_yield_rows", lambda **kwargs: [])
+    monkeypatch.setattr(
+        "src.source_quality_report.write_source_quality_surfaces",
+        lambda *args, **kwargs: events.append("write_surfaces") or {
+            "source_audit_rows_written": 1,
+            "source_yield_rows_written": 0,
+        },
+    )
+    monkeypatch.setattr(
+        "src.source_quality_report.apply_approved_source_updates",
+        lambda *args, **kwargs: events.append("update_config") or [],
+    )
+
+    run_source_quality_report(
+        write_report=True,
+        approved_company_ids={"example"},
+        sheet_client=FakeClient(),
+    )
+
+    assert events[:2] == ["write_surfaces", "update_config"]
+    assert events[-1] == "append_run"
+
+
+def test_daily_static_run_reads_and_enforces_source_audit():
+    text = Path("src/main.py").read_text(encoding="utf-8")
+    assert '_read_optional_records(sheet_client, "Source_Audit")' in text
+    assert "filter_static_sources_for_execution(company_rows, audit_rows)" in text
+    assert 'status = "all_sources_in_cooldown"' in text
