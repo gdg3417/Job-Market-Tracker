@@ -8,7 +8,7 @@ on:
       - synchronize
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   patch:
@@ -20,6 +20,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: agent/sprint-51-source-quality-yield
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -31,6 +32,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Make patch replay-safe
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/sprint51_final_safety_patch.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''    count = text.count(old)\n    if count != 1:\n        raise RuntimeError(f"Expected exactly one match in {path}, found {count}: {old[:100]!r}")\n    file_path.write_text(text.replace(old, new, 1), encoding="utf-8")\n'''
+          new = '''    count = text.count(old)\n    if count == 0 and new in text:\n        return\n    if count != 1:\n        raise RuntimeError(f"Expected exactly one match in {path}, found {count}: {old[:100]!r}")\n    file_path.write_text(text.replace(old, new, 1), encoding="utf-8")\n'''
+          if old not in text:
+              raise SystemExit('Unable to make patch script replay-safe')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
       - name: Apply planned patch
         run: python scripts/sprint51_final_safety_patch.py
 
@@ -39,20 +53,13 @@ jobs:
           python -m compileall -q src tests
           pytest tests/test_source_quality_hardening.py tests/test_source_quality_workflow.py
 
-      - name: Package validated files
-        run: |
-          mkdir -p validated-patch/src validated-patch/tests validated-patch/docs validated-patch/.github/workflows
-          cp src/source_quality.py validated-patch/src/source_quality.py
-          cp src/source_quality_report.py validated-patch/src/source_quality_report.py
-          cp tests/test_source_quality_hardening.py validated-patch/tests/test_source_quality_hardening.py
-          cp tests/test_source_quality_workflow.py validated-patch/tests/test_source_quality_workflow.py
-          cp docs/sprint_51_source_quality_yield.md validated-patch/docs/sprint_51_source_quality_yield.md
-          cp .github/workflows/source-quality.yml validated-patch/.github/workflows/source-quality.yml
+      - name: Remove temporary patch script
+        run: rm scripts/sprint51_final_safety_patch.py
 
-      - name: Upload validated patch
-        uses: actions/upload-artifact@v4
-        with:
-          name: sprint51-validated-patch
-          path: validated-patch
-          if-no-files-found: error
-          retention-days: 1
+      - name: Publish validated patch branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Fix Sprint 51 ATS conversion and no-probe safety"
+          git push --force origin HEAD:automation/sprint51-final-safety
