@@ -22,6 +22,7 @@ from src.sheet_dates import normalize_record_dates, normalize_sheet_date, normal
 CENTRAL_TIMEZONE = ZoneInfo("America/Chicago")
 DEFERRED_STATUSES = {"deferred"}
 LIKELY_CLOSED_STATUSES = {"likely closed", "not seen once"}
+ACTIVE_REVIEW_APPLICATION_STATUSES = {"applied", "interviewing", "offer"}
 DEFERRED_DATE_FIELDS = ("follow_up_date", "next_action_date")
 
 
@@ -37,6 +38,14 @@ def has_valid_job_identity(row: dict[str, Any]) -> bool:
     return all(
         str(row.get(field) or "").strip()
         for field in ("job_key", "company", "title")
+    )
+
+
+def _has_active_application_state(job: Any) -> bool:
+    """Treat active application status on either canonical state field as current."""
+    return (
+        has_active_application(job)
+        or normalize_status(job.review_status) in ACTIVE_REVIEW_APPLICATION_STATUSES
     )
 
 
@@ -131,8 +140,9 @@ def classify_actionability(row: dict[str, Any], *, as_of: datetime) -> Actionabi
         return Actionability(False, "hard_excluded", "Role is excluded by canonical scoring policy.")
 
     # Current applications take precedence over stale review and dismissal fields.
-    # This matches current-context and follow-up queue behavior.
-    if has_active_application(job):
+    # The review workflow can carry the active state on review_status before the
+    # application_status field is synchronized.
+    if _has_active_application_state(job):
         return Actionability(True, "active_application", "Application remains active.")
 
     if normalize_status(job.dismissal_reason):
