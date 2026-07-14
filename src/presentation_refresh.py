@@ -287,8 +287,21 @@ def apply_presentation_refresh(
     results["Weekly_Value"] = payload
 
     weekly_records = snapshot.weekly_value_rows
+    weekly_value_readback_warning = ""
     if outcome.status == "success":
-        weekly_records = _read_optional_records(sheet_client, WEEKLY_VALUE_SHEET)
+        try:
+            weekly_records = _read_optional_records(sheet_client, WEEKLY_VALUE_SHEET)
+        except Exception as exc:
+            weekly_value_readback_warning = (
+                "Weekly_Value readback failed; Weekly_Context used the prior snapshot: "
+                f"{_safe_error(exc)}"
+            )
+            _add_warning(
+                outcomes,
+                results,
+                {"Weekly_Value"},
+                weekly_value_readback_warning,
+            )
 
     context_jobs_with_rows = [
         pair for pair in snapshot.jobs_with_rows if include_in_current_context(pair[1])
@@ -305,6 +318,10 @@ def apply_presentation_refresh(
         if results["Weekly_Value"].get("status") == "failed":
             context_result.setdefault("warnings", []).append(
                 "Weekly_Context used the prior Weekly_Value snapshot because the current refresh failed."
+            )
+        elif weekly_value_readback_warning:
+            context_result.setdefault("warnings", []).append(
+                weekly_value_readback_warning
             )
         return context_result
 
@@ -403,17 +420,19 @@ def apply_presentation_refresh(
         )
     except Exception as exc:
         surface_status_error = _safe_error(exc)
-        merged_outcomes = outcomes
-
-    failures = [item for item in merged_outcomes if item.status != "success"]
-    if surface_status_error:
-        failures.append(
+        merged_outcomes = [
+            *outcomes,
             SurfaceOutcome(
                 surface_name="Surface_Status",
                 status="failed",
                 warning_or_error=surface_status_error,
-            )
-        )
+                source_run=source_run,
+                data_as_of_date=data_as_of_date,
+                last_attempted_at=attempted_at,
+            ),
+        ]
+
+    failures = [item for item in merged_outcomes if item.status != "success"]
     warnings = [
         item
         for item in merged_outcomes
