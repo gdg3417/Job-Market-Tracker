@@ -82,7 +82,7 @@ The source-quality workflow supports two modes:
 Supported changes are limited to:
 
 1. Replace an obsolete URL with a validated career-page redirect destination.
-2. Move a validated Greenhouse or Lever source to its structured ingestion mode.
+2. Move a validated Greenhouse or Lever source to its structured ingestion mode only when a usable `source_slug` is already configured or can be derived from the validated ATS URL.
 3. Mark a consecutively confirmed permanent 404 source inactive and manual-review-only.
 
 Temporary failures, protected pages, and DNS failures below the review threshold are not disabled.
@@ -171,6 +171,8 @@ Run without live HTTP probes:
 ```text
 python -m src.source_quality_report --write-report --weeks 4 --skip-live-probes
 ```
+
+No-probe mode refreshes `Source_Yield` while preserving the most recent live `Source_Audit`. It cannot apply reviewed cleanup and cannot change the daily static-source execution policy.
 
 Apply one explicitly approved configuration update:
 
