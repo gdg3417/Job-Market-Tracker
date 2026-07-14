@@ -2,13 +2,13 @@
 
 ## Objective
 
-Sprint 51 reduces repeated static-source failures and makes source and search value measurable over a configurable reporting window.
+Sprint 51 reduces repeated static-source failures, enforces recoverable retry cooldowns in the normal static-page run, and measures recent source value without changing scoring weights.
 
-The implementation is conservative. It does not disable a source from one failure, delete source history, change scoring weights, or automatically remove a low-yield search.
+The implementation is conservative. It does not disable a source from one failure, delete source history, automatically remove a low-yield search, or treat unavailable search attribution as zero yield.
 
 ## Source audit classifications
 
-`python -m src.source_quality_report` classifies active static and career-page sources as one of:
+`python -m src.source_quality_report` classifies the same active static-source population used by normal ingestion as one of:
 
 * `healthy`
 * `empty_but_valid`
@@ -20,33 +20,55 @@ The implementation is conservative. It does not disable a source from one failur
 * `dns_failure`
 * `manual_review_required`
 
-The live audit follows redirects and performs one bounded HTTP request per audited source. It does not crawl unrestricted pages or follow discovered job links.
+The live audit performs one bounded HTTP request per source. It follows HTTP redirects but does not crawl discovered job links.
 
-Structured ATS detection covers Greenhouse, Lever, Ashby, and SmartRecruiters. When one is detected, the report recommends the structured ATS path instead of generic static-page parsing.
+Structured ATS detection covers Greenhouse, Lever, Ashby, and SmartRecruiters. Detection requires an exact ATS domain, explicit configured ATS metadata, or a platform-specific page signature. Ordinary words such as `leverage` do not identify Lever.
 
-## Retry policy
+A redirect is eligible for automatic URL replacement only when the successful destination also exposes a visible job signal or a supported structured ATS. A redirect to a generic homepage, login page, or unrelated destination remains `manual_review_required`.
+
+## Retry and recovery policy
 
 ### Permanent 404 or retired
 
-One observation is not enough to retire a source. The first 404 receives a seven-day cooldown.
+One 404 observation is insufficient for retirement. The first observation receives a seven-day cooldown.
 
-A repeated 404, 410, or corroborating historical failure requires a configuration change before another static retry. The source is not changed automatically.
+Two consecutive 404 or 410 observations for the same company ID and source URL require a configuration change before another static retry. A successful source run resets the failure streak.
 
 ### DNS failure
 
-DNS failures receive a seven-day cooldown. After three observations, the source requires manual URL review and a longer cooldown.
+DNS failures receive a seven-day cooldown. Three consecutive DNS failures require manual URL review and a longer cooldown. A later successful run resets the DNS failure streak.
 
 ### HTTP 403, authentication, or bot protection
 
-A protected response remains recoverable. It receives a fourteen-day cooldown and is not treated as permanently dead from one observation.
+Protected responses remain recoverable. They receive a fourteen-day cooldown and are not treated as permanent failures.
 
 ### Rate limits and temporary server failures
 
-HTTP 429 receives a one-day cooldown. Other temporary failures receive one day initially and seven days after repeated failures.
+Rate limits and temporary failures receive a one-day cooldown initially and a seven-day cooldown after repeated consecutive failures.
 
 ### Empty but valid
 
-A reachable source without current job signals remains enabled and is recommended for reduced cadence rather than immediate retirement.
+A reachable source with no current job signal remains enabled and receives a fourteen-day reduced-cadence interval.
+
+## Daily static-page enforcement
+
+The normal static-page ingestion command reads the latest `Source_Audit` rows before making source requests.
+
+Matching uses the exact combination of:
+
+* `Config_Companies.company_id`
+* normalized configured `source_url`
+
+The daily run skips a source when:
+
+* its cooldown has not expired
+* a configuration change is required
+* manual review is required
+* a validated redirect or structured ATS conversion is waiting for review
+
+Expired temporary cooldowns become eligible again automatically. Healthy sources continue normally. When all configured static sources are skipped, the run reports `all_sources_in_cooldown` rather than a source failure.
+
+The weekly source-quality audit refreshes the policy evidence. A manual report-mode run can refresh it sooner when investigating a new failure.
 
 ## Explicit configuration updates
 
@@ -55,15 +77,26 @@ The source-quality workflow supports two modes:
 * `report`
 * `apply_reviewed_cleanup`
 
-`apply_reviewed_cleanup` requires exact `Config_Companies.company_id` values. Only supported, evidence-backed changes are applied:
+`apply_reviewed_cleanup` requires exact `Config_Companies.company_id` values. The implementation then also verifies that the current configured source URL exactly matches the audited source URL before changing the row.
 
-1. Replace an obsolete URL with a validated redirect destination.
-2. Move Greenhouse or Lever sources to the structured ingestion mode.
-3. Mark a repeated permanent 404 source inactive and manual-review-only.
+Supported changes are limited to:
 
-Temporary failures, DNS failures below the limit, and protected pages are not disabled.
+1. Replace an obsolete URL with a validated career-page redirect destination.
+2. Move a validated Greenhouse or Lever source to its structured ingestion mode.
+3. Mark a consecutively confirmed permanent 404 source inactive and manual-review-only.
 
-Each approved update appends a Sprint 51 marker to `Config_Companies.notes`. Existing notes and historical `Runs` and `Source_Health` records remain unchanged.
+Temporary failures, protected pages, and DNS failures below the review threshold are not disabled.
+
+Before an approved configuration mutation, the workflow writes the detailed `Source_Audit` and `Source_Yield` evidence. Each applied update records:
+
+* original source URL
+* final source URL
+* classification and action
+* prior configuration values
+* resulting configuration values
+* observation time
+
+Existing configuration notes are preserved. Historical `Runs` and `Source_Health` records are not deleted or rewritten.
 
 ## Source-yield report
 
@@ -71,41 +104,43 @@ The default reporting period is four weeks and can be changed with `--weeks`.
 
 The generated `Source_Yield` worksheet reports:
 
-* Leads received
-* Jobs accepted
-* Auto-rejected leads
-* Blocked-company rejects
-* Too-junior rejects
-* Too-senior rejects
-* Surfaced-for-review count
-* Manually dismissed count
-* Interested count
-* Applied count
-* Strong-fit count
-* Stretch-fit count
-* Average potential score
-* Review yield
-* Actionable conversion
+* leads received
+* jobs accepted
+* auto-rejected leads
+* blocked-company rejects
+* too-junior rejects
+* too-senior rejects
+* surfaced-for-review count
+* manually dismissed count
+* interested count
+* applied count
+* strong-fit count
+* stretch-fit count
+* average potential score
+* review yield
+* actionable conversion
 
-Rows are grouped by available evidence across Gmail alert or search, static company source, ATS platform, company, and source type.
+Rows are grouped by available evidence across Gmail alert evidence, static company source, ATS platform, company, and source type.
 
-The complete report also inventories active configured sources and searches with no observed leads during the reporting window. Zero-result configurations receive an advisory review recommendation. Strategic target-company sources receive `keep_strategic_coverage` instead of a retirement recommendation.
+Unique job or rejection identities are used within each group so duplicate lineage rows do not inflate counts. Review yield uses only positive outcomes within the surfaced population, so the percentage cannot exceed 100 percent.
 
-Unique job or rejection identities are used within each group so duplicate source rows do not inflate counts.
+### Configured search attribution limitation
 
-## Yield recommendations
+Accepted Gmail jobs currently retain generic Gmail lineage but do not retain `Config_Searches.search_id`. The system therefore cannot accurately assign accepted jobs to an individual configured search.
 
-Recommendations are advisory only:
+Active configured searches are still inventoried, but they receive:
 
-* `keep`
-* `keep_strategic_coverage`
-* `narrow_search`
-* `narrow_or_retire`
-* `reduce_cadence`
-* `review_filtering`
-* `review_or_reduce_cadence`
+* recommendation: `attribution_unavailable`
+* no zero-yield interpretation
+* no narrow, reduce-cadence, or retirement recommendation
 
-A single poor week never disables a source. Strategic target-company coverage is retained unless a replacement source is validated.
+Subject-level Gmail evidence remains visible separately. Search-level optimization must wait until durable search-ID lineage is added to ingestion.
+
+### Zero-result sources
+
+Active static company sources with no observed leads receive an advisory `review_or_reduce_cadence` recommendation. Strategic target-company sources receive `keep_strategic_coverage` instead.
+
+No recommendation changes configuration automatically.
 
 ## Generated worksheets
 
@@ -114,7 +149,7 @@ Sprint 51 creates two generated, read-only surfaces:
 * `Source_Audit`
 * `Source_Yield`
 
-The workflow replaces the generated contents idempotently and then applies the standard sheet-governance policy. The headers are gray, filters are enabled, and the surfaces are added to `Sheet_Guide`. Neither worksheet is a canonical data-entry surface.
+The workflow replaces their generated contents idempotently and applies standard sheet governance. Headers are gray, filters are enabled, and both surfaces are included in `Sheet_Guide`. Neither worksheet is a canonical data-entry surface.
 
 ## Commands
 
@@ -137,13 +172,13 @@ Run without live HTTP probes:
 python -m src.source_quality_report --write-report --weeks 4 --skip-live-probes
 ```
 
-Apply one or more explicitly approved configuration updates:
+Apply one explicitly approved configuration update:
 
 ```text
 python -m src.source_quality_report --write-report --weeks 4 --approved-company-id example_company
 ```
 
-Repeat `--approved-company-id` for multiple exact company identifiers.
+Repeat `--approved-company-id` for multiple exact company identifiers. Exact source-URL matching is still required internally.
 
 ## GitHub Actions
 
@@ -154,12 +189,14 @@ The workflow:
 1. Runs the full test suite.
 2. Migrates and validates the workbook schema.
 3. Audits current static sources.
-4. Writes `Source_Audit` and `Source_Yield`.
-5. Includes active zero-result configurations.
-6. Applies only explicitly approved cleanup when requested.
-7. Applies generated-surface governance.
-8. Appends a `Runs` record.
-9. Writes classification, yield, zero-result, and update counts to the GitHub Step Summary.
+4. Builds four-week source yield.
+5. Inventories actual zero-result static sources.
+6. Marks configured searches with unavailable attribution separately.
+7. Writes `Source_Audit` and `Source_Yield` before approved configuration mutations.
+8. Applies only explicitly approved and exact-source-matched cleanup.
+9. Applies generated-surface governance.
+10. Appends a `Runs` record.
+11. Writes classifications, recommendations, attribution limitations, and applied changes to the GitHub Step Summary.
 
 All workbook writes use the shared `job-tracker-workbook-writes` concurrency group.
 
@@ -177,20 +214,22 @@ After merge:
 
 1. Manually run `Job Tracker Source Quality` in `report` mode with a four-week window.
 2. Confirm `Source_Audit` and `Source_Yield` are created or refreshed.
-3. Confirm permanent 404, DNS, protected, redirect, and ATS classifications are reasonable.
-4. Confirm temporary failures remain retryable.
-5. Confirm active zero-result sources and searches are visible.
-6. Confirm strategic target-company sources are retained.
-7. Confirm no source configuration changed in report mode.
-8. Review recommended changes and identify exact company IDs that are safe to update.
-9. Create a workbook backup before applying reviewed cleanup.
-10. Rerun in `apply_reviewed_cleanup` mode with only approved company IDs.
-11. Confirm reviewed repeated permanent 404 sources are no longer active static sources.
-12. Confirm temporary failures and strategic target-company sources remain recoverable.
-13. Run the normal daily workflow and confirm source-failure noise and runtime do not regress.
+3. Confirm report mode changed no `Config_Companies` rows.
+4. Review permanent 404, DNS, protected, redirect, ATS, and manual-review classifications.
+5. Confirm temporary and empty-valid sources have future retry dates.
+6. Confirm configured searches show `attribution_unavailable`, not zero-yield retirement advice.
+7. Confirm strategic target-company sources retain coverage.
+8. Back up the workbook.
+9. Identify exact company IDs and exact current source URLs for reviewed cleanup candidates.
+10. Rerun in `apply_reviewed_cleanup` mode only for approved company IDs.
+11. Confirm the Step Summary reports the original and final source URLs for each applied change.
+12. Run the normal static-page workflow.
+13. Confirm sources in active cooldown are listed under `source_policy_skips` and are not requested.
+14. Confirm eligible healthy or expired-cooldown sources still run.
+15. Confirm reviewed permanent 404 rows no longer qualify as active static sources.
 
 ## Scope boundaries
 
-Sprint 51 does not change automatic scoring weights, delete low-yield searches, disable a source from one observation, add paid APIs, perform unrestricted web crawling, delete source-health history, or change canonical `Jobs` fields.
+Sprint 51 does not change scoring weights, canonical `Jobs` fields, Gmail ingestion schema, or automatic search configuration. Durable `Config_Searches.search_id` lineage for accepted Gmail jobs remains future work.
 
 Complete system documentation and maintenance-readiness consolidation remain Sprint 52 scope.
