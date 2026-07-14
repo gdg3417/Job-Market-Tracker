@@ -48,10 +48,11 @@ def test_zero_result_configured_search_is_reported():
 
     assert len(rows) == 1
     row = rows[0]
-    assert row.group_type == "gmail_alert_or_search"
+    assert row.group_type == "configured_search"
     assert row.group_key == "dallas_strategy_manager"
     assert row.leads_received == 0
     assert row.source_type == "configured_search"
+    assert row.recommendation == "attribution_unavailable"
 
 
 def test_inactive_zero_result_configuration_is_omitted():
