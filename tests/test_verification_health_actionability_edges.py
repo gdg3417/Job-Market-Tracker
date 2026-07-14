@@ -32,6 +32,24 @@ def test_active_application_takes_precedence_over_stale_dismissed_review_state()
     assert result.actionable_summary["dismissed_roles_excluded"] == 0
 
 
+def test_active_review_application_state_precedes_stale_dismissal_fields():
+    result = _calculate([
+        job(
+            "review-status-interview",
+            score_status="verified",
+            review_status="interviewing",
+            dismissal_reason="not_interested",
+            application_status="",
+            application_date="2026-06-20",
+            verified_total_score=85,
+        )
+    ])
+
+    assert result.actionable_summary["actionable_roles"] == 1
+    assert result.actionable_summary["active_applications"] == 1
+    assert result.actionable_summary["dismissed_roles_excluded"] == 0
+
+
 def test_manual_dismissal_reason_excludes_role_even_when_review_status_is_stale():
     result = _calculate([
         job(
