@@ -132,18 +132,18 @@ def classify_actionability(row: dict[str, Any], *, as_of: datetime) -> Actionabi
             "terminal_application",
             f"Application status is {normalize_status(job.application_status)}.",
         )
+
+    # Preserve applications already in progress before applying lead-quality
+    # exclusions. This matches the canonical current-context and follow-up policy.
+    if _has_active_application_state(job):
+        return Actionability(True, "active_application", "Application remains active.")
+
     if is_blocked_company(job):
         return Actionability(False, "blocked_company", "Company is blocked by canonical policy.")
     if is_too_senior_hard_exclusion(job):
         return Actionability(False, "too_senior_hard_exclusion", "Role is a hard seniority exclusion.")
     if is_auto_rejected(job) or is_hard_excluded(job):
         return Actionability(False, "hard_excluded", "Role is excluded by canonical scoring policy.")
-
-    # Current applications take precedence over stale review and dismissal fields.
-    # The review workflow can carry the active state on review_status before the
-    # application_status field is synchronized.
-    if _has_active_application_state(job):
-        return Actionability(True, "active_application", "Application remains active.")
 
     if normalize_status(job.dismissal_reason):
         return Actionability(False, "dismissed", "Role has a manual dismissal reason.")
