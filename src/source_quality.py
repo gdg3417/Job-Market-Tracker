@@ -310,6 +310,9 @@ def detect_structured_ats(url: Any, content: Any = "") -> str:
             return platform
 
     material = str(content or "").lower()
+    metadata_value = clean_text(content).strip().lower()
+    if metadata_value in SUPPORTED_STRUCTURED_ATS:
+        return metadata_value
     for platform, signatures in ATS_CONTENT_SIGNATURES.items():
         if any(re.search(signature, material, flags=re.IGNORECASE) for signature in signatures):
             return platform
@@ -826,7 +829,7 @@ def _job_source_group_keys(source: dict[str, Any], job: dict[str, Any]) -> list[
     keys = [("source_type", source_type or "unknown"), ("company", company)]
     if source_type == "static_page" or primary == "static_page":
         keys.append(("static_company_source", f"{company} | {source_url or 'unknown URL'}"))
-    ats = detect_structured_ats(source_url, f"{source_type} {primary}")
+    ats = source_type if source_type in SUPPORTED_STRUCTURED_ATS else primary if primary in SUPPORTED_STRUCTURED_ATS else detect_structured_ats(source_url)
     if ats:
         keys.append(("ats_platform", ats))
     if primary in {"gmail", "gmail_alert", "linkedin", "linkedin_email"} or source_type in {"gmail", "gmail_alert", "linkedin"}:
