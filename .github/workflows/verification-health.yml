@@ -204,6 +204,12 @@ jobs:
                       continue
               return total
 
+          def _safe_percent(value):
+              try:
+                  return f"{float(value or 0) * 100:.1f}%"
+              except (TypeError, ValueError):
+                  return "not calculated"
+
           output_path = Path(os.environ["RUNNER_TEMP"]) / "verification_health.json"
           data = load_json_output(
               output_path,
@@ -235,7 +241,7 @@ jobs:
               ("Manual interventions required", actionable.get("manual_interventions_required", 0)),
               ("Dismissed roles excluded", actionable.get("dismissed_roles_excluded", 0)),
               ("Deferred roles not yet due", actionable.get("deferred_not_due_excluded", 0)),
-              ("Portfolio evidence coverage", f"{float(portfolio.get('portfolio_coverage_rate') or 0) * 100:.1f}%"),
+              ("Portfolio evidence coverage", _safe_percent(portfolio.get("portfolio_coverage_rate"))),
               ("Actionable SLA breaches", data.get("sla_breach_count", 0)),
               ("Actionable primary blocker rows", _safe_count_sum(data.get("blocker_counts"))),
               ("Supporting secondary gaps", _safe_count_sum(data.get("secondary_gap_counts"))),
