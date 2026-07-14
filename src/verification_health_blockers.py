@@ -40,7 +40,7 @@ def classify_blocker(
     confidence = safe_int(queue.get("match_confidence") or job.get("enrichment_match_confidence"), 0)
 
     if is_deferred(job, as_of):
-        return Blocker("manual_review_required", "Manually deferred")
+        return Blocker("manual_review_required", "Manually deferred without a due follow-up")
     if status == "retryable failure" or row_timestamp(queue, "next_attempt_at"):
         return Blocker("retry_scheduled", error_message or "Retry is scheduled")
     if "blocked" in error_text or "forbidden" in error_text or "unauthorized" in error_text:
@@ -73,3 +73,36 @@ def classify_blocker(
     if identity(job.get("work_model")) in {"", "unknown"} and identity(job.get("remote_status")) in {"", "unknown"}:
         return Blocker("missing_work_model", "Work-model evidence is absent")
     return Blocker("other", error_message or "Verification remains incomplete")
+
+
+def supporting_gaps(
+    job: dict[str, Any],
+    queue_row: dict[str, Any] | None,
+    evidence_rows: list[dict[str, Any]],
+    resolution_row: dict[str, Any] | None = None,
+    *,
+    thresholds: HealthThresholds,
+) -> set[str]:
+    """Return auditable secondary verification gaps without assigning priority."""
+    queue = queue_row or {}
+    resolution = resolution_row or {}
+    gaps: set[str] = set()
+    if not authoritative(job, queue, thresholds, resolution):
+        gaps.add("no_authoritative_url")
+
+    attempts = safe_int(queue.get("attempt_count"), safe_int(job.get("enrichment_attempt_count"), 0))
+    if attempts <= 0 and not row_timestamp(job, "enrichment_last_attempted_at") and not row_timestamp(resolution, "attempted_at"):
+        gaps.add("enrichment_not_attempted")
+
+    accepted = [row for row in evidence_rows if truthy(row.get("accepted"))]
+    if not str(job.get("description_text") or "").strip() and not any(
+        str(row.get("description_text") or "").strip() for row in accepted
+    ):
+        gaps.add("missing_description")
+    if not str(job.get("location") or "").strip():
+        gaps.add("missing_location")
+    if job.get("salary_min") in (None, "") and job.get("salary_max") in (None, ""):
+        gaps.add("missing_compensation")
+    if identity(job.get("work_model")) in {"", "unknown"} and identity(job.get("remote_status")) in {"", "unknown"}:
+        gaps.add("missing_work_model")
+    return gaps
