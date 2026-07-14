@@ -30,7 +30,7 @@ jobs:
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/jobs/87232045792/logs" \
             --output "$RUNNER_TEMP/source-quality.log"
 
-      - name: Print failure context only
+      - name: Print source-quality failure context only
         run: |
           python - <<'PY'
           import os
@@ -38,25 +38,31 @@ jobs:
           from pathlib import Path
 
           path = Path(os.environ["RUNNER_TEMP"]) / "source-quality.log"
-          text = path.read_text(encoding="utf-8", errors="replace")
-          lines = text.splitlines()
+          lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+          command_indexes = [
+              index
+              for index, line in enumerate(lines)
+              if "python -m src.source_quality_report" in line
+          ]
+          start = max(0, command_indexes[-1] - 12) if command_indexes else max(0, len(lines) - 300)
+          scoped = lines[start:]
           patterns = re.compile(
               r"Traceback|Exception|Error:|KeyError|ValueError|TypeError|AttributeError|"
-              r"WorksheetNotFound|APIError|gspread|##\[error\]|::error::|Process completed with exit code",
+              r"WorksheetNotFound|APIError|##\[error\]|::error::|Process completed with exit code",
               re.IGNORECASE,
           )
-          matches = [index for index, line in enumerate(lines) if patterns.search(line)]
+          matches = [index for index, line in enumerate(scoped) if patterns.search(line)]
           selected: set[int] = set()
           for index in matches:
-              selected.update(range(max(0, index - 18), min(len(lines), index + 24)))
+              selected.update(range(max(0, index - 18), min(len(scoped), index + 28)))
           if not selected:
-              selected.update(range(max(0, len(lines) - 250), len(lines)))
-          print("=== FAILURE CONTEXT ===")
+              selected.update(range(max(0, len(scoped) - 220), len(scoped)))
+          print("=== SOURCE QUALITY FAILURE CONTEXT ===")
           previous = None
           for index in sorted(selected):
               if previous is not None and index > previous + 1:
                   print("... omitted ...")
-              print(lines[index])
+              print(scoped[index])
               previous = index
-          print("=== END FAILURE CONTEXT ===")
+          print("=== END SOURCE QUALITY FAILURE CONTEXT ===")
           PY
