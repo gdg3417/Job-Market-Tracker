@@ -153,7 +153,13 @@ jobs:
         run: |
           set -o pipefail
           eval "set -- $(cat \"$RUNNER_TEMP/source_quality_args.txt\")"
-          python -m src.source_quality "$@" | tee "$RUNNER_TEMP/source_quality.json"
+          python -m src.source_quality_report "$@" | tee "$RUNNER_TEMP/source_quality.json"
+
+      - name: Apply generated-surface governance
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m src.sheet_governance --apply | tee "$RUNNER_TEMP/source_quality_governance.json"
 
       - name: Write GitHub Step Summary
         if: always()
@@ -163,7 +169,6 @@ jobs:
           WINDOW_WEEKS: ${{ steps.command.outputs.window_weeks }}
         run: |
           python - <<'PY'
-          import json
           import os
           from pathlib import Path
 
@@ -179,6 +184,7 @@ jobs:
                   "configuration_changes_required": 0,
                   "retryable_sources": 0,
                   "yield_rows": 0,
+                  "zero_result_rows": 0,
                   "yield_recommendation_counts": {},
                   "approved_updates": [],
                   "source_audit_rows_written": 0,
@@ -200,6 +206,7 @@ jobs:
               handle.write(f"| Configuration changes required | {data.get('configuration_changes_required', 0)} |\n")
               handle.write(f"| Retryable sources | {data.get('retryable_sources', 0)} |\n")
               handle.write(f"| Source yield rows | {data.get('yield_rows', 0)} |\n")
+              handle.write(f"| Zero-result configuration rows | {data.get('zero_result_rows', 0)} |\n")
               handle.write(f"| Source_Audit rows written | {data.get('source_audit_rows_written', 0)} |\n")
               handle.write(f"| Source_Yield rows written | {data.get('source_yield_rows_written', 0)} |\n")
               handle.write(f"| Approved updates applied | {len(updates)} |\n")
