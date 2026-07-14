@@ -88,8 +88,8 @@ jobs:
           tests/test_follow_up.py
           tests/test_weekly_context*.py
           tests/test_sheet_dates_shared.py
-          tests/test_generated_surface_policy.py
-          tests/test_presentation_refresh.py
+          tests/test_generated_surface*.py
+          tests/test_presentation_refresh*.py
 
       - name: Refresh generated presentation surfaces
         shell: bash
