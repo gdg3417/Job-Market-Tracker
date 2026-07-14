@@ -45,6 +45,21 @@ WORKBOOK_WRITE_STAGES = {
     "write_failure_ledger",
     "record_run",
 }
+AUTHENTICATION_ERROR_MARKERS = (
+    "invalid credentials",
+    "invalid_grant",
+    "insufficient authentication scopes",
+    "login required",
+    "unauthenticated",
+)
+RATE_LIMIT_ERROR_MARKERS = (
+    "daily limit exceeded",
+    "quota",
+    "rate limit",
+    "ratelimit",
+    "user-rate limit",
+    "userratelimit",
+)
 
 T = TypeVar("T")
 
@@ -76,13 +91,6 @@ def _column_name(number: int) -> str:
 
 def _normalize_record(record: dict[str, Any], headers: Iterable[str]) -> dict[str, Any]:
     return {header: record.get(header, "") for header in headers}
-
-
-def _as_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(str(value or "").strip())
-    except (TypeError, ValueError):
-        return default
 
 
 def _http_status(error: Exception) -> int | None:
@@ -122,20 +130,28 @@ def classify_failure(error: Exception, *, stage: str) -> FailureDiagnostic:
     class_name = type(error).__name__.lower()
     message = sanitize_error_message(error)
     lower_message = message.lower()
+    authentication_http_error = status == 401 or (
+        status == 403 and any(marker in lower_message for marker in AUTHENTICATION_ERROR_MARKERS)
+    )
+    rate_limit_error = status == 429 or (
+        status == 403 and any(marker in lower_message for marker in RATE_LIMIT_ERROR_MARKERS)
+    )
 
     if (
         stage in AUTHENTICATION_STAGES
         or isinstance(error, GmailAuthenticationError)
         or class_name in {"refresherror", "defaultcredentialserror"}
-        or status in {401, 403} and stage in GMAIL_API_STAGES
+        or authentication_http_error and stage in GMAIL_API_STAGES
     ):
         category = "authentication"
         retry_eligible = False
     elif stage in GMAIL_API_STAGES:
         category = "gmail_api"
-        retry_eligible = status in {408, 409, 425, 429} or bool(status and status >= 500) or isinstance(
-            error,
-            (ConnectionError, TimeoutError),
+        retry_eligible = (
+            status in {408, 409, 425}
+            or rate_limit_error
+            or bool(status and status >= 500)
+            or isinstance(error, (ConnectionError, TimeoutError))
         )
         if status is None and not retry_eligible:
             retry_eligible = True
@@ -183,7 +199,6 @@ def detect_systemic_failure(diagnostics: Iterable[FailureDiagnostic]) -> Failure
 
 
 def build_noninteractive_gmail_service(client_config_path: str | Path, token_path: str | Path):
-    del client_config_path
     try:
         from google.auth.exceptions import RefreshError
         from google.auth.transport.requests import Request
@@ -192,17 +207,23 @@ def build_noninteractive_gmail_service(client_config_path: str | Path, token_pat
     except ImportError as exc:  # pragma: no cover
         raise GmailAuthenticationError("Gmail API dependencies are not installed") from exc
 
+    client_file = Path(client_config_path).expanduser()
     token_file = Path(token_path).expanduser()
+    if not client_file.exists():
+        raise GmailAuthenticationError("Gmail client configuration file was not found")
     if not token_file.exists():
         raise GmailAuthenticationError("Gmail token file was not found")
     try:
+        client_data = json.loads(client_file.read_text(encoding="utf-8"))
+        if not isinstance(client_data, dict) or not ({"installed", "web"} & set(client_data)):
+            raise ValueError("Unsupported Gmail client configuration structure")
         token_data = json.loads(token_file.read_text(encoding="utf-8"))
         credentials = Credentials.from_authorized_user_info(token_data, [GMAIL_READONLY_SCOPE])
         if credentials.expired and credentials.refresh_token:
             credentials.refresh(Request())
             token_file.write_text(credentials.to_json(), encoding="utf-8")
-    except (OSError, ValueError, KeyError, RefreshError) as exc:
-        raise GmailAuthenticationError("Gmail token is invalid or could not be refreshed") from exc
+    except (OSError, ValueError, KeyError, TypeError, RefreshError) as exc:
+        raise GmailAuthenticationError("Gmail credentials are invalid or could not be refreshed") from exc
     if not credentials.valid:
         raise GmailAuthenticationError("Gmail token is not valid; interactive authorization is disabled")
     return build("gmail", "v1", credentials=credentials, cache_discovery=False)
