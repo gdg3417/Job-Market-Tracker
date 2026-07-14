@@ -16,6 +16,7 @@ from src.source_quality import (
     prior_failure_observations,
     probe_source,
 )
+from src.source_quality_inventory import configured_static_source_rows_for_audit
 from src.source_quality_report import configured_zero_yield_rows, run_source_quality_report
 
 
@@ -235,18 +236,23 @@ def test_review_yield_is_bounded_for_application_status_only():
     assert row.review_yield_percent == 100.0
 
 
-def test_audit_uses_same_static_source_population_as_ingestion():
+def test_audit_includes_failed_static_sources_without_reenabling_execution():
     companies = [
         _company(company_id="custom", source_type="custom", source_url="https://example.com/careers"),
         _company(company_id="blocked", source_quality="failed"),
+        _company(company_id="gmail", ingestion_mode="gmail_only"),
     ]
+    audit_rows = configured_static_source_rows_for_audit(companies)
     findings = audit_static_sources(
-        companies,
+        audit_rows,
         session=FakeSession(FakeResponse(text="Current openings")),
         as_of=datetime(2026, 7, 14, tzinfo=UTC),
     )
-    assert [finding.company_id for finding in findings] == ["custom"]
-    assert findings[0].classification == HEALTHY
+    assert [finding.company_id for finding in findings] == ["custom", "blocked"]
+    assert all(finding.classification == HEALTHY for finding in findings)
+
+    execute, _ = filter_static_sources_for_execution(companies, [])
+    assert [row["company_id"] for row in execute] == ["custom"]
 
 
 def test_configured_search_is_marked_attribution_unavailable_not_zero_yield():
