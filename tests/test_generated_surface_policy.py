@@ -73,8 +73,20 @@ def test_closed_and_rejected_roles_are_suppressed():
     rejected = make_job(application_status="rejected")
     assert include_on_review_queue(closed) is False
     assert include_on_follow_up_queue(closed) is False
+    assert include_in_current_context(closed) is False
     assert include_on_review_queue(rejected) is False
     assert include_in_dashboard(rejected) is False
+
+
+def test_closed_active_application_is_not_retained_in_current_context():
+    job = make_job(
+        status="confirmed_closed",
+        review_status="applied",
+        application_status="interviewing",
+        application_date="2026-07-01",
+    )
+    assert include_on_follow_up_queue(job) is False
+    assert include_in_current_context(job) is False
 
 
 def test_active_application_remains_in_follow_up_and_context():
