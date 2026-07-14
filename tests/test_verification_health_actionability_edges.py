@@ -50,6 +50,23 @@ def test_active_review_application_state_precedes_stale_dismissal_fields():
     assert result.actionable_summary["dismissed_roles_excluded"] == 0
 
 
+def test_active_application_precedes_hard_lead_exclusions():
+    result = _calculate([
+        job(
+            "active-hard-excluded",
+            review_status="interviewing",
+            application_status="interviewing",
+            score_status="excluded",
+            potential_priority="excluded",
+            score_explanation="company_exclusion=true; hard_exclude=true",
+        )
+    ])
+
+    assert result.actionable_summary["actionable_roles"] == 1
+    assert result.actionable_summary["active_applications"] == 1
+    assert result.actionability_exclusions == {}
+
+
 def test_manual_dismissal_reason_excludes_role_even_when_review_status_is_stale():
     result = _calculate([
         job(
