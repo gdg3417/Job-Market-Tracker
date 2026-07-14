@@ -105,6 +105,12 @@ def classify_actionability(row: dict[str, Any], *, as_of: datetime) -> Actionabi
         return Actionability(False, "too_senior_hard_exclusion", "Role is a hard seniority exclusion.")
     if _is_auto_rejected_job(job) or is_hard_excluded(job):
         return Actionability(False, "hard_excluded", "Role is excluded by canonical scoring policy.")
+
+    # Current applications take precedence over stale review fields. This matches
+    # the generated-surface policy used by current context and follow-up queues.
+    if has_active_application(job):
+        return Actionability(True, "active_application", "Application remains active.")
+
     if is_terminal_review(job):
         review = normalize_status(job.review_status)
         interest = normalize_status(job.interest_decision)
@@ -116,8 +122,6 @@ def classify_actionability(row: dict[str, Any], *, as_of: datetime) -> Actionabi
     if deferred is not None:
         return deferred
 
-    if has_active_application(job):
-        return Actionability(True, "active_application", "Application remains active.")
     if normalize_status(job.status) in LIKELY_CLOSED_STATUSES:
         return Actionability(
             True,
