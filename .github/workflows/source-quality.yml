@@ -22,7 +22,7 @@ on:
         default: "4"
         type: string
       skip_live_probes:
-        description: Build the report from configuration and workbook history without current HTTP probes
+        description: Refresh yield reporting without HTTP probes while preserving the last live Source_Audit
         required: false
         default: false
         type: boolean
@@ -118,6 +118,10 @@ jobs:
           fi
 
           if [ "${MODE}" = "apply_reviewed_cleanup" ]; then
+            if [ "${SKIP_LIVE_PROBES}" = "true" ]; then
+              echo "::error::apply_reviewed_cleanup requires live source probes."
+              exit 1
+            fi
             raw_ids="${APPROVED_COMPANY_IDS:-}"
             if [ -z "${raw_ids// }" ]; then
               echo "::error::apply_reviewed_cleanup requires at least one exact company_id."
