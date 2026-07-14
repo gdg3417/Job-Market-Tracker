@@ -47,7 +47,14 @@ def make_job(**overrides) -> JobPosting:
     return JobPosting(**values)
 
 
-def install_refresh_stubs(monkeypatch, writes, *, fail_follow_up: bool = False) -> None:
+def install_refresh_stubs(
+    monkeypatch,
+    writes,
+    *,
+    fail_follow_up: bool = False,
+    fail_weekly_readback: bool = False,
+    fail_surface_status: bool = False,
+) -> None:
     snapshot = refresh.CanonicalSnapshot(
         jobs_with_rows=[(2, make_job())],
         rejected_rows=[],
@@ -76,16 +83,17 @@ def install_refresh_stubs(monkeypatch, writes, *, fail_follow_up: bool = False) 
         writes.append("Weekly_Context")
         return DummyResult({"rows_written": 4, "warnings": []})
 
+    def read_optional(client, name):
+        if fail_weekly_readback and name == refresh.WEEKLY_VALUE_SHEET:
+            raise RuntimeError("simulated weekly value readback failure")
+        return [{"Week Start": "2026-07-06", "Week End": "2026-07-12"}]
+
     monkeypatch.setattr(refresh, "apply_review_queue", review_action)
     monkeypatch.setattr(refresh, "apply_follow_up_queue", follow_action)
     monkeypatch.setattr(refresh, "apply_weekly_value", weekly_action)
     monkeypatch.setattr(refresh, "apply_weekly_context", context_action)
     monkeypatch.setattr(refresh, "load_weekly_digest_config", lambda path=None: None)
-    monkeypatch.setattr(
-        refresh,
-        "_read_optional_records",
-        lambda client, name: [{"Week Start": "2026-07-06", "Week End": "2026-07-12"}],
-    )
+    monkeypatch.setattr(refresh, "_read_optional_records", read_optional)
     monkeypatch.setattr(
         refresh.dashboard,
         "build_digest_values",
@@ -107,12 +115,13 @@ def install_refresh_stubs(monkeypatch, writes, *, fail_follow_up: bool = False) 
     def write_values(client, name, values):
         writes.append(name)
 
+    def status_action(client, outcomes, **kwargs):
+        if fail_surface_status:
+            raise RuntimeError("simulated surface status write failure")
+        return list(outcomes)
+
     monkeypatch.setattr(refresh.dashboard, "write_values", write_values)
-    monkeypatch.setattr(
-        refresh,
-        "write_surface_status",
-        lambda client, outcomes, **kwargs: list(outcomes),
-    )
+    monkeypatch.setattr(refresh, "write_surface_status", status_action)
 
 
 def test_unified_refresh_uses_required_deterministic_order(monkeypatch):
@@ -171,6 +180,39 @@ def test_partial_failure_is_recorded_and_later_surfaces_continue(monkeypatch):
     assert "Weekly_Value" in writes
     assert "Dashboard" in writes
     assert "Digest" in writes
+
+
+def test_weekly_value_readback_failure_uses_prior_snapshot_and_continues(monkeypatch):
+    writes = []
+    install_refresh_stubs(monkeypatch, writes, fail_weekly_readback=True)
+    result = refresh.apply_presentation_refresh(
+        FakeClient(),
+        as_of="2026-07-14",
+        source_run="test",
+    )
+    assert result["status"] == "success"
+    assert result["surfaces_failed"] == 0
+    assert result["surfaces_with_warnings"] == 2
+    assert "readback failed" in result["results"]["Weekly_Value"]["warnings"][0]
+    assert "readback failed" in result["results"]["Weekly_Context"]["warnings"][0]
+    assert "Dashboard" in writes
+    assert "Digest" in writes
+
+
+def test_surface_status_failure_is_returned_as_a_surface_failure(monkeypatch):
+    writes = []
+    install_refresh_stubs(monkeypatch, writes, fail_surface_status=True)
+    result = refresh.apply_presentation_refresh(
+        FakeClient(),
+        as_of="2026-07-14",
+        source_run="test",
+    )
+    assert result["status"] == "partial_failure"
+    assert result["surfaces_failed"] == 1
+    assert result["surface_status_written"] is False
+    assert result["surface_order"][-1] == "Surface_Status"
+    assert result["surface_status"][-1]["status"] == "failed"
+    assert "simulated surface status write failure" in result["surface_status_error"]
 
 
 def test_surface_status_preserves_last_success_on_failure():
