@@ -3,8 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-import pytest
-
 import src.presentation_refresh as refresh
 from src.models import JobPosting
 from src.surface_status import SurfaceOutcome, merge_surface_outcomes
@@ -206,6 +204,8 @@ def test_generated_write_workflows_share_one_concurrency_group():
         "enrichment-run.yml",
         "weekly-value.yml",
         "sheet-governance.yml",
+        "verification-health.yml",
+        "workbook-capacity.yml",
     ]
     for workflow_name in workflow_names:
         text = (root / ".github" / "workflows" / workflow_name).read_text(encoding="utf-8")
