@@ -35,7 +35,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: job-tracker-daily-run
+  group: job-tracker-workbook-writes
   cancel-in-progress: false
 
 jobs:
@@ -311,12 +311,15 @@ jobs:
           set -o pipefail
           python -m src.main --job-upsert-smoke-test | tee "$RUNNER_TEMP/job_upsert.json"
 
-      - name: Refresh Dashboard and Digest
+      - name: Refresh generated presentation surfaces
         if: steps.daily_gate.outputs.should_run == 'true'
         shell: bash
         run: |
           set -o pipefail
-          python -m src.dashboard | tee "$RUNNER_TEMP/dashboard.json"
+          python -m src.presentation_refresh \
+            --refresh \
+            --source-run "daily-run" \
+            | tee "$RUNNER_TEMP/dashboard.json"
 
       - name: Mark successful daily completion
         if: >-
@@ -407,6 +410,9 @@ jobs:
               ("Gmail alerts rejected", gmail.get("alerts_rejected", 0)),
               ("Daily attempt recorded", "yes" if attempt.get("status") == "recorded" else "no"),
               ("Successful daily completion recorded", "yes" if completion.get("status") == "success" else "no"),
+              ("Generated surfaces succeeded", dashboard.get("surfaces_succeeded", 0)),
+              ("Generated surfaces failed", dashboard.get("surfaces_failed", 0)),
+              ("Surface status written", "yes" if dashboard.get("surface_status_written") else "no"),
               ("Dashboard rows written", dashboard.get("dashboard_rows_written", 0)),
               ("Digest rows written", dashboard.get("digest_rows_written", 0)),
               ("Final status", os.environ.get("FINAL_STATUS", "unknown")),
@@ -432,4 +438,6 @@ jobs:
                   handle.write("\nSuccessful daily completion was withheld because retryable Gmail failures remain.\n")
               if int(gmail.get("quarantined_messages") or 0):
                   handle.write("\nQuarantined Gmail messages require manual review but will not be replayed automatically.\n")
+              if int(dashboard.get("surfaces_failed") or 0):
+                  handle.write("\nOne or more generated surfaces failed. Review the presentation refresh output.\n")
           PY
