@@ -33,6 +33,11 @@ MANUAL_BLOCKER_REASONS = {
     "no_supported_enrichment_path",
     "authoritative_match_below_threshold",
 }
+MANUAL_ACTIONABILITY_REASONS = {
+    "closure_confirmation_required",
+    "deferred_missing_due_date",
+    "deferred_invalid_due_date",
+}
 
 
 def _rows_with_job_key(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -168,7 +173,7 @@ def calculate_verification_health(
     for job in actionable_jobs:
         key = str(job.get("job_key") or "").strip()
         state = actionability.get(key) or classify_actionability(job, as_of=now)
-        if state.reason == "closure_confirmation_required":
+        if state.reason in MANUAL_ACTIONABILITY_REASONS:
             blocker = Blocker("manual_review_required", state.detail)
         elif is_verified(job):
             continue
