@@ -23,7 +23,7 @@ The tracker is in maintenance mode. The core operating system now includes:
 11. Workbook-capacity auditing, explicit compaction, and capacity thresholds.
 12. Source-quality cooldowns, live source audit, and four-week source-yield reporting.
 13. Sheet governance with green editable headers, gray system headers, filters, freezes, and dropdowns.
-14. Pull request tests, regression readiness, and permanent Topgolf and Toyota regression cases.
+14. Pull request tests, regression readiness, workflow YAML contracts, and permanent Topgolf and Toyota regression cases.
 
 `Jobs` remains the canonical source of truth. Generated worksheets are read-only and are rebuilt from canonical data.
 
@@ -61,8 +61,9 @@ Potential priority is not a final score. Missing evidence reduces completeness a
 3. Use `Config_Searches`, `Config_Companies`, `Scoring_Rules`, and `Target_Companies` for approved configuration changes.
 4. Do not edit generated surfaces. Their contents will be overwritten on refresh.
 5. Run the unified presentation refresh after material manual edits when an immediate update is needed.
+6. Use the documented `Posting_Resolution` manual fields only for a validated authoritative-posting override.
 
-The complete worksheet ownership and edit map is in `docs/WORKBOOK_MAP.md`.
+The complete worksheet ownership, edit map, and manual authoritative URL distinction are in `docs/WORKBOOK_MAP.md`.
 
 ## Local setup
 
@@ -176,18 +177,22 @@ Compaction is never part of normal daily execution. It requires explicit apply a
 
 ## GitHub Actions
 
-Operational workflow ownership, schedules, inputs, workbook writes, failure implications, and recovery procedures are documented in `docs/WORKFLOW_OWNERSHIP.md`.
+Operational workflow ownership, exact cron schedules, Central-time behavior, inputs, workbook writes, failure implications, and recovery procedures are documented in `docs/WORKFLOW_OWNERSHIP.md`.
 
 All production workbook writers use the shared `job-tracker-workbook-writes` concurrency group with queued, non-cancelling execution.
 
-Pull requests are validated by these exact checks:
+Pull request validation uses these workflows and job-level contexts:
 
-1. `Pull Request Tests`
-2. `Regression readiness`
+| Workflow display name | Job-level check context |
+| --- | --- |
+| `Pull Request Tests` | `test` |
+| `Regression readiness` | `regression-readiness` |
 
 `Regression readiness` includes the gold-standard regression evaluation against `data/regression/sprint38_gold_standard_jobs.json`.
 
-Repository branch-protection settings are administrative configuration. Sprint 52 documents the expected required checks but does not modify protection settings.
+The Sprint 52 documentation contract parses every current workflow YAML file and verifies workflow inventory, display names, job contexts, and cron schedules. Existing workflow-specific tests validate shell handoffs, concurrency, and behavior.
+
+Repository branch-protection settings are administrative configuration. Confirm the required contexts shown in GitHub settings against the current pull request checks. Do not assume the workflow display name and branch-protection context are identical.
 
 ## Maintenance cadence
 
@@ -231,7 +236,8 @@ Use `docs/TROUBLESHOOTING.md` for explicit procedures covering:
 5. Static source failures and source-quality cooldowns.
 6. Schema mismatch and header repair.
 7. Failed enrichment and lifecycle work.
-8. Failed Weekly Context email delivery.
+8. Authoritative posting resolution and manual override handling.
+9. Failed Weekly Context email delivery.
 
 ## Documentation
 
@@ -269,3 +275,4 @@ Use `docs/TROUBLESHOOTING.md` for explicit procedures covering:
 2. Weekly email delivery is handled by Google Apps Script and is operationally separate from GitHub Actions.
 3. Live workbook readiness must be validated after merge because production credentials are not available to pull request CI.
 4. Branch-protection configuration must be verified in GitHub repository settings by an administrator.
+5. `Posting_Resolution` manual override fields are a narrow legacy exception to the green-header convention. Use only the fields documented in `docs/WORKBOOK_MAP.md`.
