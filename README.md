@@ -6,88 +6,63 @@ The tracker is intentionally not a generic finance job scraper. It prioritizes r
 
 ## Current status
 
-Sprints 1 through 35 are implemented in code.
+Sprints 1 through 52 and the associated production hotfixes are implemented on the current branch.
 
-The system now supports:
+The tracker is in maintenance mode. The core operating system now includes:
 
-1. Static company and public ATS ingestion
-2. Gmail and LinkedIn digest ingestion
-3. Normalization, deduplication, and source provenance
-4. Potential priority separated from verified fit
-5. Evidence completeness and score-state tracking
-6. Dedicated authoritative posting resolution with URL canonicalization and ATS recognition
-7. Structured connector contracts for priority ATS platforms
-8. Source reliability state and priority platform inventory
-9. Direct-link, company, ATS, and controlled external-search enrichment
-10. Authoritative match validation and safe evidence merging
-11. Verified scoring with company context
-12. Enrichment retries and posting lifecycle monitoring
-13. Production daily and weekly enrichment workflows
-14. Stale `in_progress` recovery after interrupted workflows
-15. Dashboard, Digest, and weekly email presentation
-16. Workbook schema migration and validation
-17. Gmail message and rejected-job ledgers
-18. Source quality auditing and static inventory cleanup
+1. Static company, public ATS, Gmail, LinkedIn, and job-alert ingestion.
+2. Normalization, deduplication, rejected-lead handling, and source provenance.
+3. Potential priority separated from verified fit.
+4. Authoritative posting resolution and structured ATS connectors.
+5. Evidence completeness, verified scoring, and conservative lifecycle monitoring.
+6. Human review, application tracking, compensation, work-model, benefits, commute, and next-action fields.
+7. Generated Review Queue, Follow-Up Queue, Weekly Value, Weekly Context, Dashboard, and Digest surfaces.
+8. Shared Google Sheets date normalization and one deterministic presentation refresh.
+9. Actionable verification health separated from historical portfolio coverage.
+10. Gmail message-level failure diagnostics, bounded replay, and quarantine controls.
+11. Workbook-capacity auditing, explicit compaction, and capacity thresholds.
+12. Source-quality cooldowns, live source audit, and four-week source-yield reporting.
+13. Sheet governance with green editable headers, gray system headers, filters, freezes, and dropdowns.
+14. Pull request tests, regression readiness, and permanent Topgolf and Toyota regression cases.
 
-Topgolf `Sr Manager, Strategic Planning` and Toyota North America `National Manager, Product` are permanent regression cases.
+`Jobs` remains the canonical source of truth. Generated worksheets are read-only and are rebuilt from canonical data.
 
 ## Operating model
 
 ```text
-Email or website lead
+Email, ATS, or company-site lead
         |
-Normalize and deduplicate
+Normalize, deduplicate, and record provenance
         |
-Assign potential priority
+Apply exclusions and assign potential priority
         |
-Assign verification service level
+Resolve an authoritative employer or ATS posting
         |
-Resolve canonical employer or ATS posting
+Run bounded enrichment and lifecycle checks
         |
-Run structured connector or bounded enrichment path
+Merge accepted evidence and calculate verified fit
         |
-Direct URL enrichment
+Write canonical Jobs state
         |
-Company career page or ATS enrichment
+Refresh Review Queue, Follow-Up Queue, Weekly Value,
+Weekly Context, Dashboard, Digest, and Surface Status
         |
-External search fallback
+Calculate actionable verification health
         |
-Match confidence validation
-        |
-Merge verified evidence
-        |
-Complete scoring
-        |
-Dashboard, Digest, and lifecycle monitoring
+Audit source quality, yield, and workbook capacity
 ```
 
 Potential priority is not a final score. Missing evidence reduces completeness and confidence, not role quality.
 
-## Workbook tabs
+## Manual review workflow
 
-The canonical schema is managed in `src/schema.py`.
+1. Use `Review_Queue`, `Follow_Up_Queue`, `Weekly_Context`, and `Dashboard` to identify work.
+2. Make review, interest, application, follow-up, compensation, work-model, and notes changes only in green columns on `Jobs`.
+3. Use `Config_Searches`, `Config_Companies`, `Scoring_Rules`, and `Target_Companies` for approved configuration changes.
+4. Do not edit generated surfaces. Their contents will be overwritten on refresh.
+5. Run the unified presentation refresh after material manual edits when an immediate update is needed.
 
-```text
-Config_Searches
-Config_Companies
-Scoring_Rules
-Target_Companies
-Jobs
-Job_Sources
-Rejected_Jobs
-Gmail_Messages
-Enrichment_Queue
-Enrichment_Evidence
-Posting_Resolution
-Resolution_Candidates
-Source_Health
-Snapshots
-Runs
-Digest
-Dashboard
-```
-
-`Enrichment_Queue` records deterministic work items. `Enrichment_Evidence` stores extracted evidence, match confidence, acceptance status, source URL, retrieval time, and content hash without storing full raw HTML. `Posting_Resolution` stores one current authoritative-resolution state per job. `Resolution_Candidates` preserves the candidate-level audit trail and visible score components. `Source_Health` stores one current reliability row per company, platform, and source URL.
+The complete worksheet ownership and edit map is in `docs/WORKBOOK_MAP.md`.
 
 ## Local setup
 
@@ -108,161 +83,189 @@ pytest
 ## Core validation
 
 ```powershell
+python -m compileall -q src tests
 pytest
-python -m src.schema --migrate
+python -m src.production_readiness --evaluate-regression --fixture data/regression/sprint38_gold_standard_jobs.json
 python -m src.schema --validate
 python -m src.workflow_validation
-python -m src.source_audit
-python -m src.connectors.inventory --dry-run
-python -m src.source_reliability_dashboard --dry-run
 ```
 
-Use header repair only when the workbook structure is incorrect:
+`src.workflow_validation` requires production Google Sheets credentials and appends a `Runs` row. Use it through a production workflow when local credentials are unavailable.
+
+Use header repair only when workbook structure is incorrect:
 
 ```powershell
 python -m src.schema --repair-headers
+python -m src.schema --validate
 ```
 
-## Daily ingestion
+## Primary operating commands
+
+### Gmail ingestion
 
 ```powershell
 python -m src.gmail_ingestion --run
+python -m src.gmail_ingestion --run --retry-failed-only
+python -m src.gmail_ingestion --run --message-id "<exact_message_id>"
+```
+
+Force replay is restricted to explicitly selected message IDs. Do not broadly replay completed Gmail messages.
+
+### Static ingestion and job upsert
+
+```powershell
 python -m src.main --static-pages-smoke-test
 python -m src.main --job-upsert-smoke-test
 ```
 
-Force Gmail replay only for controlled troubleshooting:
-
-```powershell
-python -m src.gmail_ingestion --run --force-reprocess
-```
-
-## Production enrichment
-
-Preview daily work:
+### Production enrichment
 
 ```powershell
 python -m src.enrichment.production --dry-run --mode daily
-```
-
-Run the bounded daily cycle:
-
-```powershell
 python -m src.enrichment.production --run --mode daily
-```
-
-Run external-search fallback and lifecycle checks:
-
-```powershell
 python -m src.enrichment.production --run --mode weekly
-```
-
-Run a controlled backfill:
-
-```powershell
 python -m src.enrichment.production --run --mode backfill
-```
-
-Process one exact job:
-
-```powershell
 python -m src.enrichment.production --run --mode backfill --job-key "<job_key>"
 ```
 
-Default limits:
-
-| Mode | Resolution | Direct | Company or ATS | External search | Lifecycle |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Daily | 10 | 10 | 10 | 0 | 0 |
-| Weekly | 15 | 10 | 10 | 5 | 50 |
-| Backfill | 20 | 15 | 15 | 5 | 50 |
-
-A production cycle recovers stale queue work, runs permitted enrichment stages, re-scores jobs, refreshes Dashboard and Digest, writes health metrics, and records one `Runs` row.
-
-## Connector inventory and source reliability
-
-Preview priority platform scope and Dashboard rows:
+### Unified generated-surface refresh
 
 ```powershell
-python -m src.connectors.inventory --dry-run
-python -m src.source_reliability_dashboard --dry-run
+python -m src.presentation_refresh --refresh --source-run "manual-maintenance"
+python -m src.presentation_refresh --refresh --source-run "manual-maintenance" --governance
 ```
 
-Structured connector platforms currently include Greenhouse, Lever, Ashby, and SmartRecruiters. Configured-only platforms remain visible for resolver routing and manual review without broad scraping.
+The authoritative refresh order is:
 
-## Lifecycle
+1. `Review_Queue`
+2. `Follow_Up_Queue`
+3. `Weekly_Value`
+4. `Weekly_Context`
+5. `Dashboard`
+6. `Digest`
+7. Optional governance
+8. `Surface_Status`
 
-Preview lifecycle work:
+### Verification health
 
 ```powershell
-python -m src.enrichment.lifecycle --dry-run
+python -m src.verification_health --dry-run
+python -m src.verification_health --run
 ```
 
-Run lifecycle checks directly:
+Verification health prioritizes currently actionable roles. Historical portfolio evidence coverage is reported separately.
+
+### Source quality and yield
 
 ```powershell
-python -m src.enrichment.lifecycle --run --limit 50
+python -m src.source_quality_report --dry-run --weeks 4
+python -m src.source_quality_report --write-report --weeks 4
+python -m src.source_quality_report --write-report --weeks 4 --skip-live-probes
 ```
 
-A single timeout, HTTP 429, HTTP 5xx response, blocked page, parser failure, or untrusted result cannot close a role. Closure requires explicit authoritative evidence, expired authoritative `validThrough`, or repeated authoritative absence on later dates.
+Reviewed source cleanup requires live probes and exact approved `Config_Companies.company_id` values.
+
+### Workbook capacity
+
+```powershell
+python -m src.workbook_capacity_hotfix --audit --enforce-critical
+python -m src.workbook_capacity_hotfix --compact --apply --enforce-critical --allow-trim-blank-formatting
+```
+
+Compaction is never part of normal daily execution. It requires explicit apply approval. Formatting-only removal requires separate approval.
 
 ## GitHub Actions
 
-`.github/workflows/daily-run.yml` performs ingestion and the main workbook refresh.
+Operational workflow ownership, schedules, inputs, workbook writes, failure implications, and recovery procedures are documented in `docs/WORKFLOW_OWNERSHIP.md`.
 
-`.github/workflows/enrichment-run.yml` performs production enrichment:
+All production workbook writers use the shared `job-tracker-workbook-writes` concurrency group with queued, non-cancelling execution.
 
-* a successful daily workflow on `main` triggers `daily` mode
-* Sunday scheduling triggers `weekly` mode
-* manual dispatch supports `daily`, `weekly`, or `backfill`
-* one concurrency group prevents overlapping enrichment runs
-* the workflow timeout is 45 minutes
+Pull requests are validated by these exact checks:
 
-Pull requests are validated by `.github/workflows/pull-request-tests.yml`.
+1. `Pull Request Tests`
+2. `Regression readiness`
 
-## Dashboard and Digest
+`Regression readiness` includes the gold-standard regression evaluation against `data/regression/sprint38_gold_standard_jobs.json`.
 
-Dashboard separates:
+Repository branch-protection settings are administrative configuration. Sprint 52 documents the expected required checks but does not modify protection settings.
 
-* verified immediate review
-* verified strong fits
-* high-potential enrichment pending
-* partial evidence
-* compensation unknown
-* target-company watchlist
-* enrichment failures
-* recently closed roles
-* ATS platform source reliability
+## Maintenance cadence
 
-The production enrichment cycle appends current queue and lifecycle health metrics after each refresh. Source reliability rows can be appended with `python -m src.source_reliability_dashboard --write-dashboard`.
+### Daily
+
+1. Review failed GitHub Actions notifications.
+2. Review `Weekly_Context`, `Review_Queue`, and `Follow_Up_Queue` when action is due.
+3. Confirm the daily run and its triggered enrichment and verification-health chain completed.
+
+### Weekly
+
+1. Review Weekly Context and Weekly Value.
+2. Review `Source_Audit` and `Source_Yield` recommendations.
+3. Resolve current manual verification interventions.
+4. Check `Surface_Status` for stale or failed generated surfaces.
+
+### Monthly
+
+1. Review the workbook-capacity audit.
+2. Inspect repeated source failures and cooldowns.
+3. Confirm regression checks continue to pass on merged changes.
+4. Review configuration drift and stale manual follow-up dates.
+
+### Quarterly
+
+1. Reassess scoring assumptions and role-level preferences.
+2. Review blocked companies, target companies, search coverage, and source strategy.
+3. Expand the gold-standard regression fixture only with reviewed examples.
+4. Decide whether a new feature sprint is justified or a smaller maintenance patch is sufficient.
+
+The detailed maintenance runbook is in `docs/operations_runbook.md`.
+
+## Recovery and troubleshooting
+
+Use `docs/TROUBLESHOOTING.md` for explicit procedures covering:
+
+1. Gmail backlog, credentials, replay, and duplicate concerns.
+2. Google Sheets quota exhaustion and workbook-capacity warnings.
+3. Verification-health failures.
+4. Stale or partially refreshed generated surfaces.
+5. Static source failures and source-quality cooldowns.
+6. Schema mismatch and header repair.
+7. Failed enrichment and lifecycle work.
+8. Failed Weekly Context email delivery.
 
 ## Documentation
 
-* `docs/RUNBOOK.md`
-* `docs/ENRICHMENT.md`
-* `docs/TROUBLESHOOTING.md`
+* `docs/WORKBOOK_MAP.md`
+* `docs/WORKFLOW_OWNERSHIP.md`
 * `docs/operations_runbook.md`
-* `docs/sprint_30_verified_scoring.md`
-* `docs/sprint_31_enrichment_lifecycle.md`
-* `docs/sprint_32_enrichment_production.md`
-* `docs/sprint_33_verification_observability.md`
-* `docs/sprint_34_authoritative_posting_resolution.md`
-* `docs/sprint_35_ats_connectors_source_reliability.md`
+* `docs/TROUBLESHOOTING.md`
+* `docs/production_readiness_runbook.md`
+* `docs/sprint_47_workbook_capacity.md`
+* `docs/sprint_48_gmail_ingestion_recovery.md`
+* `docs/sprint_49_generated_surface_consistency.md`
+* `docs/sprint_50_actionable_verification_health.md`
+* `docs/sprint_51_source_quality_yield.md`
+* `docs/sprint_52_documentation_readiness.md`
 
 ## Sprint implementation status
 
 | Sprint | Status | Main addition |
 | --- | --- | --- |
-| 1 to 12 | Complete | Core ingestion, Sheets, scoring, dedupe, Dashboard, and workflow foundation |
-| 13 to 19 | Complete | Schema safety, quarantine, quality gates, source audit, and scoring calibration |
-| 20 to 25 | Complete | Weekly email, LinkedIn parsing, Gmail ledger, and extraction recovery |
-| 26 | Complete | Potential priority, evidence completeness, and verified-fit separation |
-| 27 | Complete | Enrichment queue, evidence audit trail, and direct-link extraction |
-| 28 | Complete | Company career-site and ATS discovery |
-| 29 | Complete | External-search fallback and safe matching |
-| 30 | Complete | Company context and verified scoring |
-| 31 | Complete | Enrichment retry and posting lifecycle |
-| 32 | Complete | Production hardening, controlled rollout, monitoring, and documentation |
-| 33 | Complete | Verification funnel, aging, blockers, and component health |
-| 34 | Complete | Authoritative posting resolver, candidate audit, and manual overrides |
-| 35 | Complete | Priority ATS connector contract, platform inventory, and source reliability state |
+| 1 to 12 | Complete | Core ingestion, Sheets, scoring, deduplication, Dashboard, and workflow foundation |
+| 13 to 25 | Complete | Schema safety, quality gates, source audit, Gmail ledger, weekly email, and parser recovery |
+| 26 to 35 | Complete | Potential priority, enrichment, verified scoring, lifecycle, authoritative resolution, and ATS reliability |
+| 36 to 40 | Complete | Human review, decision evidence, production readiness, and verification-health hotfixes |
+| 41 to 46 | Complete | Review Queue, follow-up aging, Weekly Value, Weekly Context, and sheet governance |
+| 47 | Complete | Workbook capacity and grid safety |
+| 48 | Complete | Gmail recovery and message-level diagnostics |
+| 49 | Complete | Unified generated-surface refresh and shared date handling |
+| 50 | Complete | Actionable verification health and corrected funnel semantics |
+| 51 | Complete | Source quality, cooldowns, and four-week yield reporting |
+| 52 | Complete | Documentation consolidation and maintenance readiness |
+
+## Current known limitations
+
+1. Accepted Gmail jobs do not yet retain durable `Config_Searches.search_id` lineage, so individual configured-search yield remains unavailable.
+2. Weekly email delivery is handled by Google Apps Script and is operationally separate from GitHub Actions.
+3. Live workbook readiness must be validated after merge because production credentials are not available to pull request CI.
+4. Branch-protection configuration must be verified in GitHub repository settings by an administrator.
