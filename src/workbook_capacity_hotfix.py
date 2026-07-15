@@ -237,6 +237,11 @@ def _apply_jobs_width_policy(
             "Jobs compaction preserves the out-of-bounds data or hard-metadata boundary for investigation"
         )
         return
+    if result.target_columns > JOBS_CANONICAL_COLUMN_COUNT + _base.DEFAULT_COLUMN_HEADROOM:
+        result.warnings.append(
+            "Jobs compaction preserves an out-of-bounds structural range for investigation"
+        )
+        return
     if result.allocated_columns <= JOBS_CANONICAL_COLUMN_COUNT:
         return
 
