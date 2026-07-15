@@ -60,7 +60,7 @@ def test_open_ended_conditional_format_rows_block_only_row_compaction():
 
     assert result.unknown_ranges == []
     assert result.target_rows == 1000
-    assert result.target_columns == len(CANONICAL_SCHEMA["Jobs"].headers) + 2
+    assert result.target_columns == len(CANONICAL_SCHEMA["Jobs"].headers)
     assert any("row compaction is blocked" in warning for warning in result.warnings)
 
     requests = build_compaction_requests(
@@ -71,7 +71,7 @@ def test_open_ended_conditional_format_rows_block_only_row_compaction():
     assert requests[0]["deleteDimension"]["range"] == {
         "sheetId": 1,
         "dimension": "COLUMNS",
-        "startIndex": len(CANONICAL_SCHEMA["Jobs"].headers) + 2,
+        "startIndex": len(CANONICAL_SCHEMA["Jobs"].headers),
         "endIndex": 5000,
     }
 
@@ -169,3 +169,34 @@ def test_shifted_record_beyond_canonical_columns_remains_a_hard_boundary():
 
     assert result.highest_populated_column == shifted_column
     assert result.target_columns == shifted_column + 2
+
+
+def test_capacity_summary_identifies_historical_controlled_value_candidate():
+    result = audit_sheet(
+        _sheet(
+            rows=700,
+            columns=8647,
+            data=[
+                {
+                    "startRow": 679,
+                    "startColumn": 8646,
+                    "rowData": [
+                        {
+                            "values": [
+                                {"userEnteredValue": {"stringValue": "insufficient_evidence"}}
+                            ]
+                        }
+                    ],
+                }
+            ],
+        ),
+        formatting_evidence=FormattingEvidence(
+            row_scan_complete=True,
+            column_scan_complete=True,
+        ),
+    )
+
+    diagnostic = "\n".join(result.warnings)
+    assert "coordinate=LTO680" in diagnostic
+    assert "recognized controlled value" in diagnostic
+    assert "possible_canonical_field=move_value_classification" in diagnostic
