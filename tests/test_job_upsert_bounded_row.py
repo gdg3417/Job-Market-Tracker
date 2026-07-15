@@ -12,6 +12,7 @@ class ReturningRowSheetClient:
         self.jobs: list[dict[str, Any]] = []
         self.sources: list[dict[str, Any]] = []
         self.updated_jobs: list[tuple[int, dict[str, Any]]] = []
+        self.updated_sources: list[tuple[int, dict[str, Any]]] = []
         self.next_written_row = 27
 
     def read_records_with_row_numbers(self, worksheet_name: str) -> list[tuple[int, dict[str, Any]]]:
@@ -32,7 +33,7 @@ class ReturningRowSheetClient:
         self.sources.append(dict(record))
 
     def update_job_source(self, row_number: int, record: dict[str, Any]) -> None:
-        raise AssertionError("Source updates are not expected in this fixture")
+        self.updated_sources.append((row_number, dict(record)))
 
     def append_records(self, worksheet_name: str, records: list[dict[str, Any]]) -> None:
         assert worksheet_name == "Rejected_Jobs"
