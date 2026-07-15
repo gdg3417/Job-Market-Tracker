@@ -209,12 +209,13 @@ class WorksheetNotFound(Exception):
 
 
 class FakeWorksheet:
-    def __init__(self, title, sheet_id, headers, rows=None, row_count=1000):
+    def __init__(self, title, sheet_id, headers, rows=None, row_count=1000, col_count=None):
         self.title = title
         self.id = sheet_id
         self._headers = list(headers)
         self.rows = deepcopy(rows or [])
         self.row_count = row_count
+        self.col_count = len(headers) if col_count is None else col_count
         self.clear_calls = 0
         self.update_calls = []
 
@@ -256,17 +257,33 @@ class FakeSheetClient:
                 self.next_sheet_id,
                 [],
                 row_count=rows,
+                col_count=cols,
             )
         return self.worksheets[worksheet_name]
 
 
+def _canonical_jobs_row(**values):
+    row = [""] * len(JOB_FIELDS)
+    for key, value in values.items():
+        row[JOB_FIELDS.index(key)] = value
+    return row
+
+
 def test_apply_governance_preserves_manual_data_and_only_writes_guide_values():
-    jobs_rows = [["job-1", "Example Co", "interested", "Keep this note"]]
+    jobs_rows = [
+        _canonical_jobs_row(
+            job_key="job-1",
+            company="Example Co",
+            review_status="interested",
+            review_notes="Keep this note",
+        )
+    ]
     jobs = FakeWorksheet(
         "Jobs",
         1,
-        ["job_key", "company", "review_status", "review_notes"],
+        list(JOB_FIELDS),
         rows=jobs_rows,
+        col_count=len(JOB_FIELDS),
     )
     review_queue = FakeWorksheet(
         "Review_Queue",
