@@ -109,6 +109,9 @@ jobs:
           python -m compileall -q src
           pytest
 
+      - name: Pre-write Jobs integrity gate
+        run: python -m src.jobs_integrity --audit --enforce
+
       - name: Run production enrichment
         shell: bash
         run: |
@@ -127,6 +130,9 @@ jobs:
             --refresh \
             --source-run "enrichment-${{ steps.mode.outputs.mode }}" \
             | tee "$RUNNER_TEMP/presentation_refresh.json"
+
+      - name: Post-write Jobs integrity gate
+        run: python -m src.jobs_integrity --audit --enforce
 
       - name: Write GitHub Step Summary
         if: always()
