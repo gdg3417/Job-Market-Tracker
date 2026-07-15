@@ -5,6 +5,12 @@ import json
 from dataclasses import asdict, dataclass
 from typing import Any, Iterable
 
+from src.jobs_boundaries import (
+    JOBS_CANONICAL_COLUMN_COUNT,
+    JOBS_WORKSHEET_NAME,
+    validate_jobs_batch_update_requests,
+    validate_jobs_headers,
+)
 from src.models import utc_now_iso
 from src.settings import load_settings
 from src.sheet_governance_policy import (
@@ -278,6 +284,7 @@ def apply_sheet_governance(sheet_client: SheetClient) -> GovernanceResult:
     warnings: list[str] = []
     requests: list[dict[str, Any]] = []
     counts = {"sheets": 0, "editable": 0, "system": 0, "dropdowns": 0, "filters": 0, "freezes": 0}
+    jobs_sheet_id: int | None = None
     for name, policy in SHEET_POLICIES.items():
         try:
             worksheet = sheet_client.get_worksheet(name)
@@ -299,6 +306,14 @@ def apply_sheet_governance(sheet_client: SheetClient) -> GovernanceResult:
         if not headers:
             warnings.append(f"Skipped worksheet {name} because its header row is empty")
             continue
+        if name == JOBS_WORKSHEET_NAME:
+            validate_jobs_headers(headers)
+            grid_width = int(getattr(worksheet, "col_count", JOBS_CANONICAL_COLUMN_COUNT) or 0)
+            if grid_width != JOBS_CANONICAL_COLUMN_COUNT:
+                raise ValueError(
+                    f"Jobs governance blocked because grid width {grid_width} does not equal {JOBS_CANONICAL_COLUMN_COUNT}"
+                )
+            jobs_sheet_id = _worksheet_id(worksheet)
         built = build_sheet_requests(
             sheet_id=_worksheet_id(worksheet),
             headers=headers,
@@ -311,6 +326,13 @@ def apply_sheet_governance(sheet_client: SheetClient) -> GovernanceResult:
         counts["sheets"] += 1
     guide, guide_rows = write_sheet_guide(sheet_client)
     requests.extend(_guide_requests(_worksheet_id(guide), guide_rows))
+    if jobs_sheet_id is None:
+        raise ValueError("Jobs worksheet was not available for governance boundary validation")
+    validate_jobs_batch_update_requests(
+        requests,
+        jobs_sheet_id=jobs_sheet_id,
+        operation_name="apply workbook sheet UX governance",
+    )
     with_quota_backoff(
         lambda: sheet_client.workbook.batch_update({"requests": requests}),
         operation_name="apply workbook sheet UX governance",
