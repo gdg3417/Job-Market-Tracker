@@ -10,25 +10,29 @@ This sprint does not add a new scoring model, ingestion provider, paid integrati
 
 1. `README.md` now reflects Sprints 1 through 52 and current operating behavior.
 2. `docs/WORKBOOK_MAP.md` documents canonical, configurable, audit, system-managed, generated, and user-editable worksheets.
-3. `docs/WORKFLOW_OWNERSHIP.md` documents all current GitHub Actions workflows, triggers, schedules, inputs, outputs, writes, concurrency, runtime limits, failure implications, and recovery.
+3. `docs/WORKFLOW_OWNERSHIP.md` documents all current GitHub Actions workflows, exact cron schedules, Central-time behavior, inputs, outputs, writes, concurrency, runtime limits, failure implications, and recovery.
 4. `docs/operations_runbook.md` defines daily, weekly, monthly, and quarterly maintenance.
 5. `docs/TROUBLESHOOTING.md` provides recovery procedures for the production failure modes identified in the roadmap.
-6. Documentation contract tests prevent workflow and worksheet additions from silently becoming undocumented.
+6. Documentation contract tests prevent workflow inventory, worksheet ownership, check contexts, schedules, and YAML syntax from silently drifting away from the documentation.
 
 ## Expected pull request controls
 
-The expected required checks are:
+GitHub distinguishes workflow display names from job-level check contexts.
 
-1. `Pull Request Tests`
-2. `Regression readiness`
+| Workflow display name | Current job context |
+| --- | --- |
+| `Pull Request Tests` | `test` |
+| `Regression readiness` | `regression-readiness` |
 
-The gold-standard regression evaluation is executed inside `Regression readiness` against:
+The gold-standard regression evaluation is executed inside the `regression-readiness` job against:
 
 ```text
 data/regression/sprint38_gold_standard_jobs.json
 ```
 
-Sprint 52 does not modify branch-protection settings. Repository administrators must confirm the exact check names in GitHub settings.
+The Sprint 52 contract parses every current workflow YAML file and verifies the documented workflow inventory, display names, job contexts, and cron schedules. Existing focused tests continue to validate workflow-specific shell handoffs, concurrency, and behavior.
+
+Sprint 52 does not modify branch-protection settings. Repository administrators must confirm the contexts displayed in GitHub settings against the current pull request. The workflow display name and required branch-protection context may not be identical.
 
 ## Static readiness assessment
 
@@ -42,7 +46,7 @@ python -m src.production_readiness --evaluate-regression --fixture data/regressi
 
 Static readiness covers:
 
-1. Current workflow inventory and documentation.
+1. Current workflow inventory, YAML parsing, schedules, display names, and job contexts.
 2. Current worksheet inventory and ownership documentation.
 3. Recovery topic coverage.
 4. README sprint status and maintenance-mode guidance.
@@ -94,6 +98,7 @@ Run these steps from `main` after merge.
 1. Manually dispatch `Job Tracker Sheet UX Governance`.
 2. Confirm green and gray headers, dropdowns, filters, freezes, and `Sheet_Guide`.
 3. Confirm generated surfaces remain read-only.
+4. Confirm the five `Posting_Resolution` manual override fields remain the only documented exception to the normal green-header rule.
 
 ### 7. Workbook-capacity guard
 
@@ -112,7 +117,7 @@ Run these steps from `main` after merge.
 
 ### 9. Schema and regression validation
 
-1. Confirm both pull request checks passed before merge.
+1. Confirm the `test` and `regression-readiness` job contexts passed before merge.
 2. Confirm production schema validation succeeds.
 3. Confirm Topgolf and Toyota regression cases retain expected behavior.
 4. Confirm no stale generated tab remains.
@@ -121,15 +126,18 @@ Run these steps from `main` after merge.
 
 ### Current status
 
-Static repository state is green when the Sprint 52 pull request checks pass. The system has completed the planned maintenance-hardening sequence through workbook capacity, Gmail diagnostics, presentation consistency, actionable health, source quality, and documentation readiness.
+The repository is statically green when the current Sprint 52 head passes both pull request workflows after the final review patches. The branch is documentation-focused and does not change canonical schema, scoring, ingestion, enrichment, source policy, or workbook-write behavior.
+
+Live end-to-end status remains pending until the post-merge production sequence is run from `main`. This is an explicit external validation dependency, not evidence that canonical production state is unhealthy.
 
 ### Remaining known limitations
 
 1. Accepted Gmail jobs do not retain durable `Config_Searches.search_id` lineage. Search-level accepted-job yield is therefore not reliable.
 2. Weekly email delivery remains a Google Apps Script responsibility outside the GitHub Actions execution chain.
 3. Pull request CI cannot validate live workbook writes without production credentials.
-4. Branch-protection settings require administrative confirmation.
+4. Branch-protection settings and required status contexts require administrative confirmation.
 5. External sources can remain blocked or unavailable despite conservative retry policy.
+6. `Posting_Resolution` manual override fields remain a narrow legacy exception to the green-header convention.
 
 ### Intentionally deferred items
 
@@ -138,6 +146,7 @@ Static repository state is green when the Sprint 52 pull request checks pass. Th
 3. Automatic source or search disablement based on short-term yield.
 4. Automatic scoring-weight changes from user decisions.
 5. A replacement user interface outside Google Sheets.
+6. A governance change to recolor the existing `Posting_Resolution` manual override fields.
 
 ### Recommended maintenance cadence
 
@@ -156,7 +165,7 @@ Sprint 52 is complete when:
 
 1. README and runbooks reflect the production system through Sprint 51 and Sprint 52 documentation work.
 2. Every current worksheet and workflow is documented.
-3. Recovery procedures cover all roadmap failure modes.
-4. Documentation contract tests pass.
-5. Pull request tests and regression readiness pass.
+3. Exact workflow schedules, job contexts, and recovery procedures are documented.
+4. Workflow YAML and documentation contract tests pass.
+5. Pull request tests and regression readiness pass on the final reviewed head.
 6. Post-merge production validation completes or any external limitation is explicitly recorded.
