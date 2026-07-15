@@ -218,8 +218,9 @@ def upsert_jobs(
 
         if matched_job is None:
             incoming_job.mark_seen(current_date)
-            next_job_row = _next_row_number_from_map(row_by_job_key)
-            sheet_client.append_job(incoming_job)
+            predicted_row = _next_row_number_from_map(row_by_job_key)
+            written_row = sheet_client.append_job(incoming_job)
+            next_job_row = written_row if isinstance(written_row, int) and written_row > 1 else predicted_row
             existing_jobs.append(incoming_job)
             row_by_job_key[incoming_job.job_key] = next_job_row
             _upsert_source_record(sheet_client, incoming_job, existing_source_rows, summary, current_date)
