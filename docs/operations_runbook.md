@@ -1,8 +1,74 @@
-# Operations runbook
+# Operations Runbook
 
-This runbook documents the Job Market Tracker operating flow after Sprint 23.
+This runbook describes the maintenance-mode operating process after Sprint 52.
 
-## Local setup
+## Operating principles
+
+1. `Jobs` is the canonical source of truth.
+2. Generated surfaces are read-only.
+3. Production workbook writes are serialized through the shared GitHub Actions concurrency group.
+4. Replays and backfills must use the smallest safe scope.
+5. Audit evidence is preserved even when a run fails.
+6. Destructive workbook compaction requires explicit approval and a current backup.
+
+## Daily operating cycle
+
+The normal production chain is:
+
+```text
+Job Tracker Daily Run
+        |
+        v
+Job Tracker Enrichment Run
+        |
+        v
+Job Tracker Verification Health
+```
+
+The daily workflow ingests static and Gmail leads, writes diagnostics and canonical updates, then refreshes generated surfaces. A successful daily completion record is written only when required work completes without retryable Gmail failures.
+
+A successful daily workflow triggers daily enrichment. Successful enrichment triggers verification health.
+
+### Daily review
+
+1. Review failed Action notifications.
+2. Confirm the daily, enrichment, and verification-health chain completed.
+3. Review `Weekly_Context` for current action items.
+4. Review `Review_Queue` and `Follow_Up_Queue` when items are due.
+5. Make changes only in green `Jobs` columns or approved configuration sheets.
+6. Check `Surface_Status` when any generated surface appears stale.
+
+## Weekly operating cycle
+
+1. Review `Weekly_Value` and `Weekly_Context` after the Monday refresh.
+2. Review `Source_Audit` classifications and retry dates.
+3. Review `Source_Yield` recommendations and attribution limitations.
+4. Resolve manual verification interventions shown in Dashboard or verification health.
+5. Review follow-up and application aging.
+6. Confirm the Apps Script weekly email was delivered.
+
+No source or search is automatically disabled from one poor week.
+
+## Monthly operating cycle
+
+1. Review the scheduled workbook-capacity audit.
+2. Confirm capacity remains below the warning threshold.
+3. Review repeated source failures, cooldowns, and manual-review sources.
+4. Confirm pull request and regression checks remain healthy.
+5. Inspect configuration drift in `Config_Searches`, `Config_Companies`, and `Target_Companies`.
+6. Reapply Sheet UX Governance after any approved compaction.
+
+## Quarterly operating cycle
+
+1. Reassess role-level targets, company exclusions, location preferences, and compensation assumptions.
+2. Review scoring rules against actual review and application outcomes.
+3. Review strategic target-company coverage.
+4. Add reviewed examples to the gold-standard regression fixture when needed.
+5. Decide whether the next change should be a maintenance patch or a new feature sprint.
+
+A new feature sprint is justified only when the need cannot be handled safely through configuration, documentation, or a focused maintenance patch.
+
+## Manual validation sequence
 
 Run from PowerShell in the repository root:
 
@@ -10,260 +76,105 @@ Run from PowerShell in the repository root:
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -r requirements.txt
+python -m compileall -q src tests
 pytest
-```
-
-For first-time setup, create `.env` from `.env.example` and point local credential values to files under the ignored `credentials` folder.
-
-## Validation sequence
-
-Run this sequence before trusting an unattended workflow run:
-
-```powershell
-pytest
-python -m src.gmail_ingestion --ensure-ledger
-python -m src.schema --validate
-python -m src.source_audit
-python -m src.main --static-pages-smoke-test
-python -m src.gmail_ingestion --run
-python -m src.main --job-upsert-smoke-test
-python -m src.dashboard
-```
-
-Expected results:
-
-1. All tests pass.
-2. Schema validation returns `ok: true`.
-3. Static ingestion does not create generic search rows.
-4. Gmail ingestion records every attempted message in `Gmail_Messages`.
-5. LinkedIn digest cards retain their correct title, company, location, and canonical URL.
-6. Dashboard and Digest write successfully without formula errors.
-
-## Workbook schema
-
-The required tabs are:
-
-```text
-Config_Searches
-Config_Companies
-Scoring_Rules
-Target_Companies
-Jobs
-Job_Sources
-Rejected_Jobs
-Gmail_Messages
-Snapshots
-Runs
-Digest
-Dashboard
-```
-
-Validate the schema:
-
-```powershell
+python -m src.production_readiness --evaluate-regression --fixture data/regression/sprint38_gold_standard_jobs.json
 python -m src.schema --validate
 ```
 
-Repair canonical headers and the workbook timezone:
+Production credential validation:
 
 ```powershell
-python -m src.schema --repair-headers
+python -m src.workflow_validation
 ```
 
-Use repair when a required tab is missing, a header was edited, or the workbook timezone is not `America/Chicago`.
-
-## Gmail ingestion
-
-The production Gmail command is:
-
-```powershell
-python -m src.gmail_ingestion --run
-```
-
-The command lists every page of messages under the configured Gmail label, skips completed message IDs, and processes up to `GMAIL_MAX_RESULTS` pending messages.
-
-Default configuration:
-
-```text
-GMAIL_LABEL_NAME=Job Tracker
-GMAIL_MAX_RESULTS=50
-```
-
-The supported maximum is 500.
-
-### Gmail message statuses
-
-```text
-success
-no_jobs
-retryable_failure
-permanent_failure
-```
-
-A message is marked complete only after accepted jobs, rejected records, and the ledger status are written. Opening or reading an email does not affect ingestion.
-
-`success`, `no_jobs`, and `permanent_failure` are skipped during normal runs. `retryable_failure` is retried.
-
-### Rejected records
-
-`Rejected_Jobs` is keyed by `rejected_id` for Gmail processing. Repeated runs update or skip existing rejection rows rather than appending duplicates.
-
-Legitimate alert rejection does not fail a Gmail run. The Gmail step fails when every selected pending message fails to process.
-
-### Controlled replay
-
-Use only for debugging or deliberate replay:
-
-```powershell
-python -m src.gmail_ingestion --run --force-reprocess
-```
-
-### Backlog release
-
-The production backlog is released only after Sprint 23 is merged and the validation sequence passes.
-
-Run:
-
-```powershell
-python -m src.gmail_ingestion --ensure-ledger
-python -m src.schema --validate
-python -m src.gmail_ingestion --run
-python -m src.rescore_jobs
-python -m src.dashboard
-```
-
-Confirm all labeled messages have ledger rows, backlog is zero, Topgolf and Toyota are correct, and both appear in `High-signal titles needing review`.
-
-Run Gmail ingestion again. The expected result is zero newly processed messages and zero remaining backlog.
-
-Detailed backlog instructions are in `docs/sprint_23_gmail_ingestion.md`.
-
-## LinkedIn digest parsing
-
-A valid LinkedIn card contains:
-
-```text
-Job title
-Company
-Location, when present
-Direct LinkedIn posting URL
-```
-
-Accepted URLs are canonicalized to:
-
-```text
-https://www.linkedin.com/jobs/view/<job_id>
-```
-
-The source ID is:
-
-```text
-linkedin-<job_id>
-```
-
-Search pages, Premium links, alert management links, unsubscribe links, help pages, and LinkedIn navigation links do not create jobs.
-
-Malformed cards are rejected individually. Valid cards in the same email remain eligible. LinkedIn alert confirmation emails remain quarantined and complete as no-job messages.
-
-Regression fixtures:
-
-```text
-tests/fixtures/linkedin_topgolf.eml
-tests/fixtures/linkedin_toyota.eml
-```
-
-## Sparse Gmail review routing
-
-Sparse Gmail records with strategically relevant management titles receive:
-
-```text
-manual_review=true
-review_reason=sparse_gmail_high_signal_title
-```
-
-The numerical score is not increased. Qualifying records appear in `High-signal titles needing review`.
-
-Re-score existing open Gmail jobs with:
-
-```powershell
-python -m src.rescore_jobs
-```
-
-## Dashboard and Digest
-
-Refresh both outputs manually with:
-
-```powershell
-python -m src.dashboard
-```
-
-The Dashboard should provide an executive answer, action queue, tracker health, source health, top roles, and source cleanup queue.
-
-The weekly email is handled by `apps_script/weekly_digest_email.gs`. It is separate from the daily GitHub Actions workflow.
-
-## GitHub Actions
-
-The daily workflow is `.github/workflows/daily-run.yml`.
-
-### Scheduled execution
-
-Two UTC schedule entries remain for daylight-saving coverage. The workflow no longer depends on a 15-minute Central execution window.
-
-Scheduled runs check `Runs` for a successful `daily_workflow_completion` record for the current Central date.
-
-1. The first invocation runs when no successful completion exists.
-2. A delayed first invocation still runs.
-3. The second invocation skips after a successful first invocation.
-4. The second invocation runs when the first invocation failed.
-5. Manual dispatch always bypasses the lock.
-6. Completion is recorded only after every required workflow step succeeds.
-
-### Manual run
-
-1. Open the repository in GitHub.
-2. Select Actions.
-3. Select `Job Tracker Daily Run`.
-4. Choose `Run workflow` on `main`.
-5. Leave `force_reprocess` off unless a controlled replay is required.
-6. Review the Step Summary.
-
-The summary reports the daily gate result, Gmail pages and messages, processing outcomes, backlog, accepted jobs, rejected alerts, and Dashboard and Digest row counts.
-
-## Failure handling
-
-### Schema validation failure
-
-Repair headers before ingestion:
-
-```powershell
-python -m src.schema --repair-headers
-python -m src.schema --validate
-```
-
-### Gmail retryable failures
-
-Inspect `Gmail_Messages.error_message`, correct the cause, then rerun:
-
-```powershell
-python -m src.gmail_ingestion --run
-```
-
-### Gmail backlog remains
-
-Review retryable rows and the GitHub Actions summary. A backlog warning means processing is incomplete, not that accepted jobs were lost.
-
-### Rejected Gmail volume is high
-
-Inspect recent email structure and `Rejected_Jobs`. Add a focused parser test before loosening quality rules.
-
-### Dashboard refresh fails
-
-Resolve the underlying error, then rerun:
-
-```powershell
-python -m src.dashboard
-```
-
-### Weekly email fails
-
-Use `Send test weekly digest` from the Sheet menu, then inspect Apps Script executions and triggers.
+`src.workflow_validation` appends a `Runs` record. Do not use it casually against production.
+
+## Manual workflow dispatch sequence
+
+### Daily ingestion recovery
+
+1. Open Actions.
+2. Select `Job Tracker Daily Run`.
+3. Run on `main`.
+4. Use `normal` for an ordinary rerun.
+5. Use `failed_only` only when retryable Gmail failures exist.
+6. Use `selected` only with exact message IDs.
+7. Enable forced selected replay only after confirming the message was already completed and replay is intentional.
+8. Review the Step Summary and `Gmail_Failures`.
+
+### Enrichment recovery
+
+1. Select `Job Tracker Enrichment Run`.
+2. Use `daily` for normal recovery.
+3. Use `weekly` when external-search fallback and broader lifecycle work are required.
+4. Use `backfill` for bounded backlog recovery.
+5. Supply an exact `job_key` for one-role isolation.
+
+### Generated-surface recovery
+
+1. Select `Job Tracker Weekly Value Refresh`.
+2. Leave the as-of date blank for current data.
+3. Use the normal backfill window unless historical weekly rows are missing.
+4. Enable governance only when formatting, filters, freezes, or dropdowns also need repair.
+5. Review `Surface_Status` after completion.
+
+### Verification-health recovery
+
+1. Select `Job Tracker Verification Health`.
+2. Use `dry-run` for calculation-only diagnosis.
+3. Use `run` to refresh Dashboard health and `Runs` history.
+4. Review classification reasons, actionable blockers, and portfolio coverage.
+
+### Source-quality review
+
+1. Select `Job Tracker Source Quality`.
+2. Run `report` mode first.
+3. Review classifications and exact current URLs.
+4. Back up the workbook before cleanup.
+5. Use `apply_reviewed_cleanup` only with exact approved company IDs and live probes.
+6. Confirm original and final URLs in the Step Summary.
+
+### Workbook-capacity review
+
+1. Select `Job Tracker Workbook Capacity`.
+2. Run with both approvals disabled for a read-only audit.
+3. Review all preservation boundaries and unknown ranges.
+4. Back up the workbook.
+5. Enable compaction only after the audit is clean.
+6. Enable formatting trim only when formatting-only trailing ranges are intentionally approved.
+7. Rerun compaction to confirm idempotency.
+8. Run Sheet UX Governance after compaction.
+
+## Change-management process
+
+1. Create one branch and pull request per focused change.
+2. Keep future-sprint scope out of the current pull request.
+3. Run `Pull Request Tests` and `Regression readiness`.
+4. Review the complete diff and unresolved review threads.
+5. Squash and merge only after both checks pass.
+6. Run the applicable production workflow from `main`.
+7. Confirm workbook state, Step Summary, and `Runs` evidence.
+8. Document any external limitation or follow-up.
+
+## Maintenance health criteria
+
+The tracker is operationally green when:
+
+1. Daily ingestion completes and writes its completion record.
+2. Gmail backlog has no unexplained retryable failures.
+3. Production enrichment completes without stuck queue work.
+4. Verification health calculates and writes current actionable results.
+5. Generated surfaces are current in `Surface_Status`.
+6. Workbook capacity is below warning level.
+7. Source-quality evidence is current and temporary failures remain recoverable.
+8. Pull request tests and gold-standard regression evaluation pass.
+9. Schema validation passes.
+10. No generated worksheet is being used as a manual data-entry surface.
+
+## Current known limitations
+
+1. Accepted Gmail jobs do not retain durable configured-search IDs, so individual search yield cannot be calculated reliably.
+2. Weekly email delivery is owned by Google Apps Script and must be checked separately.
+3. Pull request CI cannot perform live workbook writes without production credentials.
+4. Branch-protection settings are external repository configuration and require administrative verification.
