@@ -89,7 +89,9 @@ def validate_job_record(record: Mapping[str, Any]) -> None:
             details.append("unknown fields: " + ", ".join(str(value) for value in unknown[:10]))
         if missing:
             details.append("missing canonical fields: " + ", ".join(missing[:10]))
-        raise JobsWriteBoundaryError("Jobs record does not match the canonical structure: " + "; ".join(details))
+        raise JobsWriteBoundaryError(
+            "Jobs record does not match the canonical structure: " + "; ".join(details)
+        )
 
 
 def serialize_job_record(record: Mapping[str, Any]) -> list[Any]:
@@ -177,7 +179,8 @@ def validate_jobs_a1_range(
     end_column, end_row = _parse_a1_cell(end_cell)
     if require_explicit_rows and (start_row is None or end_row is None):
         raise JobsWriteBoundaryError(
-            f"Jobs write rejected because explicit row bounds are required; proposed_range={range_name}; operation={operation_name}"
+            "Jobs write rejected because explicit row bounds are required; "
+            f"proposed_range={range_name}; operation={operation_name}"
         )
     validate_canonical_write_range(
         JOBS_WORKSHEET_NAME,
@@ -209,7 +212,17 @@ def _request_column_bounds(
 ) -> tuple[int, int] | None:
     grid_range = _range_for_request(payload)
     if grid_range is not None:
-        if request_type in {"updateDimensionProperties", "deleteDimension", "insertDimension", "autoResizeDimensions"} and str(grid_range.get("dimension") or "").upper() == "ROWS":
+        if (
+            request_type
+            in {
+                "updateDimensionProperties",
+                "deleteDimension",
+                "insertDimension",
+                "autoResizeDimensions",
+                "moveDimension",
+            }
+            and str(grid_range.get("dimension") or "").upper() == "ROWS"
+        ):
             return None
         start = int(grid_range.get("startColumnIndex") or 0)
         end = grid_range.get("endColumnIndex")
@@ -250,6 +263,21 @@ def _request_sheet_id(request_type: str, payload: Mapping[str, Any]) -> int | No
     return None
 
 
+def _reject_jobs_direct_request(
+    *,
+    request_type: str,
+    request_index: int,
+    operation_name: str,
+    reason: str,
+) -> None:
+    raise JobsWriteBoundaryError(
+        "Jobs direct API request rejected; "
+        f"request={request_type}; request_index={request_index}; reason={reason}; "
+        f"canonical_maximum={jobs_canonical_end_column()} ({JOBS_CANONICAL_COLUMN_COUNT}); "
+        f"operation={operation_name}"
+    )
+
+
 def validate_jobs_batch_update_requests(
     requests: Sequence[Mapping[str, Any]],
     *,
@@ -265,18 +293,78 @@ def validate_jobs_batch_update_requests(
         sheet_id = _request_sheet_id(request_type, payload)
         if sheet_id != jobs_sheet_id:
             continue
+
+        if request_type in {"appendCells", "appendDimension"}:
+            _reject_jobs_direct_request(
+                request_type=request_type,
+                request_index=request_index,
+                operation_name=operation_name,
+                reason="append operations are not permitted on Jobs",
+            )
+
         if request_type == "deleteDimension":
             dimension_range = payload.get("range") or {}
-            if str(dimension_range.get("dimension") or "").upper() == "COLUMNS" and allow_trailing_column_deletion:
+            dimension = str(dimension_range.get("dimension") or "").upper()
+            if dimension == "COLUMNS":
                 start_index = int(dimension_range.get("startIndex") or 0)
                 end_index = int(dimension_range.get("endIndex") or 0)
-                if start_index >= JOBS_CANONICAL_COLUMN_COUNT and end_index > start_index:
+                if (
+                    allow_trailing_column_deletion
+                    and start_index >= JOBS_CANONICAL_COLUMN_COUNT
+                    and end_index > start_index
+                ):
                     continue
-        if request_type in {"appendCells", "appendDimension"}:
-            raise JobsWriteBoundaryError(
-                f"Jobs direct API request rejected; request={request_type}; request_index={request_index}; "
-                f"canonical_maximum={jobs_canonical_end_column()} ({JOBS_CANONICAL_COLUMN_COUNT}); operation={operation_name}"
+                _reject_jobs_direct_request(
+                    request_type=request_type,
+                    request_index=request_index,
+                    operation_name=operation_name,
+                    reason="canonical Jobs columns cannot be deleted",
+                )
+
+        if request_type in {"insertDimension", "moveDimension"}:
+            dimension_range = payload.get("range") or payload.get("source") or {}
+            if str(dimension_range.get("dimension") or "").upper() == "COLUMNS":
+                _reject_jobs_direct_request(
+                    request_type=request_type,
+                    request_index=request_index,
+                    operation_name=operation_name,
+                    reason="canonical Jobs columns cannot be inserted or moved",
+                )
+
+        if request_type in {"insertRange", "deleteRange"}:
+            shift_dimension = str(payload.get("shiftDimension") or "").upper()
+            if shift_dimension == "COLUMNS":
+                _reject_jobs_direct_request(
+                    request_type=request_type,
+                    request_index=request_index,
+                    operation_name=operation_name,
+                    reason="column-shifting ranges are not permitted on Jobs",
+                )
+
+        if request_type == "cutPaste":
+            _reject_jobs_direct_request(
+                request_type=request_type,
+                request_index=request_index,
+                operation_name=operation_name,
+                reason="cut and paste operations can displace canonical Jobs fields",
             )
+
+        if request_type == "updateSheetProperties":
+            properties = payload.get("properties") or {}
+            grid = properties.get("gridProperties") or {}
+            if "columnCount" in grid:
+                requested_column_count = int(grid.get("columnCount") or 0)
+                if requested_column_count != JOBS_CANONICAL_COLUMN_COUNT:
+                    _reject_jobs_direct_request(
+                        request_type=request_type,
+                        request_index=request_index,
+                        operation_name=operation_name,
+                        reason=(
+                            "Jobs grid columnCount must remain exactly "
+                            f"{JOBS_CANONICAL_COLUMN_COUNT}"
+                        ),
+                    )
+
         bounds = _request_column_bounds(request_type, payload)
         if bounds is None:
             continue
