@@ -1,0 +1,107 @@
+version: 1
+entries:
+  - file: src/sheets.py
+    function: SheetClient.ensure_worksheet
+    operation: add_worksheet
+    worksheet: dynamically named non-existing worksheet
+    reason: Creates missing canonical or generated worksheets with explicit dimensions.
+    can_write_canonical_data: false
+    guard: Caller supplies the canonical schema width; Jobs creation uses len(JOB_FIELDS).
+  - file: src/sheets.py
+    function: SheetClient._ensure_jobs_row_capacity
+    operation: resize
+    worksheet: Jobs
+    reason: Adds row capacity only when an explicit bounded Jobs write reaches the current row limit.
+    can_write_canonical_data: false
+    guard: Rejects any grid width other than JOBS_CANONICAL_COLUMN_COUNT and always resizes to exactly that width.
+  - file: src/sheets.py
+    function: SheetClient._write_jobs_rows
+    operation: update
+    worksheet: Jobs
+    reason: Performs the only normal canonical Jobs value write using an explicit A through EE range.
+    can_write_canonical_data: true
+    guard: validate_jobs_headers, serialize_job_record, and validate_canonical_write_range.
+  - file: src/sheets.py
+    function: SheetClient.append_record
+    operation: append_row
+    worksheet: non-Jobs canonical and configuration worksheets
+    reason: Preserves existing append behavior for worksheets other than Jobs.
+    can_write_canonical_data: false
+    guard: Jobs branches to _write_jobs_rows before append_row can execute.
+  - file: src/sheets.py
+    function: SheetClient.append_records
+    operation: append_rows
+    worksheet: non-Jobs canonical and generated worksheets
+    reason: Preserves existing batch append behavior for worksheets other than Jobs.
+    can_write_canonical_data: false
+    guard: Jobs branches to _write_jobs_rows before append_rows can execute.
+  - file: src/sheets.py
+    function: SheetClient.update_record
+    operation: update
+    worksheet: non-Jobs canonical and configuration worksheets
+    reason: Preserves existing explicit row updates for worksheets other than Jobs.
+    can_write_canonical_data: false
+    guard: Jobs branches to _write_jobs_rows before the generic update executes.
+  - file: src/schema.py
+    function: _ensure_grid_capacity
+    operation: resize
+    worksheet: canonical worksheets
+    reason: Expands canonical grids before intentional schema header migration.
+    can_write_canonical_data: false
+    guard: Jobs can expand only to the exact required width and fails when current width exceeds the canonical schema.
+  - file: src/schema.py
+    function: migrate_trailing_headers
+    operation: update
+    worksheet: canonical header rows
+    reason: Appends approved trailing canonical headers during schema migration.
+    can_write_canonical_data: false
+    guard: Jobs uses validate_canonical_write_range and exact append-only prefix validation.
+  - file: src/schema.py
+    function: migrate_trailing_headers
+    operation: batch_update
+    worksheet: workbook properties
+    reason: Sets the workbook timezone to America/Chicago when required.
+    can_write_canonical_data: false
+    guard: Request changes only updateSpreadsheetProperties.timeZone and cannot target Jobs cells.
+  - file: src/schema.py
+    function: repair_headers
+    operation: update
+    worksheet: canonical header rows
+    reason: Explicit operator repair of canonical headers.
+    can_write_canonical_data: false
+    guard: Jobs uses exact canonical width and validate_canonical_write_range; oversized Jobs grids are rejected.
+  - file: src/schema.py
+    function: repair_headers
+    operation: batch_update
+    worksheet: workbook properties
+    reason: Sets the workbook timezone after explicit header repair.
+    can_write_canonical_data: false
+    guard: Request changes only updateSpreadsheetProperties.timeZone and cannot target Jobs cells.
+  - file: src/sheet_governance.py
+    function: write_sheet_guide
+    operation: clear
+    worksheet: Sheet_Guide
+    reason: Rebuilds the generated read-only sheet guide before writing its current content.
+    can_write_canonical_data: false
+    guard: The worksheet name is the fixed Sheet_Guide generated surface and cannot target Jobs.
+  - file: src/sheet_governance.py
+    function: write_sheet_guide
+    operation: update
+    worksheet: Sheet_Guide
+    reason: Writes the generated sheet guide to an explicit four-column range.
+    can_write_canonical_data: false
+    guard: The worksheet name is the fixed Sheet_Guide generated surface and cannot target Jobs.
+  - file: src/sheet_governance.py
+    function: apply_sheet_governance
+    operation: batch_update
+    worksheet: workbook formatting and validation ranges
+    reason: Applies headers, filters, freezes, and dropdown validation across governed worksheets.
+    can_write_canonical_data: false
+    guard: Jobs headers and grid width are validated, then validate_jobs_batch_update_requests checks every Jobs-targeted request.
+  - file: src/workbook_capacity_hotfix.py
+    function: compact_workbook
+    operation: batch_update
+    worksheet: trailing workbook grid dimensions
+    reason: Applies only the explicit audited row and column deletion plan when an operator requests compaction.
+    can_write_canonical_data: false
+    guard: Jobs data and hard metadata establish preservation boundaries; validate_jobs_batch_update_requests permits only audited deletion beginning after EE.
