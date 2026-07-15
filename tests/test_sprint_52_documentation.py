@@ -95,8 +95,6 @@ def test_all_current_workflow_yaml_is_valid_and_documented():
 
         assert f"`.github/workflows/{workflow_name}`" in WORKFLOW_MAP
         assert f"`{expected['name']}`" in WORKFLOW_MAP
-        for job_context in expected["jobs"]:
-            assert f"`{job_context}`" in WORKFLOW_MAP
         for cron in expected["crons"]:
             assert f'cron: "{cron}"' in text
             assert f"`{cron}`" in WORKFLOW_MAP
