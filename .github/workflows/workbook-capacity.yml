@@ -76,10 +76,16 @@ jobs:
           PY
 
       - name: Run focused tests
-        run: pytest tests/test_workbook_capacity.py tests/test_workbook_capacity_hotfix.py tests/test_workbook_capacity_workflow.py
+        run: pytest tests/test_workbook_capacity.py tests/test_workbook_capacity_hotfix.py tests/test_workbook_capacity_workflow.py tests/test_jobs_integrity.py
 
       - name: Validate live workbook schema
         run: python -m src.schema --validate
+
+      - name: Capture pre-run Jobs integrity
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m src.jobs_integrity --audit | tee "$RUNNER_TEMP/jobs_integrity_pre.json"
 
       - name: Audit workbook capacity
         if: ${{ github.event_name != 'workflow_dispatch' || !inputs.apply_compaction }}
@@ -103,12 +109,17 @@ jobs:
           python -m src.workbook_capacity_hotfix --compact --apply --enforce-critical "${extra_args[@]}" \
             | tee "$RUNNER_TEMP/workbook_capacity.json"
 
+      - name: Enforce post-run Jobs integrity
+        run: python -m src.jobs_integrity --audit --enforce
+
       - name: Upload capacity report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: workbook-capacity-report
-          path: ${{ runner.temp }}/workbook_capacity.json
+          path: |
+            ${{ runner.temp }}/workbook_capacity.json
+            ${{ runner.temp }}/jobs_integrity_pre.json
           if-no-files-found: ignore
           retention-days: 30
 

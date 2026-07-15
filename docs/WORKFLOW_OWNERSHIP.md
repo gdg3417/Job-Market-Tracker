@@ -31,7 +31,7 @@ GitHub Actions cron schedules are defined in UTC. Central-time behavior is liste
 | Concurrency | Not applicable |
 | Configured timeout | 15 minutes |
 | Expected runtime | Normally shorter than the timeout; review current Actions history for observed duration |
-| Failure implication | The branch has a compilation or test regression and should not merge. |
+| Failure implication | The branch has a compilation, test, direct-write contract, or documentation regression and should not merge. |
 | Recovery | Inspect the first failing compilation or test step, patch the branch, and let the pull request check rerun. |
 
 ### `.github/workflows/regression-readiness.yml`
@@ -57,6 +57,12 @@ The gold-standard command is:
 python -m src.production_readiness --evaluate-regression --fixture data/regression/sprint38_gold_standard_jobs.json
 ```
 
+The direct Sheets write contract is:
+
+```powershell
+python -m src.jobs_write_contract --audit --enforce
+```
+
 ## Operational workflows
 
 ### `.github/workflows/daily-run.yml`
@@ -69,11 +75,12 @@ python -m src.production_readiness --evaluate-regression --fixture data/regressi
 | Inputs | Gmail replay mode, selected message IDs, force selected replay, maximum message attempts |
 | Outputs | Static ingestion result, Gmail diagnostics, job upsert, generated surfaces, Step Summary, daily attempt and completion records |
 | Workbook writes | Schema migration, `Jobs`, source and rejection ledgers, Gmail ledgers, generated surfaces, `Surface_Status`, `Runs` |
+| Jobs integrity gate | Pre-write enforcement through `src.workflow_validation`; post-write enforcement before `daily_workflow_completion` can be recorded |
 | Concurrency | Shared workbook-write group |
 | Configured timeout | 45 minutes |
 | Expected runtime | Varies with Gmail volume, static sources, tests, and workbook quota; use the timeout as the upper bound |
-| Failure implication | The daily completion lock is withheld when required work fails or retryable Gmail failures remain. A daily attempt record is still attempted. |
-| Recovery | Correct the failing stage, then manually rerun in normal mode. Use `failed_only` or exact selected replay only for Gmail recovery. |
+| Failure implication | The daily completion lock is withheld when required work fails, retryable Gmail failures remain, or Jobs integrity is unsafe. A daily attempt record is still attempted. |
+| Recovery | Correct the failing stage, require a healthy Jobs audit, then manually rerun in normal mode. Use `failed_only` or exact selected replay only for Gmail recovery. |
 
 Scheduled runs check the current Central calendar date. A successful `daily_workflow_completion` record prevents the duplicate schedule from repeating the day. Manual dispatch bypasses the completion lock.
 
@@ -87,11 +94,12 @@ Scheduled runs check the current Central calendar date. A successful `daily_work
 | Inputs | `daily`, `weekly`, or `backfill` mode; optional exact `job_key` |
 | Outputs | Resolution, enrichment, lifecycle, rescoring, health, generated-surface, and Step Summary metrics |
 | Workbook writes | Enrichment queue and evidence, resolution state, canonical `Jobs` updates, lifecycle state, generated surfaces, Dashboard health, `Runs` |
+| Jobs integrity gate | Explicit pre-write and post-write enforcement steps |
 | Concurrency | Shared workbook-write group |
 | Configured timeout | 60 minutes |
 | Expected runtime | Varies by mode, retry state, and external-source response time; use the timeout as the upper bound |
-| Failure implication | Verification health does not trigger from a failed enrichment workflow. Queue work remains recoverable. |
-| Recovery | Rerun the failed mode. Use an exact job key for isolated recovery or backfill mode for bounded backlog work. |
+| Failure implication | Verification health does not trigger from a failed enrichment workflow. Queue work remains recoverable. An integrity failure blocks further writes. |
+| Recovery | Preserve integrity diagnostics, require a healthy audit, then rerun the failed mode. Use an exact job key for isolated recovery or backfill mode for bounded backlog work. |
 
 ### `.github/workflows/verification-health.yml`
 
@@ -103,11 +111,12 @@ Scheduled runs check the current Central calendar date. A successful `daily_work
 | Inputs | `run` or `dry-run`; optional deterministic run ID |
 | Outputs | Actionable health, portfolio coverage, blockers, aging, classification reasons, Dashboard section, `Runs` history, Step Summary |
 | Workbook writes | Dashboard verification section and verification-health `Runs` record in run mode |
+| Jobs integrity gate | Read-only pre-calculation enforcement through `src.workflow_validation`; Verification Health does not mutate `Jobs` |
 | Concurrency | Shared workbook-write group |
 | Configured timeout | 30 minutes, including a 75-second Sheets quota cooldown |
 | Expected runtime | Normally shorter than the timeout unless Sheets quota retries occur |
 | Failure implication | Operational health is stale or not calculated. Ingestion and enrichment data remain intact. |
-| Recovery | Confirm schema validation succeeded, inspect the original traceback, allow quota recovery when applicable, then rerun in `run` mode. |
+| Recovery | Confirm schema and Jobs integrity validation succeeded, inspect the original traceback, allow quota recovery when applicable, then rerun in `run` mode. |
 
 ### `.github/workflows/weekly-value.yml`
 
@@ -135,11 +144,12 @@ Scheduled runs check the current Central calendar date. A successful `daily_work
 | Inputs | None |
 | Outputs | Header colors, dropdowns, filters, freezes, `Sheet_Guide`, Step Summary |
 | Workbook writes | Formatting, validation, filters, freezes, and `Sheet_Guide` |
+| Jobs integrity gate | Explicit pre-write and post-write enforcement; every Jobs-targeted batch request is boundary validated before submission |
 | Concurrency | Shared workbook-write group |
 | Configured timeout | 20 minutes |
 | Expected runtime | Normally shorter than the timeout; workbook quota can extend execution |
-| Failure implication | Workbook data remains available, but editability cues or controls may be stale. |
-| Recovery | Validate governance definitions and schema, then rerun. Do not manually recreate controls unless the workflow cannot be recovered. |
+| Failure implication | Workbook data remains available, but editability cues or controls may be stale. Unsafe Jobs width or ranges block governance. |
+| Recovery | Require a healthy Jobs audit, validate governance definitions and schema, then rerun. Do not manually recreate controls unless the workflow cannot be recovered. |
 
 ### `.github/workflows/workbook-capacity.yml`
 
@@ -149,13 +159,14 @@ Scheduled runs check the current Central calendar date. A successful `daily_work
 | Trigger | First day of each month; manual dispatch |
 | Schedule | `15 14 1 * *` UTC on the first day of each month, which is 09:15 AM during Central daylight time and 08:15 AM during Central standard time |
 | Inputs | Explicit compaction approval and separate blank-formatting trim approval |
-| Outputs | Capacity JSON artifact, before-and-after audit, Step Summary |
+| Outputs | Capacity JSON artifact, Jobs integrity JSON, before-and-after audit, Step Summary |
 | Workbook writes | None during scheduled or normal audit. Grid resize requests only during explicitly approved compaction. |
+| Jobs integrity gate | Read-only pre-run capture and enforced post-run validation. Out-of-bounds data and structural ranges remain preservation boundaries. |
 | Concurrency | Shared workbook-write group |
 | Configured timeout | 30 minutes |
 | Expected runtime | Depends on workbook metadata volume and whether compaction is approved; use the timeout as the upper bound |
 | Failure implication | A critical result can indicate workbook writes are at risk. No automatic destructive action occurs. |
-| Recovery | Review preservation boundaries, back up the workbook, repair displaced data, and compact only with both approvals when the audit is clean. |
+| Recovery | Review preservation boundaries, preserve integrity evidence, back up the workbook, repair displaced data, and compact only when the audit is clean. |
 
 ### `.github/workflows/source-quality.yml`
 
@@ -187,6 +198,22 @@ Job Tracker Verification Health
 
 The weekly presentation, governance, source-quality, and capacity workflows are independent scheduled maintenance processes. Shared workbook concurrency prevents simultaneous writes.
 
+## Jobs boundary enforcement ownership
+
+| Control | Owner |
+| --- | --- |
+| Canonical width and final column | `src.jobs_boundaries` derived from `JOB_FIELDS` |
+| Explicit row writes and row placement | `src.sheets.SheetClient` |
+| Actual-row upsert cache alignment | `src.job_upsert` |
+| Read-only workbook scanner | `src.jobs_integrity` |
+| Schema expansion | `src.schema` append-only migration |
+| Direct API request guard | `validate_jobs_batch_update_requests` |
+| Direct write inventory | `src.jobs_write_contract` and `config/jobs_write_allowlist.yml` |
+| Capacity preservation boundary | `src.workbook_capacity_hotfix` |
+| Operator response | `docs/JOBS_WRITE_BOUNDARY_INTEGRITY.md` and `docs/TROUBLESHOOTING.md` |
+
+Normal workflows must never expand `Jobs`. The preferred and approved grid width is exactly 135 columns until an intentional append-only `JOB_FIELDS` change is reviewed and migrated.
+
 ## Expected required checks
 
 GitHub distinguishes the workflow display name from the job-level check context that branch protection may expose.
@@ -211,6 +238,7 @@ This repository-level YAML parse catches syntax and inventory drift. GitHub Acti
 1. Identify whether the failing workflow writes the workbook.
 2. Read the first failing step and original exception, not only the final summary step.
 3. Confirm whether canonical `Jobs` writes occurred before retrying.
-4. Check `Runs`, `Surface_Status`, `Gmail_Messages`, `Gmail_Failures`, `Enrichment_Queue`, or `Source_Audit` for partial-state evidence.
-5. Prefer the smallest safe rerun scope.
-6. Never delete audit evidence to make a rerun appear clean.
+4. Run the read-only Jobs integrity audit and preserve any offending coordinates.
+5. Check `Runs`, `Surface_Status`, `Gmail_Messages`, `Gmail_Failures`, `Enrichment_Queue`, or `Source_Audit` for partial-state evidence.
+6. Prefer the smallest safe rerun scope.
+7. Never delete audit evidence or suspicious out-of-bounds cells to make a rerun appear clean.

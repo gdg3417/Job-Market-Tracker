@@ -3,11 +3,20 @@ from __future__ import annotations
 import argparse
 import json
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Iterable
 
 from src.dedupe import SOURCE_FIELDS
 from src.enrichment.models import ENRICHMENT_EVIDENCE_FIELDS, ENRICHMENT_QUEUE_FIELDS
+from src.jobs_boundaries import (
+    JOBS_CANONICAL_COLUMN_COUNT,
+    JOBS_WORKSHEET_NAME,
+    jobs_canonical_end_column,
+    validate_canonical_write_range,
+    validate_job_record,
+    validate_jobs_headers,
+)
+from src.jobs_integrity import audit_jobs_integrity
 from src.models import JOB_FIELDS
 from src.resolution.models import POSTING_RESOLUTION_FIELDS, RESOLUTION_CANDIDATE_FIELDS
 from src.source_reliability import SOURCE_HEALTH_FIELDS
@@ -66,6 +75,7 @@ class WorkbookValidationResult:
     expected_timezone: str
     timezone_ok: bool
     sheets: list[HeaderValidationResult]
+    migration_details: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -78,6 +88,7 @@ class WorkbookValidationResult:
             "expected_timezone": self.expected_timezone,
             "timezone_ok": self.timezone_ok,
             "sheets": [sheet.to_dict() for sheet in self.sheets],
+            "migration_details": list(self.migration_details),
         }
 
 
@@ -139,6 +150,13 @@ def compare_headers(spec: HeaderSpec, actual_headers: Iterable[Any]) -> HeaderVa
 
 
 def validate_record_headers_for_write(worksheet_name: str, actual_headers: Iterable[Any], record: dict[str, Any]) -> None:
+    if worksheet_name == JOBS_WORKSHEET_NAME:
+        try:
+            validate_jobs_headers(actual_headers)
+            validate_job_record(record)
+        except ValueError as exc:
+            raise SchemaValidationError(str(exc)) from exc
+        return
     actual_normalized = {normalize_header_name(header) for header in _trim(actual_headers) if str(header).strip()}
     missing = [header for header in expected_headers_for(worksheet_name) if normalize_header_name(header) not in actual_normalized]
     if missing:
@@ -200,14 +218,18 @@ def _ensure_schema_worksheet(sheet_client: Any, worksheet_name: str, rows: int, 
 
 
 def _ensure_grid_capacity(worksheet: Any, *, rows: int, cols: int, worksheet_name: str) -> None:
-    """Expand an existing worksheet before writing headers beyond its current grid."""
+    """Expand a worksheet only to its exact required canonical width."""
     if not hasattr(worksheet, "resize"):
         return
 
     current_rows = int(getattr(worksheet, "row_count", rows) or rows)
     current_cols = int(getattr(worksheet, "col_count", cols) or cols)
+    if worksheet_name == JOBS_WORKSHEET_NAME and current_cols > cols:
+        raise SchemaValidationError(
+            f"Worksheet Jobs grid width {current_cols} exceeds canonical width {cols}; schema migration will not compact or delete trailing columns"
+        )
     target_rows = max(current_rows, rows)
-    target_cols = max(current_cols, cols)
+    target_cols = cols if worksheet_name == JOBS_WORKSHEET_NAME else max(current_cols, cols)
     if target_rows == current_rows and target_cols == current_cols:
         return
 
@@ -224,11 +246,28 @@ def _clear_header_cache(sheet_client: Any) -> None:
         sheet_client._header_cache.clear()
 
 
+def _jobs_migration_oob_status(sheet_client: Any, worksheet: Any, required_cols: int) -> tuple[bool, dict[str, Any] | None]:
+    current_cols = int(getattr(worksheet, "col_count", required_cols) or required_cols)
+    if current_cols <= required_cols:
+        return False, None
+    audit = audit_jobs_integrity(sheet_client)
+    detected = any(
+        [
+            audit.out_of_bounds_value_count,
+            audit.out_of_bounds_formula_count,
+            audit.out_of_bounds_metadata_count,
+            audit.out_of_bounds_structural_metadata_count,
+        ]
+    )
+    return detected, audit.to_dict()
+
+
 def migrate_trailing_headers(sheet_client: Any) -> WorkbookValidationResult:
     """Append canonical trailing headers and return validation from the same read pass."""
     from src.sheets import with_quota_backoff
 
     results: list[HeaderValidationResult] = []
+    migration_details: list[dict[str, Any]] = []
     for spec in CANONICAL_SCHEMA.values():
         required_rows = max(1000, spec.header_row + 10)
         required_cols = len(spec.headers)
@@ -238,6 +277,19 @@ def migrate_trailing_headers(sheet_client: Any) -> WorkbookValidationResult:
             rows=required_rows,
             cols=required_cols,
         )
+        previous_width = int(getattr(worksheet, "col_count", required_cols) or required_cols)
+        out_of_bounds_detected = False
+        oob_audit: dict[str, Any] | None = None
+        if spec.worksheet_name == JOBS_WORKSHEET_NAME and previous_width > required_cols:
+            out_of_bounds_detected, oob_audit = _jobs_migration_oob_status(sheet_client, worksheet, required_cols)
+            if out_of_bounds_detected:
+                coordinates = ", ".join(
+                    item.get("coordinate", "") for item in (oob_audit or {}).get("offending_coordinates", [])[:10]
+                )
+                raise SchemaValidationError(
+                    "Worksheet Jobs contains out-of-bounds data or metadata; schema migration is blocked; "
+                    f"first_offenders={coordinates or 'none'}"
+                )
         _ensure_grid_capacity(
             worksheet,
             rows=required_rows,
@@ -246,6 +298,7 @@ def migrate_trailing_headers(sheet_client: Any) -> WorkbookValidationResult:
         )
         current = _trim(_read_header_row(worksheet, spec))
         final_headers = list(current)
+        appended_headers: list[str] = []
         if current != spec.headers:
             if not current:
                 start_index = 1
@@ -262,6 +315,16 @@ def migrate_trailing_headers(sheet_client: Any) -> WorkbookValidationResult:
             if missing:
                 end_index = start_index + len(missing) - 1
                 cell_range = f"{_column_name(start_index)}{spec.header_row}:{_column_name(end_index)}{spec.header_row}"
+                if spec.worksheet_name == JOBS_WORKSHEET_NAME:
+                    validate_canonical_write_range(
+                        JOBS_WORKSHEET_NAME,
+                        spec.header_row,
+                        start_index,
+                        1,
+                        len(missing),
+                        operation_name="migrate trailing Jobs headers",
+                        proposed_range=cell_range,
+                    )
                 with_quota_backoff(
                     lambda worksheet=worksheet, cell_range=cell_range, missing=missing: worksheet.update(
                         range_name=cell_range,
@@ -271,6 +334,18 @@ def migrate_trailing_headers(sheet_client: Any) -> WorkbookValidationResult:
                     operation_name=f"migrate trailing headers {spec.worksheet_name}",
                 )
                 final_headers.extend(missing)
+                appended_headers = list(missing)
+        final_width = int(getattr(worksheet, "col_count", required_cols) or required_cols)
+        migration_details.append(
+            {
+                "worksheet_name": spec.worksheet_name,
+                "previous_width": previous_width,
+                "required_canonical_width": required_cols,
+                "final_width": final_width,
+                "headers_appended": appended_headers,
+                "out_of_bounds_data_detected": out_of_bounds_detected,
+            }
+        )
         results.append(compare_headers(spec, final_headers))
 
     metadata = _metadata(sheet_client)
@@ -284,7 +359,13 @@ def migrate_trailing_headers(sheet_client: Any) -> WorkbookValidationResult:
         )
         timezone = EXPECTED_TIMEZONE
     _clear_header_cache(sheet_client)
-    return WorkbookValidationResult(timezone, EXPECTED_TIMEZONE, timezone == EXPECTED_TIMEZONE, results)
+    return WorkbookValidationResult(
+        timezone,
+        EXPECTED_TIMEZONE,
+        timezone == EXPECTED_TIMEZONE,
+        results,
+        migration_details=migration_details,
+    )
 
 
 def repair_headers(sheet_client: Any) -> None:
@@ -299,7 +380,7 @@ def repair_headers(sheet_client: Any) -> None:
             cols=len(spec.headers),
         )
         current = _trim(_read_header_row(worksheet, spec))
-        width = max(len(current), len(spec.headers), 1)
+        width = len(spec.headers) if spec.worksheet_name == JOBS_WORKSHEET_NAME else max(len(current), len(spec.headers), 1)
         _ensure_grid_capacity(
             worksheet,
             rows=required_rows,
@@ -308,6 +389,16 @@ def repair_headers(sheet_client: Any) -> None:
         )
         values = [*spec.headers, *[""] * (width - len(spec.headers))]
         cell_range = f"A{spec.header_row}:{_column_name(width)}{spec.header_row}"
+        if spec.worksheet_name == JOBS_WORKSHEET_NAME:
+            validate_canonical_write_range(
+                JOBS_WORKSHEET_NAME,
+                spec.header_row,
+                1,
+                1,
+                width,
+                operation_name="repair Jobs headers",
+                proposed_range=cell_range,
+            )
         with_quota_backoff(
             lambda worksheet=worksheet, cell_range=cell_range, values=values: worksheet.update(
                 range_name=cell_range,

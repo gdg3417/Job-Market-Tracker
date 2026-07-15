@@ -1,0 +1,303 @@
+version: 1
+entries:
+  - file: src/sheets.py
+    function: SheetClient.ensure_worksheet
+    operation: add_worksheet
+    worksheet: dynamically named non-existing worksheet
+    reason: Creates missing canonical or generated worksheets with explicit dimensions.
+    can_write_canonical_data: false
+    guard: Caller supplies the canonical schema width; Jobs creation uses len(JOB_FIELDS).
+  - file: src/sheets.py
+    function: SheetClient._ensure_jobs_row_capacity
+    operation: resize
+    worksheet: Jobs
+    reason: Adds row capacity only when an explicit bounded Jobs write reaches the current row limit.
+    can_write_canonical_data: false
+    guard: Rejects any grid width other than JOBS_CANONICAL_COLUMN_COUNT and always resizes to exactly that width.
+  - file: src/sheets.py
+    function: SheetClient._write_jobs_rows
+    operation: update
+    worksheet: Jobs
+    reason: Performs the only normal canonical Jobs value write using an explicit A through EE range.
+    can_write_canonical_data: true
+    guard: validate_jobs_headers, serialize_job_record, and validate_canonical_write_range.
+  - file: src/sheets.py
+    function: SheetClient.append_record
+    operation: append_row
+    worksheet: non-Jobs canonical and configuration worksheets
+    reason: Preserves existing append behavior for worksheets other than Jobs.
+    can_write_canonical_data: false
+    guard: Jobs branches to _write_jobs_rows before append_row can execute.
+  - file: src/sheets.py
+    function: SheetClient.append_records
+    operation: append_rows
+    worksheet: non-Jobs canonical and generated worksheets
+    reason: Preserves existing batch append behavior for worksheets other than Jobs.
+    can_write_canonical_data: false
+    guard: Jobs branches to _write_jobs_rows before append_rows can execute.
+  - file: src/sheets.py
+    function: SheetClient.update_record
+    operation: update
+    worksheet: non-Jobs canonical and configuration worksheets
+    reason: Preserves existing explicit row updates for worksheets other than Jobs.
+    can_write_canonical_data: false
+    guard: Jobs branches to _write_jobs_rows before the generic update executes.
+  - file: src/schema.py
+    function: _ensure_grid_capacity
+    operation: resize
+    worksheet: canonical worksheets
+    reason: Expands canonical grids before intentional schema header migration.
+    can_write_canonical_data: false
+    guard: Jobs can expand only to the exact required width and fails when current width exceeds the canonical schema.
+  - file: src/schema.py
+    function: migrate_trailing_headers
+    operation: update
+    worksheet: canonical header rows
+    reason: Appends approved trailing canonical headers during schema migration.
+    can_write_canonical_data: false
+    guard: Jobs uses validate_canonical_write_range and exact append-only prefix validation.
+  - file: src/schema.py
+    function: migrate_trailing_headers
+    operation: batch_update
+    worksheet: workbook properties
+    reason: Sets the workbook timezone to America/Chicago when required.
+    can_write_canonical_data: false
+    guard: Request changes only updateSpreadsheetProperties.timeZone and cannot target Jobs cells.
+  - file: src/schema.py
+    function: repair_headers
+    operation: update
+    worksheet: canonical header rows
+    reason: Explicit operator repair of canonical headers.
+    can_write_canonical_data: false
+    guard: Jobs uses exact canonical width and validate_canonical_write_range; oversized Jobs grids are rejected.
+  - file: src/schema.py
+    function: repair_headers
+    operation: batch_update
+    worksheet: workbook properties
+    reason: Sets the workbook timezone after explicit header repair.
+    can_write_canonical_data: false
+    guard: Request changes only updateSpreadsheetProperties.timeZone and cannot target Jobs cells.
+  - file: src/sheet_governance.py
+    function: write_sheet_guide
+    operation: clear
+    worksheet: Sheet_Guide
+    reason: Rebuilds the generated read-only sheet guide before writing its current content.
+    can_write_canonical_data: false
+    guard: The worksheet name is the fixed Sheet_Guide generated surface and cannot target Jobs.
+  - file: src/sheet_governance.py
+    function: write_sheet_guide
+    operation: update
+    worksheet: Sheet_Guide
+    reason: Writes the generated sheet guide to an explicit four-column range.
+    can_write_canonical_data: false
+    guard: The worksheet name is the fixed Sheet_Guide generated surface and cannot target Jobs.
+  - file: src/sheet_governance.py
+    function: apply_sheet_governance
+    operation: batch_update
+    worksheet: workbook formatting and validation ranges
+    reason: Applies headers, filters, freezes, and dropdown validation across governed worksheets.
+    can_write_canonical_data: false
+    guard: Jobs headers and grid width are validated, then validate_jobs_batch_update_requests checks every Jobs-targeted request.
+  - file: src/workbook_capacity_hotfix.py
+    function: compact_workbook
+    operation: batch_update
+    worksheet: trailing workbook grid dimensions
+    reason: Applies only the explicit audited row and column deletion plan when an operator requests compaction.
+    can_write_canonical_data: false
+    guard: Jobs data and hard metadata establish preservation boundaries; validate_jobs_batch_update_requests permits only audited deletion beginning after EE.
+  - file: src/dashboard.py
+    function: write_values
+    operation: clear
+    worksheet: Dashboard or Digest generated surface
+    reason: Replaces a generated presentation worksheet before writing its current values.
+    can_write_canonical_data: false
+    guard: Callers pass only the fixed Dashboard or Digest worksheet names; Jobs is never passed to this helper.
+  - file: src/dashboard.py
+    function: write_values
+    operation: update
+    worksheet: Dashboard or Digest generated surface
+    reason: Writes generated presentation values from A1 after the surface is cleared.
+    can_write_canonical_data: false
+    guard: Callers pass only the fixed Dashboard or Digest worksheet names; Jobs is never passed to this helper.
+  - file: src/enrichment/production.py
+    function: write_enrichment_health_section
+    operation: update
+    worksheet: Dashboard
+    reason: Writes the generated enrichment health section to its fixed Dashboard range.
+    can_write_canonical_data: false
+    guard: The function resolves the fixed Dashboard worksheet and cannot target Jobs.
+  - file: src/follow_up_core.py
+    function: apply_follow_up_queue
+    operation: batch_update
+    worksheet: Follow_Up_Queue
+    reason: Applies formatting, filtering, and validation to the generated follow-up queue.
+    can_write_canonical_data: false
+    guard: All requests use the fixed Follow_Up_Queue sheet id created or loaded in the same function.
+  - file: src/follow_up_core.py
+    function: write_follow_up_queue
+    operation: clear
+    worksheet: Follow_Up_Queue
+    reason: Replaces the generated follow-up queue before refresh.
+    can_write_canonical_data: false
+    guard: The function resolves the fixed Follow_Up_Queue worksheet and cannot target Jobs.
+  - file: src/follow_up_core.py
+    function: write_follow_up_queue
+    operation: update
+    worksheet: Follow_Up_Queue
+    reason: Writes the generated follow-up queue to an explicit generated-surface range.
+    can_write_canonical_data: false
+    guard: The function resolves the fixed Follow_Up_Queue worksheet and cannot target Jobs.
+  - file: src/gmail_diagnostics.py
+    function: ensure_gmail_failures_worksheet
+    operation: update
+    worksheet: Gmail_Failures
+    reason: Initializes the dedicated Gmail failure ledger header when the worksheet is created or empty.
+    can_write_canonical_data: false
+    guard: The function resolves only Gmail_Failures and writes its fixed ledger headers.
+  - file: src/gmail_ingestion.py
+    function: ensure_gmail_messages_worksheet
+    operation: update
+    worksheet: Gmail_Messages
+    reason: Initializes the dedicated Gmail message ledger header when the worksheet is created or empty.
+    can_write_canonical_data: false
+    guard: The function resolves only Gmail_Messages and writes its fixed ledger headers.
+  - file: src/review_queue.py
+    function: _apply_batch_requests
+    operation: batch_update
+    worksheet: Review_Queue
+    reason: Applies formatting, filtering, and validation to the generated review queue.
+    can_write_canonical_data: false
+    guard: Callers build requests only from the fixed Review_Queue sheet id.
+  - file: src/review_queue.py
+    function: write_review_queue_values
+    operation: clear
+    worksheet: Review_Queue
+    reason: Replaces the generated review queue before refresh.
+    can_write_canonical_data: false
+    guard: The function receives the Review_Queue worksheet created or loaded by the review queue refresh.
+  - file: src/review_queue.py
+    function: write_review_queue_values
+    operation: update
+    worksheet: Review_Queue
+    reason: Writes generated review queue values to its explicit range.
+    can_write_canonical_data: false
+    guard: The function receives the Review_Queue worksheet created or loaded by the review queue refresh.
+  - file: src/source_quality.py
+    function: _replace_generated_sheet
+    operation: resize
+    worksheet: Source_Audit or Source_Yield
+    reason: Resizes a generated source-quality surface to its exact replacement dimensions.
+    can_write_canonical_data: false
+    guard: Callers use only the fixed Source_Audit and Source_Yield generated worksheet names.
+  - file: src/source_quality.py
+    function: _replace_generated_sheet
+    operation: clear
+    worksheet: Source_Audit or Source_Yield
+    reason: Clears a generated source-quality surface before replacing it.
+    can_write_canonical_data: false
+    guard: Callers use only the fixed Source_Audit and Source_Yield generated worksheet names.
+  - file: src/source_quality.py
+    function: _replace_generated_sheet
+    operation: update
+    worksheet: Source_Audit or Source_Yield
+    reason: Writes the current generated source-quality surface values.
+    can_write_canonical_data: false
+    guard: Callers use only the fixed Source_Audit and Source_Yield generated worksheet names.
+  - file: src/source_reliability_dashboard.py
+    function: write_source_reliability_dashboard_section
+    operation: update
+    worksheet: Dashboard
+    reason: Writes the source reliability summary into its fixed Dashboard section.
+    can_write_canonical_data: false
+    guard: The function resolves only Dashboard and cannot target Jobs.
+  - file: src/surface_status.py
+    function: write_surface_status
+    operation: clear
+    worksheet: Surface_Status
+    reason: Replaces the generated surface freshness and outcome ledger.
+    can_write_canonical_data: false
+    guard: The function resolves only Surface_Status and cannot target Jobs.
+  - file: src/surface_status.py
+    function: write_surface_status
+    operation: update
+    worksheet: Surface_Status
+    reason: Writes generated surface freshness and outcome rows.
+    can_write_canonical_data: false
+    guard: The function resolves only Surface_Status and cannot target Jobs.
+  - file: src/surface_status.py
+    function: write_surface_status
+    operation: batch_update
+    worksheet: Surface_Status
+    reason: Applies fixed formatting and filter requests to the generated surface status worksheet.
+    can_write_canonical_data: false
+    guard: Every request uses the fixed Surface_Status sheet id from the same function.
+  - file: src/verification_health_dashboard.py
+    function: write_dashboard_section
+    operation: clear
+    worksheet: Dashboard section range
+    reason: Clears the prior generated verification-health section before replacement.
+    can_write_canonical_data: false
+    guard: The function resolves only Dashboard and clears a fixed Dashboard section.
+  - file: src/verification_health_dashboard.py
+    function: write_dashboard_section
+    operation: update
+    worksheet: Dashboard section range
+    reason: Writes the generated verification-health section to Dashboard.
+    can_write_canonical_data: false
+    guard: The function resolves only Dashboard and cannot target Jobs.
+  - file: src/weekly_context.py
+    function: write_weekly_context
+    operation: clear
+    worksheet: Weekly_Context
+    reason: Replaces the generated weekly context surface before refresh.
+    can_write_canonical_data: false
+    guard: The function resolves only Weekly_Context and cannot target Jobs.
+  - file: src/weekly_context.py
+    function: write_weekly_context
+    operation: update
+    worksheet: Weekly_Context
+    reason: Writes the generated weekly context surface values.
+    can_write_canonical_data: false
+    guard: The function resolves only Weekly_Context and cannot target Jobs.
+  - file: src/weekly_context.py
+    function: apply_weekly_context
+    operation: batch_update
+    worksheet: Weekly_Context
+    reason: Applies formatting, filters, and column sizing to Weekly_Context.
+    can_write_canonical_data: false
+    guard: All requests use the fixed Weekly_Context sheet id created or loaded in the same function.
+  - file: src/weekly_context_hotfix.py
+    function: apply_weekly_context
+    operation: batch_update
+    worksheet: Weekly_Context
+    reason: Applies the hotfixed formatting and filter contract to Weekly_Context.
+    can_write_canonical_data: false
+    guard: All requests use the fixed Weekly_Context sheet id passed by the Weekly Context refresh.
+  - file: src/weekly_value.py
+    function: write_weekly_value
+    operation: clear
+    worksheet: Weekly_Value
+    reason: Replaces the generated weekly value surface before refresh.
+    can_write_canonical_data: false
+    guard: The function resolves only Weekly_Value and cannot target Jobs.
+  - file: src/weekly_value.py
+    function: write_weekly_value
+    operation: update
+    worksheet: Weekly_Value
+    reason: Writes the generated weekly value history and current metrics.
+    can_write_canonical_data: false
+    guard: The function resolves only Weekly_Value and cannot target Jobs.
+  - file: src/weekly_value.py
+    function: apply_weekly_value
+    operation: batch_update
+    worksheet: Weekly_Value
+    reason: Applies formatting, filters, and column sizing to Weekly_Value.
+    can_write_canonical_data: false
+    guard: All requests use the fixed Weekly_Value sheet id created or loaded in the same function.
+  - file: src/workbook_capacity.py
+    function: compact_workbook
+    operation: batch_update
+    worksheet: trailing workbook grid dimensions
+    reason: Legacy base compaction implementation used only through the reviewed workbook_capacity_hotfix wrapper in production.
+    can_write_canonical_data: false
+    guard: Production workflow and documented commands invoke workbook_capacity_hotfix, which validates Jobs requests and permits only audited trailing deletion beginning after EE; direct use of the base module is not approved.

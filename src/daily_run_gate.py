@@ -7,6 +7,7 @@ from datetime import date, datetime, timezone
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
+from src.jobs_integrity import assert_jobs_integrity
 from src.models import utc_now_iso
 from src.settings import load_settings
 from src.sheets import SheetClient
@@ -177,9 +178,19 @@ def check_daily_run_gate(*, event_name: str) -> dict[str, Any]:
 
 def mark_daily_run_success(*, gate_result: str = "workflow_completed") -> dict[str, Any]:
     sheet_client = SheetClient.from_settings(load_settings())
+    jobs_integrity = assert_jobs_integrity(
+        sheet_client,
+        phase="Daily post-write Jobs integrity gate",
+    )
     record = build_daily_completion_record(gate_result=gate_result)
     sheet_client.append_run(record)
-    return {"status": "success", "run_id": record["run_id"], "central_date": central_date().isoformat()}
+    return {
+        "status": "success",
+        "run_id": record["run_id"],
+        "central_date": central_date().isoformat(),
+        "jobs_integrity_status": jobs_integrity.health_status,
+        "jobs_grid_columns": jobs_integrity.grid_columns,
+    }
 
 
 def mark_daily_run_attempt(

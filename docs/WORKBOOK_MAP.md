@@ -14,7 +14,7 @@ Generated surfaces are read-only. Make corrections in `Jobs` or the applicable c
 
 | Worksheet | Primary class | Edit policy | Purpose and overwrite behavior |
 | --- | --- | --- | --- |
-| `Jobs` | Canonical and user-editable | Edit only green columns | Canonical job identity, status, evidence, scoring, review, application, and follow-up record. System fields are rewritten by ingestion, enrichment, scoring, lifecycle, and refresh processes. |
+| `Jobs` | Canonical and user-editable | Edit only green columns | Canonical job identity, status, evidence, scoring, review, application, and follow-up record. System fields are rewritten by ingestion, enrichment, scoring, lifecycle, and refresh processes. The sheet must remain exactly 135 columns through `EE`. |
 | `Config_Searches` | Configuration and user-editable | User-managed | Search definitions, role families, keywords, locations, level, compensation, and active status. |
 | `Config_Companies` | Configuration and user-editable | User-managed with controlled cleanup | Company sources, ATS configuration, aliases, career URLs, source quality, ingestion mode, and enrichment controls. Source-quality cleanup requires reviewed exact company IDs and matching URLs. |
 | `Scoring_Rules` | Configuration and user-editable | User-managed | Active scoring rules and evidence signals. Changes should be regression tested. |
@@ -40,6 +40,30 @@ Generated surfaces are read-only. Make corrections in `Jobs` or the applicable c
 | `Dashboard` | Generated read-only surface | Do not edit | Executive summary, action queues, actionable verification health, portfolio coverage, and source health. |
 | `Digest` | Generated read-only surface | Do not edit | Ranked job digest used by downstream presentation and email logic. |
 | `Sheet_Guide` | Generated read-only surface | Do not edit | Workbook ownership, editability, color, filter, freeze, and dropdown guidance for worksheets included in the governance policy. Rewritten by governance. |
+
+## Canonical Jobs boundary
+
+`Jobs` has one authoritative width derived from `len(JOB_FIELDS)`.
+
+Current contract:
+
+1. Header count is exactly 135.
+2. Canonical columns are `A:EE`.
+3. The final header is `decision_evidence_conflict_notes`.
+4. The worksheet grid width is exactly 135 during normal operation.
+5. No populated value, formula, note, validation, hyperlink, smart chip, rich text, chart, slicer, filter, protected range, named range, or other hard metadata may extend after `EE`.
+6. Normal ingestion, enrichment, lifecycle, rescoring, governance, and presentation workflows cannot expand `Jobs`.
+7. Schema migration can expand the grid only when `JOB_FIELDS` intentionally gains append-only fields, and only to the exact new canonical width.
+
+Every normal job row write is explicitly bounded to `Jobs!A<row>:EE<row>`. New row calculation uses canonical identity fields inside `A:EE`, not the worksheet used range.
+
+Run the read-only audit with:
+
+```powershell
+python -m src.jobs_integrity --audit --enforce
+```
+
+See `docs/JOBS_WRITE_BOUNDARY_INTEGRITY.md` for diagnostics, incident response, and schema expansion approval.
 
 ## Canonical schema boundary
 
@@ -110,9 +134,10 @@ The refresh reads canonical `Jobs` once where practical, applies current exclusi
 
 ## Prohibited manual actions
 
-1. Do not reorder or delete canonical `Jobs` columns.
+1. Do not reorder, delete, or add canonical `Jobs` columns outside an approved schema migration.
 2. Do not paste values into gray system-managed columns, except for the five documented `Posting_Resolution` manual override fields.
 3. Do not edit generated surfaces as a substitute for changing `Jobs`.
 4. Do not delete audit rows to hide errors or duplicates.
 5. Do not add large unused row or column ranges.
 6. Do not manually compact the workbook without a current capacity audit and backup.
+7. Do not delete suspicious cells after `EE` before preserving diagnostic evidence.

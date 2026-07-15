@@ -36,6 +36,39 @@ A quarantined malformed message should remain visible with its reason. Do not de
 
 Verification health includes a quota cooldown after schema preflight. Repeated quota failures can indicate excessive manual reruns or a broader workbook read pattern that requires a code patch.
 
+## Jobs out-of-bounds integrity failure
+
+A Jobs integrity failure is a production data-integrity incident. Normal operation requires exactly 135 columns through `EE` and no values, formulas, hard cell metadata, or structural metadata after `EE`.
+
+1. Stop workflows that can write the workbook.
+2. Preserve the failed workflow logs and any scanner JSON.
+3. Run the read-only audit:
+
+```powershell
+python -m src.jobs_integrity --audit
+```
+
+4. Record the first offending coordinates, counts, signal types, furthest column, recognized controlled-value category, possible canonical field, and whether canonical row identity exists.
+5. Do not compact, delete, overwrite, or widen the Jobs boundary.
+6. Create a current workbook backup.
+7. Identify the specific writer or displaced data before changing anything.
+8. Correct the data only with reviewed evidence and patch the writer defect before resuming automation.
+9. Require a healthy enforcement result:
+
+```powershell
+python -m src.jobs_integrity --audit --enforce
+```
+
+10. Run the direct-write inventory contract:
+
+```powershell
+python -m src.jobs_write_contract --audit --enforce
+```
+
+The historical `Jobs!LTO680 = insufficient_evidence` case is a recognized controlled value and possible `move_value_classification` displacement. The scanner must detect it without overwriting or deleting it.
+
+See `docs/JOBS_WRITE_BOUNDARY_INTEGRITY.md` for the full boundary contract.
+
 ## Workbook-capacity warning or critical result
 
 1. Run `Job Tracker Workbook Capacity` with both approvals disabled.
@@ -53,7 +86,7 @@ Never delete rows or columns solely because they look blank. Notes, validation, 
 
 ## Verification-health failure
 
-1. Confirm schema validation completed before the calculation failed.
+1. Confirm schema and Jobs integrity validation completed before the calculation failed.
 2. Read the original traceback and failure detail, not only the final workflow status.
 3. Determine whether the cause is quota, blank or malformed records, missing identity, or a calculation defect.
 4. Run `dry-run` after a code or data correction when diagnosis is needed without workbook writes.
@@ -97,24 +130,25 @@ No-probe mode can refresh yield reporting, but it preserves the last live `Sourc
 
 1. Stop workflows that would write the affected worksheet.
 2. Compare the workbook headers to `src/schema.py`.
-3. Use migration when canonical trailing fields are missing:
+3. Run the Jobs integrity audit before attempting migration.
+4. Use migration when canonical trailing fields are missing:
 
 ```powershell
 python -m src.schema --migrate
 python -m src.schema --validate
 ```
 
-4. Use repair only when required tabs, header order, or workbook timezone are incorrect:
+5. Use repair only when required tabs, header order, or workbook timezone are incorrect:
 
 ```powershell
 python -m src.schema --repair-headers
 python -m src.schema --validate
 ```
 
-5. Confirm `Jobs` field order and manual data are preserved.
-6. Rerun the failed production workflow.
+6. Confirm `Jobs` field order and manual data are preserved.
+7. Rerun the failed production workflow.
 
-Do not manually reorder canonical columns to match a visual preference.
+Migration will not shrink an oversized Jobs grid, preserve unexplained out-of-schema values as fields, or clean displaced data. Do not manually reorder canonical columns to match a visual preference.
 
 ## Enrichment failure or stuck queue work
 
@@ -162,12 +196,13 @@ python -m src.enrichment.production --run --mode backfill --job-key "<job_key>"
 
 1. For `Pull Request Tests`, inspect compilation and the first failing pytest case.
 2. For `Regression readiness`, inspect both pytest and the gold-standard evaluation.
-3. Do not update the regression fixture merely to make a failure disappear.
-4. Rebase or merge current `main` into the branch when the failure comes from stale branch state.
-5. Confirm both exact checks pass before squash merge.
+3. Run the direct Sheets write contract and review any unallowlisted production path.
+4. Do not update the regression fixture merely to make a failure disappear.
+5. Rebase or merge current `main` into the branch when the failure comes from stale branch state.
+6. Confirm both exact checks pass before squash merge.
 
 ## Workflow fails before summary output
 
-The likely causes are invalid secrets, dependency installation, YAML or shell errors, schema failure, or an unhandled exception before structured output was written.
+The likely causes are invalid secrets, dependency installation, YAML or shell errors, schema failure, Jobs integrity failure, or an unhandled exception before structured output was written.
 
 Read the first failed step and original stderr. The summary is a secondary diagnostic surface and may contain only a fallback error when the primary command never started.

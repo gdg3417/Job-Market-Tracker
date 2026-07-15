@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import pytest
 
+from src.jobs_integrity import JobsIntegrityError
 from src.models import JOB_FIELDS
-from src.schema import RUNS_HEADERS, SchemaValidationError
+from src.schema import RUNS_HEADERS
 from src.sheets import SheetClient, build_sprint2_run_record, normalize_header_name
 
 
@@ -152,7 +153,7 @@ def test_canonical_read_still_fails_when_required_header_is_missing():
     worksheet = FakeWorksheet(headers=headers, values=[headers, ["" for _ in headers]])
     client = make_fake_client(FakeWorkbook({"Jobs": worksheet}))
 
-    with pytest.raises(SchemaValidationError, match="title"):
+    with pytest.raises(JobsIntegrityError, match="title"):
         client.read_records("Jobs")
 
 

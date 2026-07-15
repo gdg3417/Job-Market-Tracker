@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -58,12 +59,22 @@ def test_workflow_validation_uses_cached_result_without_second_schema_read(tmp_p
         classmethod(lambda _cls, _settings: FakeSheetClient()),
     )
     monkeypatch.setattr(workflow_validation, "validate_workbook_or_raise", fail_live_validation)
+    monkeypatch.setattr(
+        workflow_validation,
+        "assert_jobs_integrity",
+        lambda _client, phase: SimpleNamespace(
+            health_status="healthy",
+            grid_columns=135,
+            out_of_bounds_value_count=0,
+        ),
+    )
 
     result = workflow_validation.run_workflow_validation()
 
     assert result["status"] == "success"
     assert result["validation_source"] == "cached"
     assert result["worksheets_validated"] == 3
+    assert result["jobs_integrity_status"] == "healthy"
     assert len(appended) == 1
     assert appended[0]["records_found"] == 3
 
