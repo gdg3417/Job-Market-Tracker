@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from src.jobs_integrity import assert_jobs_integrity
 from src.models import utc_now_iso
 from src.schema import validate_workbook_or_raise
 from src.settings import load_settings
@@ -90,12 +91,19 @@ def run_workflow_validation() -> dict[str, Any]:
     if summary is None:
         validation_result = validate_workbook_or_raise(sheet_client)
         summary = _validation_summary(validation_result)
+    jobs_integrity = assert_jobs_integrity(
+        sheet_client,
+        phase="Workflow pre-write Jobs integrity gate",
+    )
     sheet_client.append_run(build_sprint16_run_record(summary))
     return {
         "run_mode": "sprint_16_workflow_validation",
         "status": "success",
         "validation_source": validation_source,
         "runs_rows_appended": 1,
+        "jobs_integrity_status": jobs_integrity.health_status,
+        "jobs_grid_columns": jobs_integrity.grid_columns,
+        "jobs_out_of_bounds_values": jobs_integrity.out_of_bounds_value_count,
         **summary,
     }
 
