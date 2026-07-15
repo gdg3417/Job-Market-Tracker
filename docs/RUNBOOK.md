@@ -14,9 +14,31 @@ The normal sequence is:
 ```powershell
 python -m src.schema --migrate
 python -m src.schema --validate
+python -m src.jobs_integrity --audit --enforce
+python -m src.jobs_write_contract --audit --enforce
 python -m src.enrichment.production --dry-run --mode daily
 pytest
 ```
+
+## Jobs integrity gate
+
+`Jobs` must contain exactly 135 columns through `EE`, with `decision_evidence_conflict_notes` as the final header. Normal workflows cannot expand the grid.
+
+Run the read-only scanner before any manual production recovery:
+
+```powershell
+python -m src.jobs_integrity --audit
+```
+
+Use enforcement when writes must be blocked on an unsafe workbook:
+
+```powershell
+python -m src.jobs_integrity --audit --enforce
+```
+
+A healthy result requires exact canonical headers, grid width 135, and zero values, formulas, hard cell metadata, or structural metadata after `EE`.
+
+When the scanner reports an out-of-bounds coordinate, stop workbook-writing workflows and preserve the evidence. Do not compact, delete, overwrite, or widen the boundary. Follow `docs/JOBS_WRITE_BOUNDARY_INTEGRITY.md`.
 
 ## Manual daily cycle
 
@@ -56,9 +78,10 @@ For a confident merge, confirm the selected resolution is `resolved_authoritativ
 
 1. Read the GitHub Step Summary.
 2. Confirm whether the failure was system-level or limited to individual jobs.
-3. Correct credentials or schema errors before rerunning.
-4. Leave per-job failures in the queue for the next scheduled retry.
-5. Rerun the same mode manually when the system-level issue is fixed.
+3. Run the Jobs integrity audit before replaying any writer.
+4. Correct credentials, schema, or boundary errors before rerunning.
+5. Leave per-job failures in the queue for the next scheduled retry.
+6. Rerun the same mode manually when the system-level issue is fixed.
 
 Stale `in_progress` rows older than 90 minutes are recovered automatically on the next production cycle.
 
