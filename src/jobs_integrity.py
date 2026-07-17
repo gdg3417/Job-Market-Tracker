@@ -415,7 +415,8 @@ def _load_sheet_client() -> Any:
     from src.settings import load_settings
     from src.sheets import SheetClient
 
-    return SheetClient.from_settings(load_settings())
+    with contextlib.redirect_stdout(sys.stderr):
+        return SheetClient.from_settings(load_settings())
 
 
 def main() -> None:

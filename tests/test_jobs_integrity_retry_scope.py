@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 
+import src.jobs_integrity as jobs_integrity_module
 import src.sheets as sheets_module
 from src.jobs_integrity import JOBS_CANONICAL_COLUMN_COUNT, audit_jobs_integrity
 from src.models import JOB_FIELDS
@@ -105,3 +106,29 @@ def test_jobs_integrity_load_retry_notices_stay_off_stdout(
     assert audit.healthy is True
     assert captured.out == ""
     assert "quota hit while loading Jobs" in captured.err
+
+
+def test_jobs_integrity_client_load_retry_notices_stay_off_stdout(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    sentinel = _SheetClient()
+
+    monkeypatch.setattr("src.settings.load_settings", lambda: object())
+
+    def fake_from_settings(settings: object) -> _SheetClient:
+        assert settings is not None
+        print("Sheets API quota hit while opening workbook")
+        return sentinel
+
+    monkeypatch.setattr(
+        sheets_module.SheetClient,
+        "from_settings",
+        staticmethod(fake_from_settings),
+    )
+
+    assert jobs_integrity_module._load_sheet_client() is sentinel
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "quota hit while opening workbook" in captured.err

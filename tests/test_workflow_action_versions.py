@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 
 def test_workflows_use_node24_compatible_action_versions() -> None:
-    workflow_root = Path(os.environ.get("WORKFLOW_ROOT", ".github/workflows"))
-    workflow_files = sorted(workflow_root.glob("*.yml"))
+    workflow_root = Path(".github/workflows")
+    workflow_files = sorted(
+        [
+            *workflow_root.glob("*.yml"),
+            *workflow_root.glob("*.yaml"),
+        ]
+    )
     assert workflow_files
 
     deprecated: list[str] = []
