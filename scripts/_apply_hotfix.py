@@ -61,8 +61,10 @@ def test_jobs_integrity_load_retry_notices_stay_off_stdout(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     def fake_backoff(operation, *, operation_name: str):
-        assert operation_name == "load worksheet Jobs"
-        print("Sheets API quota hit while loading Jobs")
+        if operation_name == "load worksheet Jobs":
+            print("Sheets API quota hit while loading Jobs")
+        elif operation_name != "audit Jobs integrity":
+            raise AssertionError(f"Unexpected retry operation: {operation_name}")
         return operation()
 
     monkeypatch.setattr(sheets_module, "with_quota_backoff", fake_backoff)
