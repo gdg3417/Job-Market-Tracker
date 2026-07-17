@@ -113,6 +113,12 @@ def _with_quota_backoff(operation: Any, *, operation_name: str) -> Any:
         return with_quota_backoff(operation, operation_name=operation_name)
 
 
+def _load_jobs_worksheet(sheet_client: Any) -> Any:
+    """Load Jobs with its existing retry policy while keeping stdout JSON-clean."""
+    with contextlib.redirect_stdout(sys.stderr):
+        return sheet_client.get_worksheet(JOBS_WORKSHEET_NAME)
+
+
 def _worksheet_values(worksheet: Any, range_name: str) -> list[list[Any]]:
     try:
         return list(worksheet.get_values(range_name=range_name))
@@ -368,7 +374,7 @@ def audit_jobs_integrity(
     *,
     offender_limit: int = DEFAULT_OFFENDER_LIMIT,
 ) -> JobsIntegrityAudit:
-    worksheet = sheet_client.get_worksheet(JOBS_WORKSHEET_NAME)
+    worksheet = _load_jobs_worksheet(sheet_client)
     return _with_quota_backoff(
         lambda: _audit_jobs_integrity_once(
             sheet_client,
