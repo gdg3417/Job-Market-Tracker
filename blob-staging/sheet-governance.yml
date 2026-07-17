@@ -1,0 +1,119 @@
+name: Job Tracker Sheet UX Governance
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Reapply governance after the existing daily and weekly workbook refresh windows.
+    - cron: "0 15 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: job-tracker-workbook-writes
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  sheet-governance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate required secrets
+        shell: bash
+        run: |
+          if [ -z "${GOOGLE_SHEET_ID}" ]; then
+            echo "::error::Missing required GitHub Secret: GOOGLE_SHEET_ID"
+            exit 1
+          fi
+          if [ -z "${GOOGLE_SERVICE_ACCOUNT_JSON}" ]; then
+            echo "::error::Missing required GitHub Secret: GOOGLE_SERVICE_ACCOUNT_JSON"
+            exit 1
+          fi
+
+      - name: Write Google credentials
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          raw_value = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
+          json.loads(raw_value)
+          path = Path(os.environ["RUNNER_TEMP"]) / "google-service-account.json"
+          path.write_text(raw_value, encoding="utf-8")
+          path.chmod(0o600)
+          with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as handle:
+              handle.write(f"GOOGLE_APPLICATION_CREDENTIALS={path}\n")
+          PY
+
+      - name: Run focused tests
+        run: pytest tests/test_sheet_governance.py tests/test_jobs_integrity.py
+
+      - name: Validate governance definitions
+        run: python -m src.sheet_governance --validate
+
+      - name: Validate live workbook schema
+        run: python -m src.schema --validate
+
+      - name: Pre-write Jobs integrity gate
+        run: python -m src.jobs_integrity --audit --enforce
+
+      - name: Apply sheet UX governance
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m src.sheet_governance --apply | tee "$RUNNER_TEMP/sheet_governance.json"
+
+      - name: Post-write Jobs integrity gate
+        run: python -m src.jobs_integrity --audit --enforce
+
+      - name: Write GitHub Step Summary
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          from src.workflow_output import load_json_output
+
+          result = load_json_output(Path(os.environ["RUNNER_TEMP"]) / "sheet_governance.json")
+          rows = [
+              ("Status", result.get("status", "not_run")),
+              ("Sheets governed", result.get("sheets_governed", 0)),
+              ("Editable headers", result.get("editable_headers", 0)),
+              ("System headers", result.get("system_headers", 0)),
+              ("Dropdowns applied", result.get("dropdowns_applied", 0)),
+              ("Filters applied", result.get("filters_applied", 0)),
+              ("Freezes applied", result.get("freezes_applied", 0)),
+              ("Sheet guide written", result.get("guide_written", False)),
+          ]
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as handle:
+              handle.write("### Sheet UX Governance\n\n")
+              handle.write("| Metric | Value |\n")
+              handle.write("| --- | ---: |\n")
+              for metric, value in rows:
+                  handle.write(f"| {metric} | {value} |\n")
+              missing = result.get("sheets_missing") or []
+              if missing:
+                  handle.write("\nOptional sheets not found: " + ", ".join(missing) + "\n")
+          PY

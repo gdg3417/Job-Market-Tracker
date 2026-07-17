@@ -83,3 +83,25 @@ def test_jobs_integrity_reuses_preloaded_worksheet_inside_audit_retry(
     assert audit.healthy is True
     assert client.load_count == 1
     assert operations == ["audit Jobs integrity"]
+
+
+
+def test_jobs_integrity_load_retry_notices_stay_off_stdout(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_backoff(operation, *, operation_name: str):
+        if operation_name == "load worksheet Jobs":
+            print("Sheets API quota hit while loading Jobs")
+        elif operation_name != "audit Jobs integrity":
+            raise AssertionError(f"Unexpected retry operation: {operation_name}")
+        return operation()
+
+    monkeypatch.setattr(sheets_module, "with_quota_backoff", fake_backoff)
+
+    audit = audit_jobs_integrity(_QuotaAwareSheetClient())
+
+    captured = capsys.readouterr()
+    assert audit.healthy is True
+    assert captured.out == ""
+    assert "quota hit while loading Jobs" in captured.err

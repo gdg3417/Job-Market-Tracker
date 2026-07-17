@@ -1,0 +1,242 @@
+name: Job Tracker Source Quality
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Source-quality execution mode
+        required: true
+        default: report
+        type: choice
+        options:
+          - report
+          - apply_reviewed_cleanup
+      approved_company_ids:
+        description: Comma-separated exact Config_Companies company_id values approved for supported cleanup
+        required: false
+        default: ""
+        type: string
+      window_weeks:
+        description: Source-yield reporting window in weeks
+        required: false
+        default: "4"
+        type: string
+      skip_live_probes:
+        description: Refresh yield reporting without HTTP probes while preserving the last live Source_Audit
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    - cron: "30 13 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: job-tracker-workbook-writes
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  source-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+      GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate required secrets
+        shell: bash
+        run: |
+          if [ -z "${GOOGLE_SHEET_ID}" ]; then
+            echo "::error::Missing required GitHub Secret: GOOGLE_SHEET_ID"
+            exit 1
+          fi
+          if [ -z "${GOOGLE_SERVICE_ACCOUNT_JSON}" ]; then
+            echo "::error::Missing required GitHub Secret: GOOGLE_SERVICE_ACCOUNT_JSON"
+            exit 1
+          fi
+
+      - name: Write Google service-account credentials
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          raw = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
+          json.loads(raw)
+          path = Path(os.environ["RUNNER_TEMP"]) / "google-service-account.json"
+          path.write_text(raw, encoding="utf-8")
+          path.chmod(0o600)
+          with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as handle:
+              handle.write(f"GOOGLE_APPLICATION_CREDENTIALS={path}\n")
+          PY
+
+      - name: Run tests
+        run: pytest
+
+      - name: Migrate and validate workbook schema
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m src.schema --migrate | tee "$RUNNER_TEMP/schema_validation.json"
+
+      - name: Build source-quality command
+        id: command
+        shell: bash
+        env:
+          MODE: ${{ inputs.mode || 'report' }}
+          APPROVED_COMPANY_IDS: ${{ inputs.approved_company_ids }}
+          WINDOW_WEEKS: ${{ inputs.window_weeks || '4' }}
+          SKIP_LIVE_PROBES: ${{ inputs.skip_live_probes || false }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${WINDOW_WEEKS}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::window_weeks must be a positive integer."
+            exit 1
+          fi
+
+          args=(--write-report --weeks "${WINDOW_WEEKS}")
+          if [ "${SKIP_LIVE_PROBES}" = "true" ]; then
+            args+=(--skip-live-probes)
+          fi
+
+          if [ "${MODE}" = "apply_reviewed_cleanup" ]; then
+            if [ "${SKIP_LIVE_PROBES}" = "true" ]; then
+              echo "::error::apply_reviewed_cleanup requires live source probes."
+              exit 1
+            fi
+            raw_ids="${APPROVED_COMPANY_IDS:-}"
+            if [ -z "${raw_ids// }" ]; then
+              echo "::error::apply_reviewed_cleanup requires at least one exact company_id."
+              exit 1
+            fi
+            IFS=',' read -ra company_ids <<< "$raw_ids"
+            approved_count=0
+            for company_id in "${company_ids[@]}"; do
+              trimmed="$(echo "$company_id" | xargs)"
+              if [ -z "$trimmed" ]; then
+                continue
+              fi
+              if [[ ! "$trimmed" =~ ^[A-Za-z0-9._-]+$ ]]; then
+                echo "::error::Invalid company_id: use letters, numbers, periods, underscores, and hyphens only."
+                exit 1
+              fi
+              args+=(--approved-company-id "$trimmed")
+              approved_count=$((approved_count + 1))
+            done
+            if [ "$approved_count" -eq 0 ]; then
+              echo "::error::No valid company_id values were supplied."
+              exit 1
+            fi
+          fi
+
+          printf '%s\n' "${args[@]}" > "$RUNNER_TEMP/source_quality_args.txt"
+          echo "mode=${MODE}" >> "$GITHUB_OUTPUT"
+          echo "window_weeks=${WINDOW_WEEKS}" >> "$GITHUB_OUTPUT"
+
+      - name: Audit source quality and write yield report
+        id: source_quality
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t source_quality_args < "$RUNNER_TEMP/source_quality_args.txt"
+          python -m src.source_quality_report "${source_quality_args[@]}" | tee "$RUNNER_TEMP/source_quality.json"
+
+      - name: Apply generated-surface governance
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m src.sheet_governance --apply | tee "$RUNNER_TEMP/source_quality_governance.json"
+
+      - name: Write GitHub Step Summary
+        if: always()
+        shell: bash
+        env:
+          EXECUTION_MODE: ${{ steps.command.outputs.mode }}
+          WINDOW_WEEKS: ${{ steps.command.outputs.window_weeks }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          from src.workflow_output import load_json_output
+
+          path = Path(os.environ["RUNNER_TEMP"]) / "source_quality.json"
+          data = load_json_output(
+              path,
+              {
+                  "status": "not calculated",
+                  "sources_audited": 0,
+                  "classification_counts": {},
+                  "configuration_changes_required": 0,
+                  "retryable_sources": 0,
+                  "yield_rows": 0,
+                  "zero_result_rows": 0,
+                  "attribution_unavailable_rows": 0,
+                  "yield_recommendation_counts": {},
+                  "approved_updates": [],
+                  "source_audit_rows_written": 0,
+                  "source_yield_rows_written": 0,
+              },
+          )
+          classifications = data.get("classification_counts") or {}
+          recommendations = data.get("yield_recommendation_counts") or {}
+          updates = data.get("approved_updates") or []
+
+          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as handle:
+              handle.write("## Job Tracker Source Quality\n\n")
+              handle.write("| Metric | Value |\n")
+              handle.write("| --- | ---: |\n")
+              handle.write(f"| Status | {data.get('status', 'unknown')} |\n")
+              handle.write(f"| Execution mode | {os.environ.get('EXECUTION_MODE', 'report')} |\n")
+              handle.write(f"| Yield window | {data.get('weeks', os.environ.get('WINDOW_WEEKS', '4'))} weeks |\n")
+              handle.write(f"| Sources audited | {data.get('sources_audited', 0)} |\n")
+              handle.write(f"| Configuration changes required | {data.get('configuration_changes_required', 0)} |\n")
+              handle.write(f"| Retryable sources | {data.get('retryable_sources', 0)} |\n")
+              handle.write(f"| Source yield rows | {data.get('yield_rows', 0)} |\n")
+              handle.write(f"| Zero-result configuration rows | {data.get('zero_result_rows', 0)} |\n")
+              handle.write(f"| Configured searches with unavailable attribution | {data.get('attribution_unavailable_rows', 0)} |\n")
+              handle.write(f"| Source_Audit rows written | {data.get('source_audit_rows_written', 0)} |\n")
+              handle.write(f"| Source_Yield rows written | {data.get('source_yield_rows_written', 0)} |\n")
+              handle.write(f"| Approved updates applied | {len(updates)} |\n")
+
+              if classifications:
+                  handle.write("\n### Audit classifications\n\n")
+                  handle.write("| Classification | Sources |\n")
+                  handle.write("| --- | ---: |\n")
+                  for name, count in sorted(classifications.items()):
+                      handle.write(f"| {name} | {count} |\n")
+
+              if recommendations:
+                  handle.write("\n### Yield recommendations\n\n")
+                  handle.write("| Recommendation | Rows |\n")
+                  handle.write("| --- | ---: |\n")
+                  for name, count in sorted(recommendations.items()):
+                      handle.write(f"| {name} | {count} |\n")
+
+              if updates:
+                  handle.write("\n### Approved configuration updates\n\n")
+                  for update in updates:
+                      handle.write(
+                          f"* {update.get('company_name') or update.get('company_id')}: "
+                          f"{update.get('action')} ({update.get('classification')}); "
+                          f"{update.get('original_source_url', '')} -> {update.get('final_source_url', '')}\n"
+                      )
+          PY
