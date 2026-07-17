@@ -9,7 +9,7 @@ on:
       - agent/hotfix-quota-actions-maintenance
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   apply-hotfix:
@@ -44,10 +44,18 @@ jobs:
           pytest -q tests/test_jobs_integrity_quota.py tests/test_jobs_integrity_retry_scope.py tests/test_workflow_action_versions.py
           git diff --check
 
-      - name: Commit final hotfix
+      - name: Package validated files
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Complete quota retry and action version hotfix"
-          git push origin HEAD:"$TARGET_BRANCH"
+          tar -czf "$RUNNER_TEMP/hotfix-files.tar.gz" \
+            .github/workflows \
+            src/jobs_integrity.py \
+            tests/test_jobs_integrity_retry_scope.py \
+            tests/test_workflow_action_versions.py
+
+      - name: Upload validated files
+        uses: actions/upload-artifact@v4
+        with:
+          name: validated-hotfix-files
+          path: ${{ runner.temp }}/hotfix-files.tar.gz
+          if-no-files-found: error
+          retention-days: 1
