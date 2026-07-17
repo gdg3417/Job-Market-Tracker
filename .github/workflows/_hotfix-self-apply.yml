@@ -9,7 +9,7 @@ on:
       - agent/hotfix-quota-actions-maintenance
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   apply-hotfix:
@@ -35,27 +35,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Apply deterministic maintenance changes
+      - name: Prepare validated workflow blobs
         run: python scripts/_apply_hotfix.py
 
-      - name: Validate focused changes
+      - name: Validate staged changes
         run: |
           python -m compileall -q src tests
-          pytest -q tests/test_jobs_integrity_quota.py tests/test_jobs_integrity_retry_scope.py tests/test_workflow_action_versions.py
+          pytest -q tests/test_jobs_integrity_quota.py tests/test_jobs_integrity_retry_scope.py
+          WORKFLOW_ROOT=blob-staging pytest -q tests/test_workflow_action_versions.py
           git diff --check
 
-      - name: Package validated files
+      - name: Commit staged blobs and tests
         run: |
-          tar -czf "$RUNNER_TEMP/hotfix-files.tar.gz" \
-            .github/workflows \
-            src/jobs_integrity.py \
-            tests/test_jobs_integrity_retry_scope.py \
-            tests/test_workflow_action_versions.py
-
-      - name: Upload validated files
-        uses: actions/upload-artifact@v4
-        with:
-          name: validated-hotfix-files
-          path: ${{ runner.temp }}/hotfix-files.tar.gz
-          if-no-files-found: error
-          retention-days: 1
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add blob-staging tests/test_jobs_integrity_retry_scope.py tests/test_workflow_action_versions.py
+          git commit -m "Stage validated hotfix workflow blobs"
+          git push origin HEAD:"$TARGET_BRANCH"

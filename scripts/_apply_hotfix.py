@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
 from pathlib import Path
 
 WORKFLOWS = Path(".github/workflows")
 TEMP_WORKFLOW = WORKFLOWS / "_hotfix-self-apply.yml"
-TEMP_SCRIPT = Path("scripts/_apply_hotfix.py")
+STAGING = Path("blob-staging")
 
 
 def update_workflow_actions() -> list[str]:
@@ -26,11 +29,13 @@ def write_action_version_contract() -> None:
     path.write_text(
         '''from __future__ import annotations
 
+import os
 from pathlib import Path
 
 
 def test_workflows_use_node24_compatible_action_versions() -> None:
-    workflow_files = sorted(Path(".github/workflows").glob("*.yml"))
+    workflow_root = Path(os.environ.get("WORKFLOW_ROOT", ".github/workflows"))
+    workflow_files = sorted(workflow_root.glob("*.yml"))
     assert workflow_files
 
     deprecated: list[str] = []
@@ -79,19 +84,24 @@ def test_jobs_integrity_load_retry_notices_stay_off_stdout(
     path.write_text(text, encoding="utf-8")
 
 
-def remove_scaffolding() -> None:
-    TEMP_WORKFLOW.unlink(missing_ok=True)
-    TEMP_SCRIPT.unlink(missing_ok=True)
+def stage_validated_workflows() -> None:
+    if STAGING.exists():
+        shutil.rmtree(STAGING)
+    STAGING.mkdir(parents=True)
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        if path == TEMP_WORKFLOW:
+            continue
+        shutil.copy2(path, STAGING / path.name)
+    subprocess.run(["git", "checkout", "HEAD", "--", str(WORKFLOWS)], check=True)
 
 
 def main() -> None:
     changed = update_workflow_actions()
     write_action_version_contract()
     add_stdout_regression_test()
-    remove_scaffolding()
-    print(f"Updated {len(changed)} workflow files")
-    for path in changed:
-        print(path)
+    stage_validated_workflows()
+    print(f"Staged {len(list(STAGING.glob('*.yml')))} validated workflow files")
+    print(f"Updated action versions in {len(changed)} workflow files")
 
 
 if __name__ == "__main__":
