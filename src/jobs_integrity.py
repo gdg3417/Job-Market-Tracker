@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import sys
 from dataclasses import asdict, dataclass, field
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -103,6 +105,14 @@ class JobsIntegrityAudit:
         return values
 
 
+def _with_quota_backoff(operation: Any, *, operation_name: str) -> Any:
+    """Reuse the shared Sheets retry policy without contaminating JSON stdout."""
+    from src.sheets import with_quota_backoff
+
+    with contextlib.redirect_stdout(sys.stderr):
+        return with_quota_backoff(operation, operation_name=operation_name)
+
+
 def _worksheet_values(worksheet: Any, range_name: str) -> list[list[Any]]:
     try:
         return list(worksheet.get_values(range_name=range_name))
@@ -174,7 +184,7 @@ def _row_identity_present(
     return False
 
 
-def audit_jobs_integrity(
+def _audit_jobs_integrity_once(
     sheet_client: Any,
     *,
     offender_limit: int = DEFAULT_OFFENDER_LIMIT,
@@ -350,6 +360,17 @@ def audit_jobs_integrity(
         warnings=warnings,
         health_status="healthy" if healthy else "unsafe",
         writes_allowed=healthy,
+    )
+
+
+def audit_jobs_integrity(
+    sheet_client: Any,
+    *,
+    offender_limit: int = DEFAULT_OFFENDER_LIMIT,
+) -> JobsIntegrityAudit:
+    return _with_quota_backoff(
+        lambda: _audit_jobs_integrity_once(sheet_client, offender_limit=offender_limit),
+        operation_name="audit Jobs integrity",
     )
 
 
