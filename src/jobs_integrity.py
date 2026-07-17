@@ -113,6 +113,12 @@ def _with_quota_backoff(operation: Any, *, operation_name: str) -> Any:
         return with_quota_backoff(operation, operation_name=operation_name)
 
 
+def _load_jobs_worksheet(sheet_client: Any) -> Any:
+    """Load Jobs with its existing retry policy while keeping stdout JSON-clean."""
+    with contextlib.redirect_stdout(sys.stderr):
+        return sheet_client.get_worksheet(JOBS_WORKSHEET_NAME)
+
+
 def _worksheet_values(worksheet: Any, range_name: str) -> list[list[Any]]:
     try:
         return list(worksheet.get_values(range_name=range_name))
@@ -186,10 +192,10 @@ def _row_identity_present(
 
 def _audit_jobs_integrity_once(
     sheet_client: Any,
+    worksheet: Any,
     *,
     offender_limit: int = DEFAULT_OFFENDER_LIMIT,
 ) -> JobsIntegrityAudit:
-    worksheet = sheet_client.get_worksheet(JOBS_WORKSHEET_NAME)
     actual_headers = _trim_headers(worksheet.row_values(1))
     grid_rows = max(1, int(getattr(worksheet, "row_count", 1) or 1))
     grid_columns = max(1, int(getattr(worksheet, "col_count", 1) or 1))
@@ -368,8 +374,13 @@ def audit_jobs_integrity(
     *,
     offender_limit: int = DEFAULT_OFFENDER_LIMIT,
 ) -> JobsIntegrityAudit:
+    worksheet = _load_jobs_worksheet(sheet_client)
     return _with_quota_backoff(
-        lambda: _audit_jobs_integrity_once(sheet_client, offender_limit=offender_limit),
+        lambda: _audit_jobs_integrity_once(
+            sheet_client,
+            worksheet,
+            offender_limit=offender_limit,
+        ),
         operation_name="audit Jobs integrity",
     )
 
@@ -404,7 +415,8 @@ def _load_sheet_client() -> Any:
     from src.settings import load_settings
     from src.sheets import SheetClient
 
-    return SheetClient.from_settings(load_settings())
+    with contextlib.redirect_stdout(sys.stderr):
+        return SheetClient.from_settings(load_settings())
 
 
 def main() -> None:
