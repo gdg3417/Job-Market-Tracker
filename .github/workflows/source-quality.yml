@@ -185,7 +185,7 @@ jobs:
                   "status": "not calculated",
                   "sources_audited": 0,
                   "classification_counts": {},
-                  "configuration_changer_required": 0,
+                  "configuration_changes_required": 0,
                   "retryable_sources": 0,
                   "yield_rows": 0,
                   "zero_result_rows": 0,
